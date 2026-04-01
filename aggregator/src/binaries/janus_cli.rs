@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::BTreeMap,
     fmt::Debug,
     path::{Path, PathBuf},
@@ -9,7 +10,10 @@ use anyhow::{Context, Result, anyhow};
 use aws_lc_rs::aead::AES_128_GCM;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::TimeDelta;
-use clap::Parser;
+use clap::{
+    Parser,
+    builder::{StringValueParser, TypedValueParser},
+};
 use itertools::Itertools;
 use janus_aggregator_api::git_revision;
 use janus_aggregator_core::{
@@ -47,26 +51,32 @@ use tracing::{debug, info};
 use url::Url;
 
 use crate::{
-    binary_utils::{CommonBinaryOptions, database_pool, datastore, read_config},
+    binary_utils::{database_pool, datastore, read_config},
     config::{BinaryConfig, CommonConfig},
     metrics::{MetricsExporterHandle, install_metrics_exporter},
-    trace::{TraceGuards, install_trace_subscriber},
+    trace::{TokioConsoleConfiguration, TraceConfiguration, TraceGuards, install_trace_subscriber},
 };
 
 pub fn run(command_line_options: CommandLineOptions) -> Result<()> {
     initialize_rustls();
 
     // Read and parse config.
-    let config_file: ConfigFile = read_config(&command_line_options.common_options)?;
+    let config_file: Option<ConfigFile> = command_line_options
+        .config_file
+        .as_ref()
+        .map(read_config)
+        .transpose()?;
 
     let runtime = runtime::Builder::new_multi_thread().enable_all().build()?;
 
     runtime.block_on(async {
-        let _guards =
-            install_tracing_and_metrics_handlers(config_file.common_config(), &runtime).await?;
+        let _guards = install_tracing_and_metrics_handlers(
+            config_file.as_ref().map(ConfigFile::common_config),
+            &runtime,
+        )
+        .await?;
 
         info!(
-            common_options = ?&command_line_options.common_options,
             config = ?config_file,
             version = env!("CARGO_PKG_VERSION"),
             git_revision = git_revision(),
@@ -80,7 +90,7 @@ pub fn run(command_line_options: CommandLineOptions) -> Result<()> {
 
         command_line_options
             .cmd
-            .execute(&command_line_options, &config_file)
+            .execute(&command_line_options, config_file.as_ref())
             .await
     })
 }
@@ -226,21 +236,34 @@ impl Command {
     async fn execute(
         &self,
         command_line_options: &CommandLineOptions,
-        config_file: &ConfigFile,
+        config_file: Option<&ConfigFile>,
     ) -> Result<()> {
         // Note: to keep this function reasonably-readable, individual command handlers should
         // generally create the command's dependencies based on options/config, then call another
         // function with the main command logic.
         let kube_client = LazyKubeClient::new();
-        match self {
-            Command::GenerateHpkeKey {
-                kubernetes_secret_options,
-                id,
-                kem,
-                kdf,
-                aead,
-                hpke_config_out_file,
-            } => {
+        let aggregator_api = command_line_options
+            .aggregator_api_url
+            .as_ref()
+            .and_then(|url| {
+                Some((
+                    url,
+                    command_line_options.aggregator_api_auth_token.as_ref()?,
+                ))
+            });
+        match (self, config_file, aggregator_api) {
+            (
+                Command::GenerateHpkeKey {
+                    kubernetes_secret_options,
+                    id,
+                    kem,
+                    kdf,
+                    aead,
+                    hpke_config_out_file,
+                },
+                Some(config_file),
+                _,
+            ) => {
                 let datastore = datastore_from_opts(
                     kubernetes_secret_options,
                     command_line_options,
@@ -261,11 +284,19 @@ impl Command {
                 .await
             }
 
-            Command::SetHpkeKeyState {
-                kubernetes_secret_options,
-                id,
-                state,
-            } => {
+            (Command::GenerateHpkeKey { .. }, None, _) => Err(anyhow!(
+                "generate-hpke-key requires a configuration file for database access"
+            )),
+
+            (
+                Command::SetHpkeKeyState {
+                    kubernetes_secret_options,
+                    id,
+                    state,
+                },
+                Some(config_file),
+                _,
+            ) => {
                 let datastore = datastore_from_opts(
                     kubernetes_secret_options,
                     command_line_options,
@@ -283,17 +314,25 @@ impl Command {
                 .await
             }
 
-            Command::AddTaskprovPeerAggregator {
-                kubernetes_secret_options,
-                peer_endpoint,
-                peer_role,
-                aggregation_mode,
-                verify_key_init,
-                collector_hpke_config_file,
-                report_expiry_age_s,
-                aggregator_auth_token,
-                collector_auth_token,
-            } => {
+            (Command::SetHpkeKeyState { .. }, None, _) => Err(anyhow!(
+                "set-hpke-key-state requires a configuration file for database access"
+            )),
+
+            (
+                Command::AddTaskprovPeerAggregator {
+                    kubernetes_secret_options,
+                    peer_endpoint,
+                    peer_role,
+                    aggregation_mode,
+                    verify_key_init,
+                    collector_hpke_config_file,
+                    report_expiry_age_s,
+                    aggregator_auth_token,
+                    collector_auth_token,
+                },
+                Some(config_file),
+                _,
+            ) => {
                 let datastore = datastore_from_opts(
                     kubernetes_secret_options,
                     command_line_options,
@@ -317,12 +356,20 @@ impl Command {
                 .await
             }
 
-            Command::ProvisionTasks {
-                kubernetes_secret_options,
-                tasks_file,
-                generate_missing_parameters,
-                echo_tasks,
-            } => {
+            (Command::AddTaskprovPeerAggregator { .. }, None, _) => Err(anyhow!(
+                "add-taskprov-peer-aggregator requires a configuration file for database access"
+            )),
+
+            (
+                Command::ProvisionTasks {
+                    kubernetes_secret_options,
+                    tasks_file,
+                    generate_missing_parameters,
+                    echo_tasks,
+                },
+                Some(config_file),
+                _,
+            ) => {
                 let datastore = datastore_from_opts(
                     kubernetes_secret_options,
                     command_line_options,
@@ -348,9 +395,17 @@ impl Command {
                 Ok(())
             }
 
-            Command::CreateDatastoreKey {
-                kubernetes_secret_options,
-            } => {
+            (Command::ProvisionTasks { .. }, None, _) => Err(anyhow!(
+                "provision-tasks requires a configuration file for database access"
+            )),
+
+            (
+                Command::CreateDatastoreKey {
+                    kubernetes_secret_options,
+                },
+                _,
+                _,
+            ) => {
                 let k8s_namespace = kubernetes_secret_options
                     .secrets_k8s_namespace
                     .as_deref()
@@ -365,11 +420,15 @@ impl Command {
                 .await
             }
 
-            Command::ListCollectionJobs {
-                task,
-                job,
-                kubernetes_secret_options,
-            } => {
+            (
+                Command::ListCollectionJobs {
+                    task,
+                    job,
+                    kubernetes_secret_options,
+                },
+                Some(config_file),
+                _,
+            ) => {
                 let datastore = datastore_from_opts(
                     kubernetes_secret_options,
                     command_line_options,
@@ -394,11 +453,19 @@ impl Command {
                     .context("couldn't list collection jobs")
             }
 
-            Command::ListAggregationJobs {
-                task,
-                job,
-                kubernetes_secret_options,
-            } => {
+            (Command::ListCollectionJobs { .. }, None, _) => Err(anyhow!(
+                "list-collection-jobs requires a configuration file for database access"
+            )),
+
+            (
+                Command::ListAggregationJobs {
+                    task,
+                    job,
+                    kubernetes_secret_options,
+                },
+                Some(config_file),
+                _,
+            ) => {
                 let datastore = datastore_from_opts(
                     kubernetes_secret_options,
                     command_line_options,
@@ -422,6 +489,10 @@ impl Command {
                     .await
                     .context("couldn't list aggregation jobs")
             }
+
+            (Command::ListAggregationJobs { .. }, None, _) => Err(anyhow!(
+                "list-aggregation-jobs requires a configuration file for database access"
+            )),
         }
     }
 }
@@ -600,16 +671,44 @@ async fn list_aggregation_jobs_generic<
 }
 
 async fn install_tracing_and_metrics_handlers(
-    config: &CommonConfig,
+    config: Option<&CommonConfig>,
     runtime: &Runtime,
-) -> Result<(TraceGuards, MetricsExporterHandle)> {
+) -> Result<(TraceGuards, Option<MetricsExporterHandle>)> {
+    // Substitute a default logging configuration if no configuration file is provided.
+    let (logging_config, metrics_config_opt) = match config.as_ref() {
+        Some(config) => (
+            Cow::Borrowed(&config.logging_config),
+            Some(&config.metrics_config),
+        ),
+        None => (
+            Cow::Owned(TraceConfiguration {
+                use_test_writer: false,
+                force_json_output: false,
+                stackdriver_json_output: false,
+                tokio_console_config: TokioConsoleConfiguration {
+                    enabled: false,
+                    listen_address: None,
+                },
+                open_telemetry_config: None,
+                chrome: false,
+            }),
+            None,
+        ),
+    };
+
     // Discard the trace reload handler, since this program is short-lived.
-    let (trace_guard, _) = install_trace_subscriber(&config.logging_config)
+    let (trace_guard, _) = install_trace_subscriber(logging_config.as_ref())
         .context("couldn't install tracing subscriber")?;
 
-    let metrics_guard = install_metrics_exporter(&config.metrics_config, runtime)
-        .await
-        .context("failed to install metrics exporter")?;
+    let metrics_guard = if let Some(metrics_config) = metrics_config_opt {
+        Some(
+            install_metrics_exporter(metrics_config, runtime)
+                .await
+                .context("failed to install metrics exporter")?,
+        )
+    } else {
+        None
+    };
     Ok((trace_guard, metrics_guard))
 }
 
@@ -854,10 +953,7 @@ async fn datastore_from_opts(
 ) -> Result<Datastore<RealClock>> {
     let pool = database_pool(
         &config_file.common_config.database,
-        command_line_options
-            .common_options
-            .database_password
-            .as_deref(),
+        command_line_options.database_password.as_deref(),
     )
     .await?;
 
@@ -866,7 +962,7 @@ async fn datastore_from_opts(
         RealClock::default(),
         &meter("janus_aggregator"),
         &kubernetes_secret_options
-            .datastore_keys(&command_line_options.common_options, kube_client)
+            .datastore_keys(&command_line_options.datastore_keys, kube_client)
             .await?,
         config_file.common_config().database.check_schema_version,
         config_file.common_config().max_transaction_retries,
@@ -885,8 +981,37 @@ pub struct CommandLineOptions {
     #[clap(subcommand)]
     cmd: Command,
 
-    #[clap(flatten)]
-    common_options: CommonBinaryOptions,
+    /// Path to configuration YAML file
+    #[clap(long, env = "CONFIG_FILE", num_args = 1, required(false))]
+    config_file: Option<PathBuf>,
+
+    /// Password for the PostgreSQL database connection
+    ///
+    /// If specified, it must not be specified in the connection string.
+    #[clap(long, env = "PGPASSWORD", hide_env_values = true)]
+    database_password: Option<String>,
+
+    /// Datastore encryption keys
+    ///
+    /// Keys are encoded in unpadded url-safe base64, then comma separated.
+    #[clap(
+        long,
+        env = "DATASTORE_KEYS",
+        hide_env_values = true,
+        num_args = 1,
+        use_value_delimiter = true
+    )]
+    datastore_keys: Vec<String>,
+
+    #[clap(long, short = 'u', requires = "aggregator_api_auth_token")]
+    aggregator_api_url: Option<Url>,
+
+    #[clap(
+        long,
+        short = 'a',
+        value_parser = StringValueParser::new().try_map(AuthenticationToken::new_bearer_token_from_string),
+        requires = "aggregator_api_url", env, hide_env_values = true)]
+    aggregator_api_auth_token: Option<AuthenticationToken>,
 
     /// Do not make permanent changes
     ///
@@ -928,7 +1053,7 @@ impl KubernetesSecretOptions {
     /// --datastore-keys. If neither was set, returns an error.
     async fn datastore_keys(
         &self,
-        options: &CommonBinaryOptions,
+        cli_datastore_keys: &[String],
         kube_client: &LazyKubeClient,
     ) -> Result<Vec<String>> {
         if let Some(secrets_namespace) = &self.secrets_k8s_namespace {
@@ -940,8 +1065,8 @@ impl KubernetesSecretOptions {
             )
             .await
             .context("failed to fetch datastore key(s) from Kubernetes secret")
-        } else if !options.datastore_keys.is_empty() {
-            Ok(options.datastore_keys.clone())
+        } else if !cli_datastore_keys.is_empty() {
+            Ok(cli_datastore_keys.to_vec())
         } else {
             Err(anyhow!(
                 "Either --datastore-keys or --secrets-k8s-namespace must be set"
@@ -1044,7 +1169,6 @@ mod tests {
             CommandLineOptions, ConfigFile, KubernetesSecretOptions, LazyKubeClient,
             fetch_datastore_keys,
         },
-        binary_utils::CommonBinaryOptions,
         config::{
             CommonConfig, default_max_transaction_retries,
             test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
@@ -1076,10 +1200,7 @@ mod tests {
             Vec::from(["datastore-key-1".to_string(), "datastore-key-2".to_string()]);
 
         // Keys provided at command line, not present in k8s
-        let common_options = CommonBinaryOptions {
-            datastore_keys: expected_datastore_keys.clone(),
-            ..Default::default()
-        };
+        let datastore_keys = expected_datastore_keys.clone();
 
         let kubernetes_secret_options = KubernetesSecretOptions {
             datastore_keys_secret_name: "secret-name".to_string(),
@@ -1090,7 +1211,7 @@ mod tests {
 
         assert_eq!(
             kubernetes_secret_options
-                .datastore_keys(&common_options, &empty_kube_client)
+                .datastore_keys(&datastore_keys, &empty_kube_client)
                 .await
                 .unwrap(),
             expected_datastore_keys
@@ -1099,7 +1220,6 @@ mod tests {
         assert!(empty_kube_client.lock.lock().await.is_none());
 
         // Keys not provided at command line, present in k8s
-        let common_options = CommonBinaryOptions::default();
         let kubernetes_secret_options = KubernetesSecretOptions {
             datastore_keys_secret_name: "secret-name".to_string(),
             datastore_keys_secret_data_key: "secret-data-key".to_string(),
@@ -1108,7 +1228,7 @@ mod tests {
 
         assert_eq!(
             kubernetes_secret_options
-                .datastore_keys(&common_options, &kube_client)
+                .datastore_keys(&[], &kube_client)
                 .await
                 .unwrap()
                 .len(),
@@ -1116,7 +1236,6 @@ mod tests {
         );
 
         // Neither flag provided
-        let common_options = CommonBinaryOptions::default();
         let kubernetes_secret_options = KubernetesSecretOptions {
             datastore_keys_secret_name: "secret-name".to_string(),
             datastore_keys_secret_data_key: "secret-data-key".to_string(),
@@ -1124,7 +1243,7 @@ mod tests {
         };
 
         kubernetes_secret_options
-            .datastore_keys(&common_options, &kube_client)
+            .datastore_keys(&[], &kube_client)
             .await
             .unwrap_err();
     }
