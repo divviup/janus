@@ -512,7 +512,7 @@ pub fn setup_signal_handler(stopper: Stopper) -> Result<(), std::io::Error> {
 }
 
 /// Construct a server that listens on the provided [`SocketAddr`] and services requests with
-/// `handler`.
+/// `router`.
 ///
 /// If the `SocketAddr`'s port is 0, an ephemeral port is used. Returns a `SocketAddr` representing
 /// the address and port the server are listening on and a future that can be `await`ed to wait
@@ -520,7 +520,7 @@ pub fn setup_signal_handler(stopper: Stopper) -> Result<(), std::io::Error> {
 pub async fn setup_server(
     listen_address: SocketAddr,
     stopper: Stopper,
-    handler: Router,
+    router: Router,
 ) -> anyhow::Result<(SocketAddr, impl Future<Output = ()> + 'static)> {
     let listener = tokio::net::TcpListener::bind(listen_address)
         .await
@@ -530,7 +530,7 @@ pub async fn setup_server(
         .context("couldn't get server's socket address")?;
 
     let task_handle = tokio::spawn(async move {
-        axum::serve(listener, handler)
+        axum::serve(listener, router)
             .with_graceful_shutdown(async move {
                 stopper.cancelled().await;
             })
