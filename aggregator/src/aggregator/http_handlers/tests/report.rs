@@ -972,7 +972,7 @@ async fn upload_handler_error_fanout() {
 
     // Use axum::serve instead of tower::oneshot so we can send requests in parallel and
     // better match production use cases.
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = TcpListener::bind((Ipv6Addr::LOCALHOST, 0)).await.unwrap();
     let socket_addr = listener.local_addr().unwrap();
     let server_handle = tokio::spawn(async move {
         axum::serve(listener, router).await.unwrap();
@@ -981,7 +981,7 @@ async fn upload_handler_error_fanout() {
     let client = reqwest::Client::new();
     let mut url = task.report_upload_uri().unwrap();
     url.set_scheme("http").unwrap();
-    url.set_host(Some("127.0.0.1")).unwrap();
+    url.set_host(Some("[::1]")).unwrap();
     url.set_port(Some(socket_addr.port())).unwrap();
 
     // Upload one report and wait for it to finish, to prepopulate the aggregator's task cache.
