@@ -156,9 +156,9 @@ async fn collection_job_put_request_invalid_aggregation_parameter() {
 #[tokio::test]
 async fn collection_job_put_request_invalid_batch_size() {
     let HttpHandlerTest {
+        handler,
         ephemeral_datastore: _ephemeral_datastore,
         datastore,
-        handler,
         ..
     } = HttpHandlerTest::new().await;
 

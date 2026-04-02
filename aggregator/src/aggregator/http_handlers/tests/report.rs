@@ -81,10 +81,10 @@ async fn upload_handler() {
     }
 
     let HttpHandlerTest {
+        handler,
         clock,
         ephemeral_datastore: _ephemeral_datastore,
         datastore,
-        handler,
         hpke_keypair,
         ..
     } = HttpHandlerTest::new().await;
@@ -532,10 +532,10 @@ async fn upload_handler() {
 #[tokio::test]
 async fn upload_handler_mixed_success_failure() {
     let HttpHandlerTest {
+        handler,
         clock,
         ephemeral_datastore: _ephemeral_datastore,
         datastore,
-        handler,
         hpke_keypair,
         ..
     } = HttpHandlerTest::new().await;
@@ -664,10 +664,10 @@ async fn upload_handler_mixed_success_failure() {
 #[tokio::test]
 async fn upload_handler_task_not_started() {
     let HttpHandlerTest {
+        handler,
         clock,
         ephemeral_datastore: _ephemeral_datastore,
         datastore,
-        handler,
         hpke_keypair,
         ..
     } = HttpHandlerTest::new().await;
@@ -739,10 +739,10 @@ async fn upload_handler_task_not_started() {
 #[tokio::test]
 async fn upload_handler_helper() {
     let HttpHandlerTest {
+        handler,
         clock,
         ephemeral_datastore: _ephemeral_datastore,
         datastore,
-        handler,
         hpke_keypair,
         ..
     } = HttpHandlerTest::new().await;

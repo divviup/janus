@@ -101,13 +101,9 @@ tracing-subscriber = { workspace = true, features = ["std", "env-filter", "fmt",
 tower = { workspace = true }
 tower-http = { workspace = true }
 trillium.workspace = true
-trillium-api.workspace = true
-trillium-head.workspace = true
 trillium-macros = "0.0.6"
-trillium-opentelemetry.workspace = true
 trillium-prometheus = { workspace = true, optional = true }
 trillium-proxy.workspace = true
-trillium-router.workspace = true
 trillium-testing = { workspace = true, optional = true }
 trillium-tokio.workspace = true
 url.workspace = true

@@ -346,9 +346,12 @@ impl<H: Handler> LIFOQueueHandler<H> {
         match conn.cancel_on_disconnect(self.queue.acquire()).await {
             Some(permit) => match permit {
                 Ok(_permit) => self.handler.run(conn).await,
-                Err(err) => err.run(conn).await,
+                Err(err) => {
+                    let status = err.into_response().status();
+                    conn.with_status(status.as_u16()).halt()
+                }
             },
-            None => Error::ClientDisconnected.run(conn).await,
+            None => conn.with_status(400).halt(),
         }
     }
 }
