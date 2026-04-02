@@ -69,10 +69,7 @@ fn labels_to_map(metric: &Metric) -> HashMap<String, String> {
         .collect::<HashMap<_, _>>()
 }
 
-/// During the Trillium-to-axum transition, both pipelines register instruments with the same
-/// names, producing phantom None-value entries in Prometheus. This helper finds a specific
-/// time series entry by matching a label key/value pair.
-// TODO(#4283): Consider removing when we don't get duplicates anymore
+/// Finds a specific time series entry by matching a label key/value pair.
 fn find_metric_by_label<'a>(
     metrics: &'a [Metric],
     label_key: &str,
@@ -83,7 +80,7 @@ fn find_metric_by_label<'a>(
         .find(|m| {
             labels_to_map(m)
                 .get(label_key)
-                .is_some_and(|v| v == label_value) // 'Phantom' entries will be None
+                .is_some_and(|v| v == label_value)
         })
         .unwrap_or_else(|| panic!("no metric entry with {label_key}={label_value:?}"))
 }
@@ -212,70 +209,4 @@ async fn http_metrics() {
         MetricType::HISTOGRAM
     );
     assert!(metric_families["http_server_response_body_size_bytes"].has_help());
-}
-
-#[tokio::test]
-async fn axum_http_metrics() {
-    // Verify that requests proxied to the axum router produce correct metrics via
-    // http_metrics_middleware.
-
-    install_test_trace_subscriber();
-
-    let registry = Registry::new();
-    let meter_provider = build_opentelemetry_prometheus_meter_provider(registry.clone()).unwrap();
-    let meter = meter_provider.meter("tests");
-
-    let clock = MockClock::default();
-    let ephemeral_datastore = ephemeral_datastore().await;
-    let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
-    datastore.put_hpke_key().await.unwrap();
-    let router = AggregatorHandlerBuilder::new(
-        datastore.clone(),
-        clock.clone(),
-        TestRuntime::default(),
-        &meter,
-        default_aggregator_config(),
-    )
-    .await
-    .unwrap()
-    .build()
-    .unwrap();
-
-    router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("GET")
-                .uri("/hpke_config")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    let metric_families = registry
-        .gather()
-        .into_iter()
-        .map(|mf| (mf.get_name().to_owned(), mf))
-        .collect::<HashMap<_, _>>();
-
-    // Find the axum-produced entry by matching the correct route label.
-    let axum_response_metric = find_metric_by_label(
-        metric_families["janus_aggregator_responses_total"].get_metric(),
-        "route",
-        "hpke_config",
-    );
-    let labels = labels_to_map(axum_response_metric);
-    assert_eq!(labels["method"], "GET");
-    assert_eq!(labels["error_code"], "");
-
-    // http.server.request.duration should have an entry from axum with the correct route.
-    let axum_duration_metric = find_metric_by_label(
-        metric_families["http_server_request_duration_seconds"].get_metric(),
-        "http_route",
-        "hpke_config",
-    );
-    let labels = labels_to_map(axum_duration_metric);
-    assert_eq!(labels["http_request_method"], "GET");
-    assert_eq!(labels["http_response_status_code"], "200");
 }
