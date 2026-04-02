@@ -177,9 +177,9 @@ pub(crate) struct GetTaskUploadMetricsResp(pub(crate) TaskUploadCounter);
 pub(crate) struct GetTaskAggregationMetricsResp(pub(crate) TaskAggregationCounter);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct HpkeConfigResp {
-    pub(crate) config: HpkeConfig,
-    pub(crate) state: HpkeKeyState,
+pub struct HpkeConfigResp {
+    pub config: HpkeConfig,
+    pub state: HpkeKeyState,
 }
 
 impl From<HpkeKeypair> for HpkeConfigResp {
@@ -192,10 +192,10 @@ impl From<HpkeKeypair> for HpkeConfigResp {
 }
 
 #[derive(Serialize, Deserialize)]
-pub(crate) struct PutHpkeConfigReq {
-    pub(crate) kem_id: Option<HpkeKemId>,
-    pub(crate) kdf_id: Option<HpkeKdfId>,
-    pub(crate) aead_id: Option<HpkeAeadId>,
+pub struct PutHpkeConfigReq {
+    pub kem_id: Option<HpkeKemId>,
+    pub kdf_id: Option<HpkeKdfId>,
+    pub aead_id: Option<HpkeAeadId>,
 }
 
 #[derive(Serialize, Deserialize)]

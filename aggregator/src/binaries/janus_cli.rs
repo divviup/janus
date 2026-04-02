@@ -15,7 +15,10 @@ use clap::{
     builder::{StringValueParser, TypedValueParser},
 };
 use itertools::Itertools;
-use janus_aggregator_api::git_revision;
+use janus_aggregator_api::{
+    git_revision,
+    models::{HpkeConfigResp, PutHpkeConfigReq},
+};
 use janus_aggregator_core::{
     AsyncAggregator,
     datastore::{self, Datastore, Transaction, models::HpkeKeyState},
@@ -105,7 +108,7 @@ enum Command {
 
         /// Numeric identifier of the HPKE configuration to generate
         #[arg(long)]
-        id: u8,
+        id: Option<u8>,
 
         /// HPKE Key Encapsulation Mechanism algorithm
         #[arg(long)]
@@ -264,6 +267,12 @@ impl Command {
                 Some(config_file),
                 _,
             ) => {
+                let Some(id) = id else {
+                    return Err(anyhow!(
+                        "HPKE config ID is required when creating keypair via datastore"
+                    ));
+                };
+
                 let datastore = datastore_from_opts(
                     kubernetes_secret_options,
                     command_line_options,
@@ -272,7 +281,7 @@ impl Command {
                 )
                 .await?;
 
-                generate_hpke_key(
+                generate_hpke_key_datastore(
                     &datastore,
                     command_line_options.dry_run,
                     (*id).into(),
@@ -284,8 +293,38 @@ impl Command {
                 .await
             }
 
-            (Command::GenerateHpkeKey { .. }, None, _) => Err(anyhow!(
-                "generate-hpke-key requires a configuration file for database access"
+            (
+                Command::GenerateHpkeKey {
+                    kubernetes_secret_options: _,
+                    id,
+                    kem,
+                    kdf,
+                    aead,
+                    hpke_config_out_file,
+                },
+                None,
+                Some((aggregator_api_url, aggregator_api_auth_token)),
+            ) => {
+                if id.is_some() {
+                    return Err(anyhow!(
+                        "HPKE config ID cannot be specified when creating keypair via aggregator API"
+                    ));
+                }
+
+                generate_hpke_key_aggregator_api(
+                    aggregator_api_url,
+                    aggregator_api_auth_token,
+                    command_line_options.dry_run,
+                    (*kem).into(),
+                    (*kdf).into(),
+                    (*aead).into(),
+                    hpke_config_out_file.as_deref(),
+                )
+                .await
+            }
+
+            (Command::GenerateHpkeKey { .. }, None, None) => Err(anyhow!(
+                "generate-hpke-key requires either a configuration file or aggregator API arguments"
             )),
 
             (
@@ -712,7 +751,7 @@ async fn install_tracing_and_metrics_handlers(
     Ok((trace_guard, metrics_guard))
 }
 
-async fn generate_hpke_key<C: Clock>(
+async fn generate_hpke_key_datastore<C: Clock>(
     datastore: &Datastore<C>,
     dry_run: bool,
     id: HpkeConfigId,
@@ -735,6 +774,49 @@ async fn generate_hpke_key<C: Clock>(
 
     if let Some(hpke_config_out_file) = hpke_config_out_file {
         fs::write(hpke_config_out_file, hpke_keypair.config().get_encoded()?).await?;
+    }
+
+    Ok(())
+}
+
+async fn generate_hpke_key_aggregator_api(
+    aggregator_api_url: &Url,
+    aggregator_api_auth_token: &AuthenticationToken,
+    dry_run: bool,
+    kem: HpkeKemId,
+    kdf: HpkeKdfId,
+    aead: HpkeAeadId,
+    hpke_config_out_file: Option<&Path>,
+) -> Result<()> {
+    let client = reqwest::Client::new();
+    let (auth_header_name, auth_header_value) =
+        aggregator_api_auth_token.request_authentication()?;
+
+    if dry_run {
+        return Ok(());
+    }
+
+    let response = client
+        .put(aggregator_api_url.join("hpke_configs")?)
+        .header(auth_header_name, auth_header_value)
+        .header("Content-Type", janus_aggregator_api::CONTENT_TYPE)
+        .header("Accept", janus_aggregator_api::CONTENT_TYPE)
+        .body(serde_json::to_vec(&PutHpkeConfigReq {
+            kem_id: Some(kem),
+            kdf_id: Some(kdf),
+            aead_id: Some(aead),
+        })?)
+        .send()
+        .await?;
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await?;
+        return Err(anyhow!("got error status code {status}: {body}"));
+    }
+    let response_body: HpkeConfigResp = response.json().await?;
+
+    if let Some(hpke_config_out_file) = hpke_config_out_file {
+        fs::write(hpke_config_out_file, response_body.config.get_encoded()?).await?;
     }
 
     Ok(())
@@ -1136,23 +1218,26 @@ mod tests {
         collections::HashMap,
         io::Write,
         net::{Ipv4Addr, SocketAddr},
+        sync::Arc,
     };
 
     use aws_lc_rs::aead::{AES_128_GCM, UnboundKey};
     use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
     use chrono::TimeDelta;
     use clap::CommandFactory;
+    use janus_aggregator_api::{Config, aggregator_api_handler};
     use janus_aggregator_core::{
         datastore::{Datastore, models::HpkeKeyState, test_util::ephemeral_datastore},
         task::{AggregationMode, AggregatorTask, BatchMode, test_util::TaskBuilder},
         taskprov::{PeerAggregator, VerifyKeyInit},
+        test_util::noop_meter,
     };
     use janus_core::{
         auth_tokens::AuthenticationToken,
         hpke::HpkeKeypair,
         initialize_rustls,
-        test_util::{kubernetes, roundtrip_encoding},
-        time::{RealClock, TimeDeltaExt},
+        test_util::{install_test_trace_subscriber, kubernetes, roundtrip_encoding},
+        time::{MockClock, RealClock, TimeDeltaExt},
         vdaf::{VdafInstance, vdaf_dp_strategies},
     };
     use janus_messages::{
@@ -1253,7 +1338,7 @@ mod tests {
     }
 
     // Returns the HPKE config written to disk.
-    async fn run_generate_hpke_key_testcase(
+    async fn run_generate_hpke_key_datastore_testcase(
         ds: &Datastore<RealClock>,
         dry_run: bool,
         id: HpkeConfigId,
@@ -1264,15 +1349,23 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let hpke_config_out_file = temp_dir.path().join("hpke_config");
 
-        super::generate_hpke_key(ds, dry_run, id, kem, kdf, aead, Some(&hpke_config_out_file))
-            .await
-            .unwrap();
+        super::generate_hpke_key_datastore(
+            ds,
+            dry_run,
+            id,
+            kem,
+            kdf,
+            aead,
+            Some(&hpke_config_out_file),
+        )
+        .await
+        .unwrap();
 
         HpkeConfig::get_decoded(&fs::read(hpke_config_out_file).await.unwrap()).unwrap()
     }
 
     #[tokio::test]
-    async fn generate_hpke_key() {
+    async fn generate_hpke_key_datastore() {
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(RealClock::default()).await;
 
@@ -1281,8 +1374,10 @@ mod tests {
         let kdf = HpkeKdfId::HkdfSha256;
         let aead = HpkeAeadId::Aes128Gcm;
 
-        let disk_hpke_config =
-            run_generate_hpke_key_testcase(&ds, /* dry_run */ false, id, kem, kdf, aead).await;
+        let disk_hpke_config = run_generate_hpke_key_datastore_testcase(
+            &ds, /* dry_run */ false, id, kem, kdf, aead,
+        )
+        .await;
 
         let hpke_keypair = ds
             .run_unnamed_tx(|tx| {
@@ -1313,8 +1408,10 @@ mod tests {
         let kdf = HpkeKdfId::HkdfSha512;
         let aead = HpkeAeadId::ChaCha20Poly1305;
 
-        let disk_hpke_config =
-            run_generate_hpke_key_testcase(&ds, /* dry_run */ true, id, kem, kdf, aead).await;
+        let disk_hpke_config = run_generate_hpke_key_datastore_testcase(
+            &ds, /* dry_run */ true, id, kem, kdf, aead,
+        )
+        .await;
 
         let hpke_keypairs = ds
             .run_unnamed_tx(|tx| Box::pin(async move { Ok(tx.get_hpke_keypairs().await.unwrap()) }))
@@ -1329,6 +1426,75 @@ mod tests {
         assert_eq!(disk_hpke_config.kem_id(), &kem);
         assert_eq!(disk_hpke_config.kdf_id(), &kdf);
         assert_eq!(disk_hpke_config.aead_id(), &aead);
+    }
+
+    #[tokio::test]
+    async fn generate_hpke_key_aggregator_api() {
+        install_test_trace_subscriber();
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(MockClock::default()).await);
+        let aggregator_api_auth_token: AuthenticationToken = random();
+
+        let kem = HpkeKemId::P256HkdfSha256;
+        let kdf = HpkeKdfId::HkdfSha256;
+        let aead = HpkeAeadId::Aes128Gcm;
+
+        let handler = aggregator_api_handler(
+            Arc::clone(&datastore),
+            Config {
+                auth_tokens: Vec::from([aggregator_api_auth_token.clone()]),
+                public_dap_url: "https://dap.url".parse().unwrap(),
+            },
+            &noop_meter(),
+        );
+
+        let server_handle = trillium_tokio::config()
+            .without_signals()
+            .with_host("127.0.0.1")
+            .with_port(0)
+            .spawn(handler);
+        let server_info = server_handle.info().await;
+        let socket_addr = server_info.tcp_socket_addr().unwrap();
+
+        let temp_dir = tempdir().unwrap();
+        let hpke_config_out_file = temp_dir.path().join("hpke_config");
+
+        let aggregator_api_url = format!("http://{socket_addr}/").parse().unwrap();
+
+        super::generate_hpke_key_aggregator_api(
+            &aggregator_api_url,
+            &aggregator_api_auth_token,
+            false,
+            kem,
+            kdf,
+            aead,
+            Some(&hpke_config_out_file),
+        )
+        .await
+        .unwrap();
+
+        server_handle.stop().await;
+
+        let hpke_config =
+            HpkeConfig::get_decoded(&fs::read(hpke_config_out_file).await.unwrap()).unwrap();
+
+        let id = *hpke_config.id();
+        let hpke_keypair = datastore
+            .run_unnamed_tx(|tx| {
+                Box::pin(async move { Ok(tx.get_hpke_keypair(&id).await.unwrap()) })
+            })
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Verify datastore state matches what was written to disk.
+        assert_eq!(hpke_keypair.state(), &HpkeKeyState::Pending);
+        assert_eq!(hpke_keypair.hpke_keypair().config(), &hpke_config);
+
+        // Verify HPKE configuration matches what was expected.
+        assert_eq!(hpke_config.kem_id(), &kem);
+        assert_eq!(hpke_config.kdf_id(), &kdf);
+        assert_eq!(hpke_config.aead_id(), &aead);
     }
 
     #[tokio::test]
