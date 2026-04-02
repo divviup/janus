@@ -3,7 +3,9 @@ use std::{net::Ipv4Addr, sync::Arc};
 use assert_matches::assert_matches;
 use backon::BackoffBuilder;
 use http::header::CONTENT_TYPE;
-use janus_aggregator::aggregator::http_handlers::AggregatorHandlerBuilder;
+use janus_aggregator::{
+    aggregator::http_handlers::AggregatorHandlerBuilder, binary_utils::Stopper,
+};
 use janus_aggregator_core::{
     datastore::{
         models::HpkeKeyState, task_counters::TaskUploadCounter, test_util::ephemeral_datastore,
@@ -39,7 +41,6 @@ use prio::{
 };
 use rand::{RngExt, distr::StandardUniform, random, rng};
 use tokio::net::TcpListener;
-use trillium_tokio::Stopper;
 use url::Url;
 
 use crate::simulation::{http_request_exponential_backoff, run::MAX_REPORTS};
@@ -428,15 +429,18 @@ async fn bad_client_report_validity() {
     )
     .await
     .unwrap()
-    .build_trillium_handler(None)
-    .await
+    .build()
     .unwrap();
     let stopper = Stopper::new();
-    let server_handle = trillium_tokio::config()
-        .with_stopper(stopper.clone())
-        .without_signals()
-        .with_prebound_server(server)
-        .spawn(handler);
+    let stopper_clone = stopper.clone();
+    let server_handle = tokio::spawn(async move {
+        axum::serve(server, handler)
+            .with_graceful_shutdown(async move {
+                stopper_clone.cancelled().await;
+            })
+            .await
+            .unwrap();
+    });
 
     let report_time = clock.now().to_time(task.time_precision());
     upload_replay_report(0, &task, &vdaf, &report_time, &http_client)
@@ -458,7 +462,7 @@ async fn bad_client_report_validity() {
     assert_eq!(counters.report_success(), 3);
 
     stopper.stop();
-    server_handle.await;
+    server_handle.await.unwrap();
 }
 
 /// This checks that [`shard_encoded_measurement`] is correct by sharding a correctly-encoded
