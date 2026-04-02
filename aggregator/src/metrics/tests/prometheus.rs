@@ -113,7 +113,7 @@ async fn http_metrics() {
     )
     .await
     .unwrap()
-    .build()
+    .build_trillium_handler(None)
     .await
     .unwrap();
 
@@ -232,7 +232,7 @@ async fn axum_http_metrics() {
     )
     .await
     .unwrap()
-    .build()
+    .build_trillium_handler(None)
     .await
     .unwrap();
 

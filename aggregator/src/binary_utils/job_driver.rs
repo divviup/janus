@@ -20,7 +20,8 @@ use tokio::{
     time::{self, Instant},
 };
 use tracing::{Instrument, debug, error, info_span};
-use trillium_tokio::Stopper;
+
+use crate::binary_utils::Stopper;
 
 /// Periodically seeks incomplete jobs in the datastore and drives them concurrently.
 pub struct JobDriver<C: Clock, R, JobAcquirer, JobStepper> {
@@ -126,7 +127,7 @@ where
             // Wait out our job discovery delay, if any.
             if self
                 .stopper
-                .stop_future(time::sleep_until(next_run_instant))
+                .run_until_stopped(time::sleep_until(next_run_instant))
                 .await
                 .is_none()
             {
@@ -276,9 +277,9 @@ mod tests {
     use janus_messages::{AggregationJobId, TaskId};
     use rand::random;
     use tokio::sync::Mutex;
-    use trillium_tokio::Stopper;
 
     use super::JobDriver;
+    use crate::binary_utils::Stopper;
 
     #[tokio::test]
     async fn job_driver() {

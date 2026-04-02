@@ -888,14 +888,15 @@ where
             )
     }
 
-    pub async fn build(self) -> Result<impl Handler, Error> {
+    pub fn build(self) -> Result<axum::Router, Error> {
         let queue = self.build_helper_queue()?;
-        self.build_with_prebuilt_queue(queue).await
+        Ok(self.build_axum_router(queue))
     }
 
-    /// Build the handler with a pre-built helper queue. This avoids double-instantiation when
-    /// callers also need a reference to the axum router (e.g. tests).
-    async fn build_with_prebuilt_queue(
+    /// Build a Trillium handler that proxies to an internal axum server. This is used by tests
+    /// that haven't yet been migrated to axum's `tower::oneshot` style.
+    // TODO(#4283): Remove when all tests are migrated to axum.
+    pub async fn build_trillium_handler(
         self,
         helper_queue: Option<Arc<LIFORequestQueue>>,
     ) -> Result<impl Handler, Error> {
@@ -1554,10 +1555,7 @@ pub mod test_util {
 
             let helper_queue = builder.build_helper_queue().unwrap();
             let router = builder.build_axum_router(helper_queue.clone());
-            let handler = builder
-                .build_with_prebuilt_queue(helper_queue)
-                .await
-                .unwrap();
+            let handler = builder.build_trillium_handler(helper_queue).await.unwrap();
 
             Self {
                 clock,

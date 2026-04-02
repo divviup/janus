@@ -8,12 +8,11 @@ use opentelemetry::metrics::Meter;
 use serde::{Deserialize, Serialize};
 use tokio::time::interval;
 use tracing::{error, info};
-use trillium_tokio::Stopper;
 
 use super::aggregator::GarbageCollectorConfig;
 use crate::{
     aggregator::garbage_collector::GarbageCollector,
-    binary_utils::{BinaryContext, BinaryOptions, CommonBinaryOptions},
+    binary_utils::{BinaryContext, BinaryOptions, CommonBinaryOptions, Stopper},
     config::{BinaryConfig, CommonConfig},
 };
 
@@ -50,7 +49,7 @@ pub(super) async fn run_garbage_collector(
     );
     info!("Running garbage collector");
     let mut interval = interval(Duration::from_secs(gc_config.gc_frequency_s));
-    while stopper.stop_future(interval.tick()).await.is_some() {
+    while stopper.run_until_stopped(interval.tick()).await.is_some() {
         if let Err(err) = gc.run().await {
             error!(?err, "GC error");
         }

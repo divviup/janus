@@ -30,7 +30,6 @@ use tokio::{
 };
 use trillium::{KnownHeaderName, Status};
 use trillium_testing::{TestConn, assert_headers, prelude::post};
-use trillium_tokio::Stopper;
 
 use crate::{
     aggregator::{
@@ -814,7 +813,7 @@ async fn upload_handler_error_fanout() {
     )
     .await
     .unwrap()
-    .build()
+    .build_trillium_handler(None)
     .await
     .unwrap();
 
@@ -1198,7 +1197,7 @@ async fn upload_client_http11_bulk() {
     )
     .await
     .unwrap()
-    .build()
+    .build_trillium_handler(None)
     .await
     .unwrap();
 
@@ -1213,12 +1212,12 @@ async fn upload_client_http11_bulk() {
     let leader_task = task.leader_view().unwrap();
     datastore.put_aggregator_task(&leader_task).await.unwrap();
 
-    let stopper = Stopper::new();
+    let trillium_stopper = trillium_tokio::Stopper::new();
     let server = TcpListener::bind((Ipv6Addr::LOCALHOST, 0)).await.unwrap();
     let local_addr = server.local_addr().unwrap();
     let handle = trillium_tokio::config()
         .without_signals()
-        .with_stopper(stopper.clone())
+        .with_stopper(trillium_stopper.clone())
         .with_prebound_server(server)
         .spawn(handler);
 
@@ -1274,7 +1273,7 @@ async fn upload_client_http11_bulk() {
         "Expected the right number of valid reports in the datastore"
     );
 
-    stopper.stop();
+    trillium_stopper.stop();
     handle.await;
 }
 

@@ -284,7 +284,7 @@ pub(crate) async fn setup_collection_job_test_case(
     )
     .await
     .unwrap()
-    .build()
+    .build_trillium_handler(None)
     .await
     .unwrap();
 

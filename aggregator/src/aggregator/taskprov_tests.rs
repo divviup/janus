@@ -147,7 +147,7 @@ where
         )
         .await
         .unwrap()
-        .build()
+        .build_trillium_handler(None)
         .await
         .unwrap();
 

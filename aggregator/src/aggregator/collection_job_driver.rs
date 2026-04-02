@@ -934,7 +934,6 @@ mod tests {
         vdaf::dummy,
     };
     use rand::random;
-    use trillium_tokio::Stopper;
 
     use crate::{
         aggregator::{
@@ -942,7 +941,7 @@ mod tests {
             collection_job_driver::{CollectionJobDriver, RetryStrategy},
             test_util::{BATCH_AGGREGATION_SHARD_COUNT, fake_aggregate_share},
         },
-        binary_utils::job_driver::JobDriver,
+        binary_utils::{Stopper, job_driver::JobDriver},
     };
 
     async fn setup_collection_job_test_case(

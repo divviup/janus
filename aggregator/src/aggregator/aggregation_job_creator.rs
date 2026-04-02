@@ -48,14 +48,15 @@ use tokio::{
     time::{self, Instant, MissedTickBehavior, sleep_until},
     try_join,
 };
+use tokio_util::task::TaskTracker;
 use tracing::{debug, error, info};
-use trillium_tokio::{CloneCounterObserver, Stopper};
 
 use crate::{
     aggregator::{
         aggregation_job_writer::{AggregationJobWriter, InitialWrite},
         batch_creator::BatchCreator,
     },
+    binary_utils::Stopper,
     metrics::AGGREGATION_JOB_SIZE_HISTOGRAM_BOUNDARIES,
 };
 
@@ -163,11 +164,11 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         // This tracks the stoppers used to shut down the per-task worker by task ID.
         let mut job_creation_task_shutdown_handles: HashMap<TaskId, Stopper> = HashMap::new();
 
-        let observer = CloneCounterObserver::new();
+        let task_tracker = TaskTracker::new();
 
         loop {
             if stopper
-                .stop_future(tasks_update_ticker.tick())
+                .run_until_stopped(tasks_update_ticker.tick())
                 .await
                 .is_none()
             {
@@ -176,7 +177,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             let start = Instant::now();
 
             let result = self
-                .update_tasks(&mut job_creation_task_shutdown_handles, &observer)
+                .update_tasks(&mut job_creation_task_shutdown_handles, &task_tracker)
                 .await;
 
             let status = match result {
@@ -196,14 +197,15 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         for task_stopper in job_creation_task_shutdown_handles.values() {
             task_stopper.stop();
         }
-        observer.await;
+        task_tracker.close();
+        task_tracker.wait().await;
     }
 
     #[tracing::instrument(name = "AggregationJobCreator::update_tasks", skip_all, err)]
     async fn update_tasks(
         self: &Arc<Self>,
         job_creation_task_shutdown_handles: &mut HashMap<TaskId, Stopper>,
-        observer: &CloneCounterObserver,
+        task_tracker: &TaskTracker,
     ) -> Result<(), datastore::Error> {
         debug!("Updating tasks");
         let tasks = self
@@ -239,13 +241,9 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             info!(%task_id, "Starting job creation worker");
             let task_stopper = Stopper::new();
             job_creation_task_shutdown_handles.insert(task_id, task_stopper.clone());
-            tokio::task::spawn({
+            task_tracker.spawn({
                 let this = Arc::clone(self);
-                let counter = observer.counter();
-                async move {
-                    let _counter = counter;
-                    this.run_for_task(task_stopper, Arc::new(task)).await
-                }
+                async move { this.run_for_task(task_stopper, Arc::new(task)).await }
             });
         }
 
@@ -263,7 +261,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
         loop {
             if stopper
-                .stop_future(sleep_until(next_run_instant))
+                .run_until_stopped(sleep_until(next_run_instant))
                 .await
                 .is_none()
             {
@@ -911,10 +909,9 @@ mod tests {
     };
     use rand::random;
     use tokio::{task, time, try_join};
-    use trillium_tokio::Stopper;
 
     use super::AggregationJobCreator;
-    use crate::aggregator::test_util::BATCH_AGGREGATION_SHARD_COUNT;
+    use crate::{aggregator::test_util::BATCH_AGGREGATION_SHARD_COUNT, binary_utils::Stopper};
 
     #[tokio::test]
     async fn aggregation_job_creator() {
