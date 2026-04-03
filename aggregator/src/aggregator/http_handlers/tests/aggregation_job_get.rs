@@ -152,7 +152,6 @@ async fn aggregation_job_get_unready() {
         clock,
         ephemeral_datastore: _ephemeral_datastore,
         datastore,
-        handler: _,
         router,
         hpke_keypair,
     } = HttpHandlerTest::new().await;

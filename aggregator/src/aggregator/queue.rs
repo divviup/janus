@@ -24,8 +24,6 @@ use tokio::{
     task::JoinHandle,
 };
 use tracing::{debug, error, warn};
-use trillium::{Conn, Handler};
-use trillium_macros::Handler;
 
 use super::Error;
 
@@ -324,45 +322,6 @@ impl PermitTx {
     }
 }
 
-/// A handler that queues requests in a LIFO manner, according to the parameters set in a
-/// [`LIFORequestQueue`].
-///
-/// Multiple request handlers can share a queue, by cloning the [`Arc`] that wraps the queue.
-// TODO(#4283): Remove when queue tests are migrated to axum.
-#[cfg_attr(not(test), allow(dead_code))]
-#[derive(Handler)]
-pub struct LIFOQueueHandler<H> {
-    #[handler(except = [run])]
-    handler: H,
-    queue: Arc<LIFORequestQueue>,
-}
-
-impl<H: Handler> LIFOQueueHandler<H> {
-    pub fn new(queue: Arc<LIFORequestQueue>, handler: H) -> Self {
-        Self { handler, queue }
-    }
-
-    async fn run(&self, mut conn: Conn) -> Conn {
-        match conn.cancel_on_disconnect(self.queue.acquire()).await {
-            Some(permit) => match permit {
-                Ok(_permit) => self.handler.run(conn).await,
-                Err(err) => {
-                    let status = err.into_response().status();
-                    conn.with_status(status.as_u16()).halt()
-                }
-            },
-            None => conn.with_status(400).halt(),
-        }
-    }
-}
-
-/// Convenience function for wrapping a handler with a [`LIFOQueueHandler`].
-// TODO(#4283): Remove when queue tests are migrated to axum.
-#[cfg_attr(not(test), allow(dead_code))]
-pub fn queued_lifo<H: Handler>(queue: Arc<LIFORequestQueue>, handler: H) -> impl Handler {
-    LIFOQueueHandler::new(queue, handler)
-}
-
 /// Axum middleware that queues requests through a [`LIFORequestQueue`].
 ///
 /// This acquires a permit from the queue before forwarding the request to the next handler.
@@ -546,9 +505,10 @@ mod tests {
         time::{Duration, Instant},
     };
 
-    use async_trait::async_trait;
+    use axum::body::Body;
     use backon::{BackoffBuilder, ExponentialBuilder, Retryable};
     use futures::{Future, future::join_all};
+    use http::{Request, StatusCode};
     use janus_aggregator_core::test_util::noop_meter;
     use janus_core::test_util::install_test_trace_subscriber;
     use opentelemetry_sdk::metrics::data::{Gauge, Sum};
@@ -559,13 +519,12 @@ mod tests {
         task::{JoinHandle, yield_now},
         time::{sleep, timeout},
     };
+    use tower::ServiceExt;
     use tracing::debug;
-    use trillium::{Conn, Handler, Status};
-    use trillium_testing::{assert_ok, assert_status, methods::get};
 
-    use super::Error;
+    use super::{Error, lifo_queue_middleware};
     use crate::{
-        aggregator::queue::{LIFORequestQueue, Metrics, queued_lifo},
+        aggregator::queue::{LIFORequestQueue, Metrics},
         metrics::test_util::InMemoryMetricInfrastructure,
     };
 
@@ -613,20 +572,36 @@ mod tests {
         }
     }
 
-    struct HangingHandler {
-        unhang: Arc<Notify>,
+    /// Builds a test request to GET "/".
+    fn test_request() -> Request<Body> {
+        Request::builder()
+            .method("GET")
+            .uri("/")
+            .body(Body::empty())
+            .unwrap()
     }
 
-    #[async_trait]
-    impl Handler for HangingHandler {
-        async fn run(&self, conn: trillium::Conn) -> trillium::Conn {
-            let _ = self.unhang.notified().await;
-            conn.ok("hello")
-        }
+    /// Builds a router with a hanging handler that waits on `unhang` before responding.
+    fn hanging_router(queue: Arc<LIFORequestQueue>, unhang: Arc<Notify>) -> axum::Router {
+        axum::Router::new()
+            .route(
+                "/",
+                axum::routing::get(move || {
+                    let unhang = unhang.clone();
+                    async move {
+                        unhang.notified().await;
+                        "hello"
+                    }
+                }),
+            )
+            .layer(axum::middleware::from_fn_with_state(
+                queue,
+                lifo_queue_middleware,
+            ))
     }
 
     async fn fill_queue(
-        handler: Arc<impl Handler>,
+        router: axum::Router,
         concurrency: u32,
         depth: usize,
         metrics: &InMemoryMetricInfrastructure,
@@ -643,17 +618,16 @@ mod tests {
 
         debug!("spawning requests");
         for _ in 0..(concurrency as usize + depth) {
-            let handler = Arc::clone(&handler);
+            let router = router.clone();
             let backoff = backoff.build();
             requests.push(tokio::spawn({
                 async move {
                     (|| async {
-                        let handler = Arc::clone(&handler);
-                        let request = get("/").run_async(&handler).await;
-                        match request.status().unwrap() {
-                            Status::Ok => Ok(()),
+                        let response = router.clone().oneshot(test_request()).await.unwrap();
+                        match response.status() {
+                            StatusCode::OK => Ok(()),
                             // Timeouts and queue full are fine during filling
-                            Status::TooManyRequests => Ok(()),
+                            StatusCode::TOO_MANY_REQUESTS => Ok(()),
                             status => Err(Error::Internal(
                                 format!("Unexpected status: {status}").into(),
                             )),
@@ -741,29 +715,6 @@ mod tests {
 
     #[test]
     fn quickcheck_lifo_concurrency() {
-        struct ConcurrencyAssertingHandler {
-            max_concurrency: u32,
-            concurrency: AtomicU32,
-        }
-
-        #[async_trait]
-        impl Handler for ConcurrencyAssertingHandler {
-            async fn run(&self, conn: trillium::Conn) -> trillium::Conn {
-                let concurrency = self.concurrency.fetch_add(1, Ordering::Relaxed);
-                assert!(concurrency < self.max_concurrency);
-
-                // Somewhat arbitrary yield point, to give the dispatcher a chance to signal
-                // another concurring future. This is mostly pertinent if we're running the test on
-                // a current_thread runtime. Otherwise, without await points, on a current_thread
-                // runtime, this function won't yield.
-                yield_now().await;
-
-                let conn = conn.ok("hello");
-                self.concurrency.fetch_sub(1, Ordering::Relaxed);
-                conn
-            }
-        }
-
         fn qc(parameters: Parameters) {
             debug!(?parameters, "quickcheck_lifo_concurrency parameters");
             let Parameters {
@@ -787,18 +738,40 @@ mod tests {
                     )
                     .unwrap(),
                 );
-                let handler = Arc::new(queued_lifo(
-                    Arc::clone(&queue),
-                    ConcurrencyAssertingHandler {
-                        concurrency: Default::default(),
-                        max_concurrency: concurrency,
-                    },
-                ));
+
+                let max_concurrency = concurrency;
+                let current_concurrency = Arc::new(AtomicU32::new(0));
+
+                let router = axum::Router::new()
+                    .route(
+                        "/",
+                        axum::routing::get({
+                            let current_concurrency = Arc::clone(&current_concurrency);
+                            move || {
+                                let current_concurrency = current_concurrency.clone();
+                                async move {
+                                    let c = current_concurrency.fetch_add(1, Ordering::Relaxed);
+                                    assert!(c < max_concurrency);
+
+                                    // Somewhat arbitrary yield point, to give the dispatcher
+                                    // a chance to signal another concurring future.
+                                    yield_now().await;
+
+                                    current_concurrency.fetch_sub(1, Ordering::Relaxed);
+                                    "hello"
+                                }
+                            }
+                        }),
+                    )
+                    .layer(axum::middleware::from_fn_with_state(
+                        Arc::clone(&queue),
+                        lifo_queue_middleware,
+                    ));
 
                 join_all((0..requests).map(|_| {
-                    let handler = Arc::clone(&handler);
+                    let router = router.clone();
                     async move {
-                        get("/").run_async(&handler).await;
+                        router.oneshot(test_request()).await.unwrap();
                     }
                 }))
                 .await;
@@ -828,21 +801,10 @@ mod tests {
                     LIFORequestQueue::new(concurrency, depth, &metrics.meter, meter_prefix, None)
                         .unwrap(),
                 );
-                let handler = Arc::new(queued_lifo(
-                    Arc::clone(&queue),
-                    HangingHandler {
-                        unhang: Arc::clone(&unhang),
-                    },
-                ));
+                let router = hanging_router(Arc::clone(&queue), Arc::clone(&unhang));
 
-                let requests = fill_queue(
-                    Arc::clone(&handler),
-                    concurrency,
-                    depth,
-                    &metrics,
-                    meter_prefix,
-                )
-                .await;
+                let requests =
+                    fill_queue(router.clone(), concurrency, depth, &metrics, meter_prefix).await;
 
                 let concurrency = concurrency as usize;
                 debug!("freeing up one slot in the queue");
@@ -850,9 +812,11 @@ mod tests {
                 wait_for(&metrics, meter_prefix, |q| q == concurrency + depth - 1).await;
 
                 debug!("sending new request, should be queued");
-                let request_handler = Arc::clone(&handler);
+                let request_router = router.clone();
                 let request =
-                    tokio::spawn(async move { get("/").run_async(&request_handler).await });
+                    tokio::spawn(
+                        async move { request_router.oneshot(test_request()).await.unwrap() },
+                    );
 
                 debug!("waiting for new request to be queued");
                 wait_for(&metrics, meter_prefix, |q| q == concurrency + depth).await;
@@ -871,8 +835,8 @@ mod tests {
 
                 debug!("sending new request");
                 unhang.notify_one();
-                let request = get("/").run_async(&handler).await;
-                assert_ok!(request);
+                let response = router.clone().oneshot(test_request()).await.unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
 
                 debug!("waiting for futures to terminate");
                 for handle in requests {
@@ -917,25 +881,14 @@ mod tests {
                     )
                     .unwrap(),
                 );
-                let handler = Arc::new(queued_lifo(
-                    Arc::clone(&queue),
-                    HangingHandler {
-                        unhang: Arc::clone(&unhang),
-                    },
-                ));
+                let router = hanging_router(Arc::clone(&queue), Arc::clone(&unhang));
 
-                let requests = fill_queue(
-                    Arc::clone(&handler),
-                    concurrency,
-                    depth,
-                    &metrics,
-                    meter_prefix,
-                )
-                .await;
+                let requests =
+                    fill_queue(router.clone(), concurrency, depth, &metrics, meter_prefix).await;
 
                 debug!("sending request, should fail");
-                let request = get("/").run_async(&handler).await;
-                assert_status!(request, Status::TooManyRequests);
+                let response = router.clone().oneshot(test_request()).await.unwrap();
+                assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
 
                 debug!("draining the queue");
                 while get_outstanding_requests_gauge(&metrics, meter_prefix).await > Some(0) {
@@ -947,8 +900,8 @@ mod tests {
 
                 debug!("sending request, should succeed");
                 unhang.notify_one();
-                let request = get("/").run_async(&handler).await;
-                assert_ok!(request);
+                let response = router.clone().oneshot(test_request()).await.unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
 
                 debug!("shutting down metrics");
                 metrics.shutdown().await;
@@ -982,21 +935,10 @@ mod tests {
                     LIFORequestQueue::new(concurrency, depth, &metrics.meter, meter_prefix, None)
                         .unwrap(),
                 );
-                let handler = Arc::new(queued_lifo(
-                    Arc::clone(&queue),
-                    HangingHandler {
-                        unhang: Arc::clone(&unhang),
-                    },
-                ));
+                let router = hanging_router(Arc::clone(&queue), Arc::clone(&unhang));
 
-                let requests = fill_queue(
-                    Arc::clone(&handler),
-                    concurrency,
-                    depth,
-                    &metrics,
-                    meter_prefix,
-                )
-                .await;
+                let requests =
+                    fill_queue(router.clone(), concurrency, depth, &metrics, meter_prefix).await;
 
                 let concurrency = concurrency as usize;
                 debug!("freeing up one slot in the queue");
@@ -1004,14 +946,14 @@ mod tests {
                 wait_for(&metrics, meter_prefix, |q| q == concurrency + depth - 1).await;
 
                 debug!("sending new request, should be queued");
-                let request_queue = Arc::clone(&queue);
-                let request = tokio::spawn(async move {
-                    get("/")
-                        .run_async(&queued_lifo(request_queue, |conn: Conn| async move {
-                            conn.ok("hello")
-                        }))
-                        .await
-                });
+                let new_router = axum::Router::new()
+                    .route("/", axum::routing::get(|| async { "hello" }))
+                    .layer(axum::middleware::from_fn_with_state(
+                        Arc::clone(&queue),
+                        lifo_queue_middleware,
+                    ));
+                let request =
+                    tokio::spawn(async move { new_router.oneshot(test_request()).await.unwrap() });
 
                 debug!("waiting for new request to be queued");
                 wait_for(&metrics, meter_prefix, |q| q == concurrency + depth).await;
@@ -1020,8 +962,8 @@ mod tests {
                 unhang.notify_one();
 
                 debug!("new request should be immediately processed");
-                let request = request.await.unwrap();
-                assert_ok!(request);
+                let response = request.await.unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
 
                 debug!("draining the queue");
                 while get_outstanding_requests_gauge(&metrics, meter_prefix).await > Some(0) {
@@ -1053,7 +995,7 @@ mod tests {
             let metrics = InMemoryMetricInfrastructure::new();
             let concurrency = 1;
             let depth = 1;
-            let timeout = Duration::from_millis(100);
+            let timeout_duration = Duration::from_millis(100);
 
             let queue = Arc::new(
                 LIFORequestQueue::new(
@@ -1061,27 +1003,22 @@ mod tests {
                     depth,
                     &metrics.meter,
                     meter_prefix,
-                    Some(timeout),
+                    Some(timeout_duration),
                 )
                 .unwrap(),
             );
 
             // Create a hanging handler that never releases requests
             let unhang = Arc::new(Notify::new());
-            let handler = Arc::new(queued_lifo(
-                Arc::clone(&queue),
-                HangingHandler {
-                    unhang: Arc::clone(&unhang),
-                },
-            ));
+            let router = hanging_router(Arc::clone(&queue), Arc::clone(&unhang));
 
             // Fill up the active slots (concurrency) but leave queue empty
             let mut requests = Vec::new();
             for _ in 0..concurrency {
-                let handler = Arc::clone(&handler);
-                requests.push(tokio::spawn(
-                    async move { get("/").run_async(&handler).await },
-                ));
+                let router = router.clone();
+                requests.push(tokio::spawn(async move {
+                    router.oneshot(test_request()).await.unwrap()
+                }));
             }
 
             // Wait for all active slots to be filled
@@ -1089,20 +1026,21 @@ mod tests {
 
             // Now make a request that will be queued and should timeout
             let start = Instant::now();
-            let result = get("/").run_async(&handler).await;
+            let response = router.clone().oneshot(test_request()).await.unwrap();
             let elapsed = start.elapsed();
 
             // Should have timed out with TooManyRequests status
             assert_eq!(
-                result.status().unwrap(),
-                Status::TooManyRequests,
+                response.status(),
+                StatusCode::TOO_MANY_REQUESTS,
                 "Expected TooManyRequests (429) but got {:?}",
-                result.status().unwrap()
+                response.status()
             );
             // Should have taken approximately the timeout duration (with some tolerance)
             assert!(
-                elapsed >= timeout && elapsed < timeout + Duration::from_millis(200),
-                "Request took {elapsed:?}, expected around {timeout:?}"
+                elapsed >= timeout_duration
+                    && elapsed < timeout_duration + Duration::from_millis(200),
+                "Request took {elapsed:?}, expected around {timeout_duration:?}"
             );
 
             // Check timeout metric was incremented

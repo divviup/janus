@@ -1136,34 +1136,9 @@ pub mod test_util {
         time::MockClock,
     };
     use janus_messages::codec::Decode;
-    use trillium::Handler;
-    use trillium_testing::{TestConn, assert_headers};
 
     use super::AggregatorHandlerBuilder;
     use crate::aggregator::test_util::default_aggregator_config;
-
-    // Trillium-based test helpers (used by tests not yet migrated to axum).
-
-    pub async fn take_response_body_conn(test_conn: &mut TestConn) -> Vec<u8> {
-        test_conn
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
-            .await
-            .unwrap()
-            .into_owned()
-    }
-
-    pub async fn decode_response_body_conn<T: Decode>(test_conn: &mut TestConn) -> T {
-        T::get_decoded(&take_response_body_conn(test_conn).await).unwrap()
-    }
-
-    pub async fn take_problem_details_conn(test_conn: &mut TestConn) -> serde_json::Value {
-        assert_headers!(&test_conn, "content-type" => "application/problem+json");
-        serde_json::from_slice(&take_response_body_conn(test_conn).await).unwrap()
-    }
-
-    // Axum-based test helpers.
 
     pub async fn take_response_body(response: &mut Response) -> Vec<u8> {
         let body = std::mem::take(response.body_mut());
@@ -1194,8 +1169,6 @@ pub mod test_util {
         pub clock: MockClock,
         pub ephemeral_datastore: EphemeralDatastore,
         pub datastore: Arc<Datastore<MockClock>>,
-        // TODO(#4283): Remove when all tests are migrated to tower::oneshot.
-        pub handler: Box<dyn Handler>,
         pub router: Router,
         pub hpke_keypair: HpkeKeypair,
     }
@@ -1211,7 +1184,7 @@ pub mod test_util {
             let hpke_keypair = datastore.put_hpke_key().await.unwrap();
 
             let meter = noop_meter();
-            let builder = AggregatorHandlerBuilder::new(
+            let router = AggregatorHandlerBuilder::new(
                 datastore.clone(),
                 clock.clone(),
                 TestRuntime::default(),
@@ -1221,23 +1194,18 @@ pub mod test_util {
             .await
             .unwrap()
             // Shake out any bugs with helper request queuing.
-            .with_helper_aggregation_request_queue(
-                super::HelperAggregationRequestQueue {
-                    depth: 16,
-                    concurrency: 2,
-                    timeout_ms: None,
-                },
-            );
-
-            let helper_queue = builder.build_helper_queue().unwrap();
-            let router = builder.build_axum_router(helper_queue.clone());
-            let handler = builder.build_trillium_handler(helper_queue).await.unwrap();
+            .with_helper_aggregation_request_queue(super::HelperAggregationRequestQueue {
+                depth: 16,
+                concurrency: 2,
+                timeout_ms: None,
+            })
+            .build()
+            .unwrap();
 
             Self {
                 clock,
                 ephemeral_datastore,
                 datastore,
-                handler: Box::new(handler),
                 router,
                 hpke_keypair,
             }

@@ -30,7 +30,6 @@ test-util = [
     "janus_messages/test-util",
     "opentelemetry_sdk/testing",
     "dep:testcontainers",
-    "dep:trillium-testing",
 ]
 
 [dependencies]
@@ -101,10 +100,8 @@ tracing-subscriber = { workspace = true, features = ["std", "env-filter", "fmt",
 tower = { workspace = true }
 tower-http = { workspace = true }
 trillium.workspace = true
-trillium-macros = "0.0.6"
 trillium-prometheus = { workspace = true, optional = true }
 trillium-proxy.workspace = true
-trillium-testing = { workspace = true, optional = true }
 trillium-tokio.workspace = true
 url.workspace = true
 uuid = { workspace = true, features = ["serde"] }
@@ -120,7 +117,6 @@ quickcheck_macros = { workspace = true }
 rstest.workspace = true
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["net", "test-util"] } # ensure this remains compatible with the non-dev dependency
-trillium-testing.workspace = true
 trycmd = { workspace = true }
 wait-timeout = { workspace = true }
 

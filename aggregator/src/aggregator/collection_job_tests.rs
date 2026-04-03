@@ -1,7 +1,8 @@
 use std::{collections::HashSet, sync::Arc};
 
 use assert_matches::assert_matches;
-use http::StatusCode;
+use axum::{Router, body::Body};
+use http::{Request, StatusCode};
 use janus_aggregator_core::{
     datastore::{
         Datastore,
@@ -35,26 +36,19 @@ use prio::{
 };
 use rand::random;
 use serde_json::json;
-use trillium::{Handler, KnownHeaderName, Status};
-use trillium_testing::{
-    TestConn, assert_body, assert_headers,
-    prelude::{get, put},
-};
+use tower::ServiceExt;
 
 use super::http_handlers::AggregatorHandlerBuilder;
 use crate::aggregator::{
     Config,
-    http_handlers::test_util::{
-        decode_response_body_conn as decode_response_body,
-        take_problem_details_conn as take_problem_details,
-    },
+    http_handlers::test_util::{decode_response_body, take_problem_details, take_response_body},
     test_util::BATCH_AGGREGATION_SHARD_COUNT,
 };
 
 pub(crate) struct CollectionJobTestCase {
     pub(super) task: Task,
     clock: MockClock,
-    pub(super) handler: Box<dyn Handler>,
+    pub(super) router: Router,
     pub(super) datastore: Arc<Datastore<MockClock>>,
     _ephemeral_datastore: EphemeralDatastore,
 }
@@ -65,31 +59,38 @@ impl CollectionJobTestCase {
         collection_job_id: &CollectionJobId,
         request: &CollectionJobReq<B>,
         auth_token: Option<&AuthenticationToken>,
-    ) -> TestConn {
-        let mut test_conn = put(self
-            .task
-            .collection_job_uri(collection_job_id)
-            .unwrap()
-            .path());
-        if let Some(auth) = auth_token {
-            test_conn = test_conn.with_authentication_token(auth);
-        }
-
-        test_conn
-            .with_request_header(
-                KnownHeaderName::ContentType,
-                CollectionJobReq::<TimeInterval>::MEDIA_TYPE,
+    ) -> http::Response<Body> {
+        let mut builder = Request::builder()
+            .method("PUT")
+            .uri(
+                self.task
+                    .collection_job_uri(collection_job_id)
+                    .unwrap()
+                    .path(),
             )
-            .with_request_body(request.get_encoded().unwrap())
-            .run_async(&self.handler)
+            .header(
+                http::header::CONTENT_TYPE,
+                CollectionJobReq::<TimeInterval>::MEDIA_TYPE,
+            );
+        if let Some(auth) = auth_token {
+            builder = builder.with_authentication_token(auth);
+        }
+        self.router
+            .clone()
+            .oneshot(
+                builder
+                    .body(Body::from(request.get_encoded().unwrap()))
+                    .unwrap(),
+            )
             .await
+            .unwrap()
     }
 
     pub(super) async fn put_collection_job<B: BatchModeTrait>(
         &self,
         collection_job_id: &CollectionJobId,
         request: &CollectionJobReq<B>,
-    ) -> TestConn {
+    ) -> http::Response<Body> {
         self.put_collection_job_with_auth_token(
             collection_job_id,
             request,
@@ -102,19 +103,27 @@ impl CollectionJobTestCase {
         &self,
         collection_job_id: &CollectionJobId,
         auth_token: Option<&AuthenticationToken>,
-    ) -> TestConn {
-        let mut test_conn = get(self
-            .task
-            .collection_job_uri(collection_job_id)
-            .unwrap()
-            .path());
+    ) -> http::Response<Body> {
+        let mut builder = Request::builder().method("GET").uri(
+            self.task
+                .collection_job_uri(collection_job_id)
+                .unwrap()
+                .path(),
+        );
         if let Some(auth) = auth_token {
-            test_conn = test_conn.with_authentication_token(auth);
+            builder = builder.with_authentication_token(auth);
         }
-        test_conn.run_async(&self.handler).await
+        self.router
+            .clone()
+            .oneshot(builder.body(Body::empty()).unwrap())
+            .await
+            .unwrap()
     }
 
-    pub(super) async fn get_collection_job(&self, collection_job_id: &CollectionJobId) -> TestConn {
+    pub(super) async fn get_collection_job(
+        &self,
+        collection_job_id: &CollectionJobId,
+    ) -> http::Response<Body> {
         self.get_collection_job_with_auth_token(
             collection_job_id,
             Some(self.task.collector_auth_token()),
@@ -272,7 +281,7 @@ pub(crate) async fn setup_collection_job_test_case(
     datastore.put_aggregator_task(&role_task).await.unwrap();
     datastore.put_hpke_key().await.unwrap();
 
-    let handler = AggregatorHandlerBuilder::new(
+    let router = AggregatorHandlerBuilder::new(
         Arc::clone(&datastore),
         clock.clone(),
         TestRuntime::default(),
@@ -284,14 +293,13 @@ pub(crate) async fn setup_collection_job_test_case(
     )
     .await
     .unwrap()
-    .build_trillium_handler(None)
-    .await
+    .build()
     .unwrap();
 
     CollectionJobTestCase {
         task,
         clock,
-        handler: Box::new(handler),
+        router,
         datastore,
         _ephemeral_datastore: ephemeral_datastore,
     }
@@ -346,15 +354,15 @@ async fn collection_job_success_leader_selected() {
     for _ in 0..2 {
         let collection_job_id: CollectionJobId = random();
 
-        let mut test_conn = test_case
+        let mut response = test_case
             .put_collection_job(&collection_job_id, &request)
             .await;
-        assert_eq!(test_conn.status(), Some(Status::Created));
-        assert_body!(&mut test_conn, "");
+        assert_eq!(response.status(), StatusCode::CREATED);
+        assert!(take_response_body(&mut response).await.is_empty());
 
-        let mut test_conn = test_case.get_collection_job(&collection_job_id).await;
-        assert_eq!(test_conn.status(), Some(Status::Ok));
-        assert_body!(&mut test_conn, "");
+        let mut response = test_case.get_collection_job(&collection_job_id).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(take_response_body(&mut response).await.is_empty());
 
         // Update the collection job with the aggregate shares. collection job should now be
         // complete.
@@ -419,11 +427,14 @@ async fn collection_job_success_leader_selected() {
             panic!("unexpected batch ID");
         }
 
-        let mut test_conn = test_case.get_collection_job(&collection_job_id).await;
-        assert_headers!(&test_conn, "content-type" => (CollectionJobResp::<LeaderSelected>::MEDIA_TYPE));
+        let mut response = test_case.get_collection_job(&collection_job_id).await;
+        assert_eq!(
+            response.headers().get("content-type").unwrap(),
+            CollectionJobResp::<LeaderSelected>::MEDIA_TYPE,
+        );
 
         let collect_resp: CollectionJobResp<LeaderSelected> =
-            decode_response_body(&mut test_conn).await;
+            decode_response_body(&mut response).await;
         let (
             report_count,
             interval,
@@ -491,12 +502,12 @@ async fn collection_job_success_leader_selected() {
     // ought to fail.
     let collection_job_id: CollectionJobId = random();
 
-    let mut test_conn = test_case
+    let mut response = test_case
         .put_collection_job(&collection_job_id, &request)
         .await;
-    assert_eq!(test_conn.status(), Some(Status::BadRequest));
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert_eq!(
-        take_problem_details(&mut test_conn).await,
+        take_problem_details(&mut response).await,
         json!({
             "status": StatusCode::BAD_REQUEST.as_u16(),
             "type": "urn:ietf:params:ppm:dap:error:batchInvalid",
@@ -532,7 +543,7 @@ async fn collection_job_put_idempotence_time_interval() {
         let response = test_case
             .put_collection_job(&collection_job_id, &request)
             .await;
-        assert_eq!(response.status(), Some(Status::Created));
+        assert_eq!(response.status(), StatusCode::CREATED);
     }
 
     // There should only be a single collection job despite two successful PUTs
@@ -587,7 +598,7 @@ async fn collection_job_put_idempotence_time_interval_varied_collection_id() {
         let response = test_case
             .put_collection_job(collection_job_id, &request)
             .await;
-        assert_eq!(response.status(), Some(Status::Created));
+        assert_eq!(response.status(), StatusCode::CREATED);
     }
 
     test_case
@@ -637,7 +648,7 @@ async fn collection_job_put_idempotence_time_interval_mutate_time_interval() {
     let response = test_case
         .put_collection_job(&collection_job_id, &request)
         .await;
-    assert_eq!(response.status(), Some(Status::Created));
+    assert_eq!(response.status(), StatusCode::CREATED);
 
     let mutated_request = CollectionJobReq::new(
         Query::new_time_interval(
@@ -653,7 +664,7 @@ async fn collection_job_put_idempotence_time_interval_mutate_time_interval() {
     let response = test_case
         .put_collection_job(&collection_job_id, &mutated_request)
         .await;
-    assert_eq!(response.status(), Some(Status::Conflict));
+    assert_eq!(response.status(), StatusCode::CONFLICT);
 }
 
 #[tokio::test]
@@ -672,7 +683,7 @@ async fn collection_job_put_idempotence_time_interval_mutate_aggregation_param()
     let response = test_case
         .put_collection_job(&collection_job_id, &request)
         .await;
-    assert_eq!(response.status(), Some(Status::Created));
+    assert_eq!(response.status(), StatusCode::CREATED);
 
     let mutated_request = CollectionJobReq::new(
         Query::new_time_interval(Interval::minimal(Time::from_time_precision_units(0)).unwrap()),
@@ -682,7 +693,7 @@ async fn collection_job_put_idempotence_time_interval_mutate_aggregation_param()
     let response = test_case
         .put_collection_job(&collection_job_id, &mutated_request)
         .await;
-    assert_eq!(response.status(), Some(Status::Conflict));
+    assert_eq!(response.status(), StatusCode::CONFLICT);
 }
 
 #[tokio::test]
@@ -702,7 +713,7 @@ async fn collection_job_put_idempotence_leader_selected() {
             .put_collection_job(&collection_job_id, &request)
             .await;
 
-        assert_eq!(response.status(), Some(Status::Created));
+        assert_eq!(response.status(), StatusCode::CREATED);
 
         // Make sure that there is only ever a single collection job, and that it uses the same
         // batch ID after each PUT
@@ -751,7 +762,7 @@ async fn collection_job_put_idempotence_leader_selected_mutate_aggregation_param
         .put_collection_job(&collection_job_id, &request)
         .await;
 
-    assert_eq!(response.status(), Some(Status::Created));
+    assert_eq!(response.status(), StatusCode::CREATED);
 
     let mutated_request = CollectionJobReq::new(
         Query::new_leader_selected(),
@@ -761,7 +772,7 @@ async fn collection_job_put_idempotence_leader_selected_mutate_aggregation_param
     let response = test_case
         .put_collection_job(&collection_job_id, &mutated_request)
         .await;
-    assert_eq!(response.status(), Some(Status::Conflict));
+    assert_eq!(response.status(), StatusCode::CONFLICT);
 }
 
 #[tokio::test]
@@ -780,32 +791,32 @@ async fn collection_job_put_idempotence_leader_selected_no_extra_reports() {
     let response = test_case
         .put_collection_job(&collection_job_id_1, &request)
         .await;
-    assert_eq!(response.status(), Some(Status::Created));
+    assert_eq!(response.status(), StatusCode::CREATED);
 
     // Fetch the first collection job, to advance the current batch.
     let response = test_case.get_collection_job(&collection_job_id_1).await;
-    assert_eq!(response.status(), Some(Status::Ok));
+    assert_eq!(response.status(), StatusCode::OK);
 
     // Create the second collection job.
     let response = test_case
         .put_collection_job(&collection_job_id_2, &request)
         .await;
-    assert_eq!(response.status(), Some(Status::Created));
+    assert_eq!(response.status(), StatusCode::CREATED);
 
     // Fetch the second collection job, to advance the current batch. There are now no outstanding
     // batches left.
     let response = test_case.get_collection_job(&collection_job_id_2).await;
-    assert_eq!(response.status(), Some(Status::Ok));
+    assert_eq!(response.status(), StatusCode::OK);
 
     // Re-send the collection job creation requests to confirm they are still idempotent.
     let response = test_case
         .put_collection_job(&collection_job_id_1, &request)
         .await;
-    assert_eq!(response.status(), Some(Status::Created));
+    assert_eq!(response.status(), StatusCode::CREATED);
     let response = test_case
         .put_collection_job(&collection_job_id_2, &request)
         .await;
-    assert_eq!(response.status(), Some(Status::Created));
+    assert_eq!(response.status(), StatusCode::CREATED);
 }
 
 #[tokio::test]
@@ -828,7 +839,7 @@ async fn collection_job_batch_mode_misaligned() {
     let mut response = test_case
         .put_collection_job(&collection_job_id, &request)
         .await;
-    assert_eq!(response.status(), Some(Status::BadRequest));
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert_eq!(
         take_problem_details(&mut response).await,
         json!({
