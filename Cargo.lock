@@ -2758,8 +2758,8 @@ version = "0.9.0-prerelease-1"
 dependencies = [
  "anyhow",
  "assert_matches",
- "async-trait",
  "aws-lc-rs",
+ "axum 0.8.8",
  "base64 0.22.1",
  "chrono",
  "educe",
@@ -2770,7 +2770,6 @@ dependencies = [
  "janus_core",
  "janus_messages 0.9.0-prerelease-1",
  "opentelemetry",
- "querystring",
  "rand 0.10.0",
  "rstest",
  "serde",
@@ -2778,12 +2777,8 @@ dependencies = [
  "serde_test",
  "thiserror 2.0.18",
  "tokio",
+ "tower 0.5.3",
  "tracing",
- "trillium",
- "trillium-api",
- "trillium-opentelemetry",
- "trillium-router",
- "trillium-testing",
  "url",
 ]
 
@@ -3744,12 +3739,6 @@ dependencies = [
  "prost 0.13.1",
  "tonic 0.12.3",
 ]
-
-[[package]]
-name = "opentelemetry-semantic-conventions"
-version = "0.27.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc1b6902ff63b32ef6c489e8048c5e253e2e4a803ea3ea7e783914536eb15c52"
 
 [[package]]
 name = "opentelemetry_sdk"
@@ -6284,22 +6273,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "trillium-api"
-version = "0.2.0-rc.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87ac0b2a746f70736c3b1c78078d361d71a1705121f2b134a791d50de2a4f78d"
-dependencies = [
- "log",
- "mime",
- "serde",
- "serde_json",
- "serde_path_to_error",
- "thiserror 1.0.69",
- "trillium",
- "trillium-macros 0.0.6",
-]
-
-[[package]]
 name = "trillium-client"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6374,18 +6347,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "trillium-opentelemetry"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b5e36d8e79ad6b8858715b9342b4d761d936dcd884f5680ecfb15c0076fa46a"
-dependencies = [
- "opentelemetry",
- "opentelemetry-semantic-conventions",
- "trillium",
- "trillium-macros 0.0.6",
 ]
 
 [[package]]
@@ -6480,7 +6441,6 @@ dependencies = [
  "trillium-http",
  "trillium-macros 0.0.6",
  "trillium-server-common",
- "trillium-tokio",
  "url",
 ]
 

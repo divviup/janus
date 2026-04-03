@@ -1,17 +1,22 @@
 use std::{
     str::FromStr,
     sync::{Arc, LazyLock},
-    unreachable,
 };
 
 use anyhow::Context;
 use aws_lc_rs::digest::{SHA256, digest};
+use axum::{
+    Json,
+    extract::{Path, Query, State},
+    response::IntoResponse,
+};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::TimeDelta;
+use http::StatusCode;
 use janus_aggregator_core::{
     SecretBytes,
     datastore::{
-        self, Datastore,
+        self,
         task_counters::{TaskAggregationCounter, TaskUploadCounter},
     },
     task::{AggregatorTask, AggregatorTaskParameters},
@@ -26,31 +31,34 @@ use janus_messages::{
     Duration, HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId, Role, TaskId,
     batch_mode::Code as SupportedBatchMode,
 };
-use querystring::querify;
 use rand::random;
-use trillium::{Conn, Status};
-use trillium_api::{Json, State};
+use serde::Deserialize;
 
 use crate::{
-    Config, ConnExt, Error, git_revision,
+    ApiState, Error, git_revision,
     models::{
         AggregatorApiConfig, AggregatorRole, DeleteTaskprovPeerAggregatorReq,
         GetTaskAggregationMetricsResp, GetTaskIdsResp, GetTaskUploadMetricsResp, HpkeConfigResp,
         PatchHpkeConfigReq, PatchTaskReq, PostTaskReq, PostTaskprovPeerAggregatorReq,
         PutHpkeConfigReq, SupportedVdaf, TaskResp, TaskprovPeerAggregatorResp,
     },
+    parse_hpke_config_id_param, parse_task_id_param,
 };
 
-pub(super) async fn get_config(
-    _: &mut Conn,
-    State(config): State<Arc<Config>>,
+#[derive(Deserialize)]
+pub(super) struct PaginationQuery {
+    pagination_token: Option<String>,
+}
+
+pub(super) async fn get_config<C: Clock>(
+    State(state): State<Arc<ApiState<C>>>,
 ) -> Json<AggregatorApiConfig> {
     static VERSION: LazyLock<String> =
         LazyLock::new(|| format!("{}-{}", env!("CARGO_PKG_VERSION"), git_revision()));
 
     Json(AggregatorApiConfig {
         protocol: "DAP-18",
-        dap_url: config.public_dap_url.clone(),
+        dap_url: state.cfg.public_dap_url.clone(),
         role: AggregatorRole::Either,
         vdafs: Vec::from([
             SupportedVdaf::Prio3Count,
@@ -75,19 +83,18 @@ pub(super) async fn get_config(
 }
 
 pub(super) async fn get_task_ids<C: Clock>(
-    conn: &mut Conn,
-    State(ds): State<Arc<Datastore<C>>>,
+    State(state): State<Arc<ApiState<C>>>,
+    Query(query): Query<PaginationQuery>,
 ) -> Result<Json<GetTaskIdsResp>, Error> {
-    const PAGINATION_TOKEN_KEY: &str = "pagination_token";
-    let lower_bound = querify(conn.querystring())
-        .into_iter()
-        .find(|&(k, _)| k == PAGINATION_TOKEN_KEY)
-        .map(|(_, v)| TaskId::from_str(v))
+    let lower_bound = query
+        .pagination_token
+        .map(|v| TaskId::from_str(&v))
         .transpose()
         .context("Couldn't parse pagination_token")
         .map_err(|err| Error::BadRequest(err.into()))?;
 
-    let task_ids = ds
+    let task_ids = state
+        .ds
         .run_tx("get_task_ids", |tx| {
             Box::pin(async move { tx.get_task_ids(lower_bound).await })
         })
@@ -101,8 +108,8 @@ pub(super) async fn get_task_ids<C: Clock>(
 }
 
 pub(super) async fn post_task<C: Clock>(
-    _: &mut Conn,
-    (State(ds), Json(req)): (State<Arc<Datastore<C>>>, Json<PostTaskReq>),
+    State(state): State<Arc<ApiState<C>>>,
+    Json(req): Json<PostTaskReq>,
 ) -> Result<Json<TaskResp>, Error> {
     if !matches!(req.role, Role::Leader | Role::Helper) {
         return Err(Error::BadRequest(
@@ -209,55 +216,57 @@ pub(super) async fn post_task<C: Clock>(
         .map_err(|err| Error::BadRequest(err.into()))?,
     );
 
-    ds.run_tx("post_task", |tx| {
-        let task = Arc::clone(&task);
-        Box::pin(async move {
-            if let Some(existing_task) = tx.get_aggregator_task(task.id()).await? {
-            // Check whether the existing task in the DB corresponds to the incoming task, ignoring
-            // those fields that are randomly generated.
-            if existing_task.peer_aggregator_endpoint() == task.peer_aggregator_endpoint()
-                && existing_task.batch_mode() == task.batch_mode()
-                && existing_task.vdaf() == task.vdaf()
-                && existing_task.opaque_vdaf_verify_key() == task.opaque_vdaf_verify_key()
-                && existing_task.role() == task.role()
-                && existing_task.task_start() == task.task_start()
-                && existing_task.task_end() == task.task_end()
-                && existing_task.min_batch_size() == task.min_batch_size()
-                && existing_task.time_precision() == task.time_precision()
-                && existing_task.tolerable_clock_skew() == task.tolerable_clock_skew()
-                && existing_task.collector_hpke_config() == task.collector_hpke_config() {
-                    return Ok(())
+    state
+        .ds
+        .run_tx("post_task", |tx| {
+            let task = Arc::clone(&task);
+            Box::pin(async move {
+                if let Some(existing_task) = tx.get_aggregator_task(task.id()).await? {
+                    if existing_task.peer_aggregator_endpoint() == task.peer_aggregator_endpoint()
+                        && existing_task.batch_mode() == task.batch_mode()
+                        && existing_task.vdaf() == task.vdaf()
+                        && existing_task.opaque_vdaf_verify_key() == task.opaque_vdaf_verify_key()
+                        && existing_task.role() == task.role()
+                        && existing_task.task_start() == task.task_start()
+                        && existing_task.task_end() == task.task_end()
+                        && existing_task.min_batch_size() == task.min_batch_size()
+                        && existing_task.time_precision() == task.time_precision()
+                        && existing_task.tolerable_clock_skew() == task.tolerable_clock_skew()
+                        && existing_task.collector_hpke_config() == task.collector_hpke_config()
+                    {
+                        return Ok(());
+                    }
+
+                    let err = Error::Conflict(
+                        "task with same VDAF verify key and task ID already exists with different parameters".to_string(),
+                    );
+                    return Err(datastore::Error::User(err.into()));
                 }
 
-                let err = Error::Conflict(
-                    "task with same VDAF verify key and task ID already exists with different parameters".to_string(),
-                );
-                return Err(datastore::Error::User(err.into()));
-            }
-
-            tx.put_aggregator_task(&task).await
+                tx.put_aggregator_task(&task).await
+            })
         })
-    })
-    .await?;
+        .await?;
 
     let mut task_resp =
         TaskResp::try_from(task.as_ref()).map_err(|err| Error::Internal(err.into()))?;
 
-    // When creating a new task in the helper, we must put the unhashed aggregator auth token in the
-    // response so that divviup-api can later provide it to the leader, but the helper doesn't store
-    // the unhashed token and can't later provide it.
+    // When creating a new task in the helper, we must put the unhashed aggregator auth token in
+    // the response so that divviup-api can later provide it to the leader, but the helper doesn't
+    // store the unhashed token and can't later provide it.
     task_resp.aggregator_auth_token = aggregator_auth_token;
 
     Ok(Json(task_resp))
 }
 
 pub(super) async fn get_task<C: Clock>(
-    conn: &mut Conn,
-    State(ds): State<Arc<Datastore<C>>>,
+    State(state): State<Arc<ApiState<C>>>,
+    Path(task_id): Path<String>,
 ) -> Result<Json<TaskResp>, Error> {
-    let task_id = conn.task_id_param()?;
+    let task_id = parse_task_id_param(&task_id)?;
 
-    let task = ds
+    let task = state
+        .ds
         .run_tx("get_task", |tx| {
             Box::pin(async move { tx.get_aggregator_task(&task_id).await })
         })
@@ -270,27 +279,30 @@ pub(super) async fn get_task<C: Clock>(
 }
 
 pub(super) async fn delete_task<C: Clock>(
-    conn: &mut Conn,
-    State(ds): State<Arc<Datastore<C>>>,
-) -> Result<Status, Error> {
-    let task_id = conn.task_id_param()?;
-    match ds
+    State(state): State<Arc<ApiState<C>>>,
+    Path(task_id): Path<String>,
+) -> Result<StatusCode, Error> {
+    let task_id = parse_task_id_param(&task_id)?;
+    match state
+        .ds
         .run_tx("delete_task", |tx| {
             Box::pin(async move { tx.delete_task(&task_id).await })
         })
         .await
     {
-        Ok(_) | Err(datastore::Error::MutationTargetNotFound) => Ok(Status::NoContent),
+        Ok(_) | Err(datastore::Error::MutationTargetNotFound) => Ok(StatusCode::NO_CONTENT),
         Err(err) => Err(err.into()),
     }
 }
 
 pub(super) async fn patch_task<C: Clock>(
-    conn: &mut Conn,
-    (State(ds), Json(req)): (State<Arc<Datastore<C>>>, Json<PatchTaskReq>),
+    State(state): State<Arc<ApiState<C>>>,
+    Path(task_id): Path<String>,
+    Json(req): Json<PatchTaskReq>,
 ) -> Result<Json<TaskResp>, Error> {
-    let task_id = conn.task_id_param()?;
-    let task = ds
+    let task_id = parse_task_id_param(&task_id)?;
+    let task = state
+        .ds
         .run_tx("patch_task", |tx| {
             Box::pin(async move {
                 if let Some(task_end) = req.task_end {
@@ -308,67 +320,75 @@ pub(super) async fn patch_task<C: Clock>(
 }
 
 pub(super) async fn get_task_upload_metrics<C: Clock>(
-    conn: &mut Conn,
-    State(ds): State<Arc<Datastore<C>>>,
+    State(state): State<Arc<ApiState<C>>>,
+    Path(task_id): Path<String>,
 ) -> Result<Json<GetTaskUploadMetricsResp>, Error> {
-    let task_id = conn.task_id_param()?;
+    let task_id = parse_task_id_param(&task_id)?;
     Ok(Json(GetTaskUploadMetricsResp(
-        ds.run_tx("get_task_upload_metrics", |tx| {
-            Box::pin(async move { TaskUploadCounter::load(tx, &task_id).await })
-        })
-        .await?
-        .ok_or(Error::NotFound)?,
+        state
+            .ds
+            .run_tx("get_task_upload_metrics", |tx| {
+                Box::pin(async move { TaskUploadCounter::load(tx, &task_id).await })
+            })
+            .await?
+            .ok_or(Error::NotFound)?,
     )))
 }
 
 pub(super) async fn get_task_aggregation_metrics<C: Clock>(
-    conn: &mut Conn,
-    State(ds): State<Arc<Datastore<C>>>,
+    State(state): State<Arc<ApiState<C>>>,
+    Path(task_id): Path<String>,
 ) -> Result<Json<GetTaskAggregationMetricsResp>, Error> {
-    let task_id = conn.task_id_param()?;
+    let task_id = parse_task_id_param(&task_id)?;
     Ok(Json(GetTaskAggregationMetricsResp(
-        ds.run_tx("get_task_aggregation_metrics", |tx| {
-            Box::pin(async move { TaskAggregationCounter::load(tx, &task_id).await })
-        })
-        .await?
-        .ok_or(Error::NotFound)?,
+        state
+            .ds
+            .run_tx("get_task_aggregation_metrics", |tx| {
+                Box::pin(async move { TaskAggregationCounter::load(tx, &task_id).await })
+            })
+            .await?
+            .ok_or(Error::NotFound)?,
     )))
 }
 
 pub(super) async fn get_hpke_configs<C: Clock>(
-    _: &mut Conn,
-    State(ds): State<Arc<Datastore<C>>>,
+    State(state): State<Arc<ApiState<C>>>,
 ) -> Result<Json<Vec<HpkeConfigResp>>, Error> {
     Ok(Json(
-        ds.run_tx("get_hpke_configs", |tx| {
-            Box::pin(async move { tx.get_hpke_keypairs().await })
-        })
-        .await?
-        .into_iter()
-        .map(HpkeConfigResp::from)
-        .collect::<Vec<_>>(),
+        state
+            .ds
+            .run_tx("get_hpke_configs", |tx| {
+                Box::pin(async move { tx.get_hpke_keypairs().await })
+            })
+            .await?
+            .into_iter()
+            .map(HpkeConfigResp::from)
+            .collect::<Vec<_>>(),
     ))
 }
 
 pub(super) async fn get_hpke_config<C: Clock>(
-    conn: &mut Conn,
-    State(ds): State<Arc<Datastore<C>>>,
+    State(state): State<Arc<ApiState<C>>>,
+    Path(config_id): Path<String>,
 ) -> Result<Json<HpkeConfigResp>, Error> {
-    let config_id = conn.hpke_config_id_param()?;
+    let config_id = parse_hpke_config_id_param(&config_id)?;
     Ok(Json(HpkeConfigResp::from(
-        ds.run_tx("get_hpke_config", |tx| {
-            Box::pin(async move { tx.get_hpke_keypair(&config_id).await })
-        })
-        .await?
-        .ok_or(Error::NotFound)?,
+        state
+            .ds
+            .run_tx("get_hpke_config", |tx| {
+                Box::pin(async move { tx.get_hpke_keypair(&config_id).await })
+            })
+            .await?
+            .ok_or(Error::NotFound)?,
     )))
 }
 
 pub(super) async fn put_hpke_config<C: Clock>(
-    _: &mut Conn,
-    (State(ds), Json(req)): (State<Arc<Datastore<C>>>, Json<PutHpkeConfigReq>),
-) -> Result<(Status, Json<HpkeConfigResp>), Error> {
-    let existing_keypairs = ds
+    State(state): State<Arc<ApiState<C>>>,
+    Json(req): Json<PutHpkeConfigReq>,
+) -> Result<impl IntoResponse, Error> {
+    let existing_keypairs = state
+        .ds
         .run_tx("put_hpke_config_determine_id", |tx| {
             Box::pin(async move { tx.get_hpke_keypairs().await })
         })
@@ -391,7 +411,8 @@ pub(super) async fn put_hpke_config<C: Clock>(
         req.aead_id.unwrap_or(HpkeAeadId::Aes128Gcm),
     )?;
 
-    let inserted_keypair = ds
+    let inserted_keypair = state
+        .ds
         .run_tx("put_hpke_config", |tx| {
             let keypair = keypair.clone();
             Box::pin(async move {
@@ -403,53 +424,58 @@ pub(super) async fn put_hpke_config<C: Clock>(
         .ok_or_else(|| Error::Internal("Newly inserted key disappeared".into()))?;
 
     Ok((
-        Status::Created,
+        StatusCode::CREATED,
         Json(HpkeConfigResp::from(inserted_keypair)),
     ))
 }
 
 pub(super) async fn patch_hpke_config<C: Clock>(
-    conn: &mut Conn,
-    (State(ds), Json(req)): (State<Arc<Datastore<C>>>, Json<PatchHpkeConfigReq>),
-) -> Result<Status, Error> {
-    let config_id = conn.hpke_config_id_param()?;
+    State(state): State<Arc<ApiState<C>>>,
+    Path(config_id): Path<String>,
+    Json(req): Json<PatchHpkeConfigReq>,
+) -> Result<StatusCode, Error> {
+    let config_id = parse_hpke_config_id_param(&config_id)?;
 
-    ds.run_tx("patch_hpke_keypair", |tx| {
-        Box::pin(async move { tx.set_hpke_keypair_state(&config_id, &req.state).await })
-    })
-    .await?;
+    state
+        .ds
+        .run_tx("patch_hpke_keypair", |tx| {
+            Box::pin(async move { tx.set_hpke_keypair_state(&config_id, &req.state).await })
+        })
+        .await?;
 
-    Ok(Status::Ok)
+    Ok(StatusCode::OK)
 }
 
 pub(super) async fn delete_hpke_config<C: Clock>(
-    conn: &mut Conn,
-    State(ds): State<Arc<Datastore<C>>>,
-) -> Result<Status, Error> {
-    let config_id = conn.hpke_config_id_param()?;
-    match ds
+    State(state): State<Arc<ApiState<C>>>,
+    Path(config_id): Path<String>,
+) -> Result<StatusCode, Error> {
+    let config_id = parse_hpke_config_id_param(&config_id)?;
+    match state
+        .ds
         .run_tx("delete_hpke_config", |tx| {
             Box::pin(async move { tx.delete_hpke_keypair(&config_id).await })
         })
         .await
     {
-        Ok(_) | Err(datastore::Error::MutationTargetNotFound) => Ok(Status::NoContent),
+        Ok(_) | Err(datastore::Error::MutationTargetNotFound) => Ok(StatusCode::NO_CONTENT),
         Err(err) => Err(err.into()),
     }
 }
 
 pub(super) async fn get_taskprov_peer_aggregators<C: Clock>(
-    _: &mut Conn,
-    State(ds): State<Arc<Datastore<C>>>,
+    State(state): State<Arc<ApiState<C>>>,
 ) -> Result<Json<Vec<TaskprovPeerAggregatorResp>>, Error> {
     Ok(Json(
-        ds.run_tx("get_taskprov_peer_aggregators", |tx| {
-            Box::pin(async move { tx.get_taskprov_peer_aggregators().await })
-        })
-        .await?
-        .into_iter()
-        .map(TaskprovPeerAggregatorResp::from)
-        .collect::<Vec<_>>(),
+        state
+            .ds
+            .run_tx("get_taskprov_peer_aggregators", |tx| {
+                Box::pin(async move { tx.get_taskprov_peer_aggregators().await })
+            })
+            .await?
+            .into_iter()
+            .map(TaskprovPeerAggregatorResp::from)
+            .collect::<Vec<_>>(),
     ))
 }
 
@@ -460,12 +486,9 @@ pub(super) async fn get_taskprov_peer_aggregators<C: Clock>(
 /// token rotation cumbersome and fragile. Since token rotation is the main use case for updating
 /// an existing peer aggregator, we will resolve peer aggregator updates in that issue.
 pub(super) async fn post_taskprov_peer_aggregator<C: Clock>(
-    _: &mut Conn,
-    (State(ds), Json(req)): (
-        State<Arc<Datastore<C>>>,
-        Json<PostTaskprovPeerAggregatorReq>,
-    ),
-) -> Result<(Status, Json<TaskprovPeerAggregatorResp>), Error> {
+    State(state): State<Arc<ApiState<C>>>,
+    Json(req): Json<PostTaskprovPeerAggregatorReq>,
+) -> Result<impl IntoResponse, Error> {
     let to_insert = PeerAggregator::new(
         req.endpoint,
         req.peer_role,
@@ -481,7 +504,8 @@ pub(super) async fn post_taskprov_peer_aggregator<C: Clock>(
     .context("Invalid request")
     .map_err(|e| Error::BadRequest(e.into()))?;
 
-    let inserted = ds
+    let inserted = state
+        .ds
         .run_tx("post_taskprov_peer_aggregator", |tx| {
             let to_insert = to_insert.clone();
             Box::pin(async move {
@@ -494,17 +518,15 @@ pub(super) async fn post_taskprov_peer_aggregator<C: Clock>(
         .map(TaskprovPeerAggregatorResp::from)
         .ok_or_else(|| Error::Internal("Newly inserted peer aggregator disappeared".into()))?;
 
-    Ok((Status::Created, Json(inserted)))
+    Ok((StatusCode::CREATED, Json(inserted)))
 }
 
 pub(super) async fn delete_taskprov_peer_aggregator<C: Clock>(
-    _: &mut Conn,
-    (State(ds), Json(req)): (
-        State<Arc<Datastore<C>>>,
-        Json<DeleteTaskprovPeerAggregatorReq>,
-    ),
-) -> Result<Status, Error> {
-    let res = ds
+    State(state): State<Arc<ApiState<C>>>,
+    Json(req): Json<DeleteTaskprovPeerAggregatorReq>,
+) -> Result<StatusCode, Error> {
+    let res = state
+        .ds
         .run_tx("delete_taskprov_peer_aggregator", |tx| {
             let req = req.clone();
             Box::pin(async move {
@@ -514,7 +536,7 @@ pub(super) async fn delete_taskprov_peer_aggregator<C: Clock>(
         })
         .await;
     match res {
-        Ok(_) | Err(datastore::Error::MutationTargetNotFound) => Ok(Status::NoContent),
+        Ok(_) | Err(datastore::Error::MutationTargetNotFound) => Ok(StatusCode::NO_CONTENT),
         Err(err) => Err(err.into()),
     }
 }

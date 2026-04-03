@@ -9,6 +9,7 @@ use std::{
 
 use anyhow::{Context, Result, anyhow};
 use aws_lc_rs::signature::{ECDSA_P256_SHA256_ASN1_SIGNING, EcdsaKeyPair};
+use axum::Router;
 use clap::Parser;
 use educe::Educe;
 use janus_aggregator_api::{self, aggregator_api_handler};
@@ -19,7 +20,6 @@ use sec1::EcPrivateKey;
 use serde::{Deserialize, Deserializer, Serialize, de};
 use tokio::{spawn, sync::watch, time::interval, try_join};
 use tracing::{error, info};
-use trillium::Handler;
 use url::Url;
 
 use crate::{
@@ -29,9 +29,7 @@ use crate::{
         key_rotator::{HpkeKeyRotatorConfig, KeyRotator, deserialize_hpke_key_rotator_config},
     },
     binaries::garbage_collector::run_garbage_collector,
-    binary_utils::{
-        BinaryContext, BinaryOptions, CommonBinaryOptions, setup_server, setup_trillium_server,
-    },
+    binary_utils::{BinaryContext, BinaryOptions, CommonBinaryOptions, setup_server},
     cache::{
         HpkeKeypairCache, TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY, TASK_AGGREGATOR_CACHE_DEFAULT_TTL,
     },
@@ -126,12 +124,12 @@ async fn run_aggregator(
                 let listen_address = if let Some(listen_address) = config.listen_address {
                     listen_address
                 } else if config.path_prefix.is_some() {
-                    // TODO(#4283): Once aggregator_api is migrated to axum, use
-                    // Router::nest() to serve it on the same port as the DAP API.
-                    // For now, serve it on a separate ephemeral port.
+                    // TODO(#4283): Use Router::nest() to serve the aggregator API on the
+                    // same port as the DAP API. For now, serve it on a separate ephemeral
+                    // port.
                     tracing::warn!(
-                        "path_prefix aggregator API config is temporarily unsupported \
-                         with axum; serving on a loopback ephemeral port. See issue #4283."
+                        "path_prefix aggregator API config is temporarily unsupported; \
+                         serving on a loopback ephemeral port. See issue #4283."
                     );
                     SocketAddr::from((Ipv6Addr::LOCALHOST, 0))
                 } else {
@@ -139,7 +137,7 @@ async fn run_aggregator(
                 };
 
                 let (aggregator_api_bound_address, aggregator_api_server) =
-                    setup_trillium_server(listen_address, stopper.clone(), handler)
+                    setup_server(listen_address, stopper.clone(), handler)
                         .await
                         .context("failed to create aggregator API server")?;
 
@@ -173,7 +171,7 @@ fn build_aggregator_api_handler<'a>(
     config: &'a Config,
     datastore: &Arc<Datastore<RealClock>>,
     meter: &Meter,
-) -> Result<Option<(impl Handler, &'a AggregatorApi)>> {
+) -> Result<Option<(Router, &'a AggregatorApi)>> {
     let Some(aggregator_api) = &config.aggregator_api else {
         return Ok(None);
     };
