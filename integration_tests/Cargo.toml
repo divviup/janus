@@ -40,7 +40,7 @@ serde.workspace = true
 serde_json = { workspace = true }
 testcontainers.workspace = true
 tokio.workspace = true
-trillium-tokio.workspace = true
+axum.workspace = true
 url.workspace = true
 uuid.workspace = true
 
@@ -58,7 +58,7 @@ rstest.workspace = true
 # feature std is enabled. See Janus issue #3744.
 rustls-webpki = { version = "0.103.10", features = ["std"] }
 tempfile = { workspace = true }
+rustls.workspace = true
 tracing.workspace = true
-trillium.workspace = true
-trillium-macros.workspace = true
 trillium-rustls.workspace = true
+trillium-tokio.workspace = true
