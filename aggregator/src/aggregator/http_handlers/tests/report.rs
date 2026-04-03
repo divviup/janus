@@ -52,17 +52,6 @@ async fn upload_handler() {
     ) {
         // HTTP status is OK regardless of what happened to the constituent reports because the HTTP
         // messages were exchanged successfully.
-        if response.status() != StatusCode::OK {
-            println!(
-                "ERROR: Report {} got status {:?}",
-                desired_report_id,
-                response.status()
-            );
-            let body = take_response_body(response).await;
-            if !body.is_empty() {
-                println!("Response body: {}", String::from_utf8_lossy(&body));
-            }
-        }
         assert_eq!(response.status(), StatusCode::OK);
 
         assert_eq!(

@@ -358,8 +358,9 @@ async fn collection_job_success_time_interval() {
     assert_eq!(response.status(), StatusCode::CREATED);
     assert!(take_response_body(&mut response).await.is_empty());
 
-    let response = test_case.get_collection_job(&collection_job_id).await;
+    let mut response = test_case.get_collection_job(&collection_job_id).await;
     assert_eq!(response.status(), StatusCode::OK);
+    assert!(take_response_body(&mut response).await.is_empty());
 
     // Update the collection job with the aggregate shares and some aggregation jobs. collection
     // job should now be complete.
