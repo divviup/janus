@@ -1260,7 +1260,6 @@ async fn get_hpke_configs() {
             Request::get("/hpke_configs")
                 .header("authorization", format!("Bearer {AUTH_TOKEN}"))
                 .header("accept", CONTENT_TYPE)
-                .header("content-type", CONTENT_TYPE)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -1304,7 +1303,6 @@ async fn get_hpke_configs() {
             Request::get("/hpke_configs")
                 .header("authorization", format!("Bearer {AUTH_TOKEN}"))
                 .header("accept", CONTENT_TYPE)
-                .header("content-type", CONTENT_TYPE)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -1358,7 +1356,6 @@ async fn get_hpke_config() {
             Request::get("/hpke_configs/123")
                 .header("authorization", format!("Bearer {AUTH_TOKEN}"))
                 .header("accept", CONTENT_TYPE)
-                .header("content-type", CONTENT_TYPE)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -1373,7 +1370,6 @@ async fn get_hpke_config() {
             Request::get("/hpke_configs/1234310294")
                 .header("authorization", format!("Bearer {AUTH_TOKEN}"))
                 .header("accept", CONTENT_TYPE)
-                .header("content-type", CONTENT_TYPE)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -1427,7 +1423,6 @@ async fn get_hpke_config() {
                 Request::get(format!("/hpke_configs/{}", key.config().id()))
                     .header("authorization", format!("Bearer {AUTH_TOKEN}"))
                     .header("accept", CONTENT_TYPE)
-                    .header("content-type", CONTENT_TYPE)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1648,10 +1643,6 @@ async fn patch_hpke_config() {
 async fn delete_hpke_config() {
     let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
-    let req = PatchHpkeConfigReq {
-        state: HpkeKeyState::Active,
-    };
-
     // Verify: non-existent key.
     let response = handler
         .clone()
@@ -1659,8 +1650,7 @@ async fn delete_hpke_config() {
             Request::delete("/hpke_configs/123")
                 .header("authorization", format!("Bearer {AUTH_TOKEN}"))
                 .header("accept", CONTENT_TYPE)
-                .header("content-type", CONTENT_TYPE)
-                .body(Body::from(serde_json::to_vec(&req).unwrap()))
+                .body(Body::empty())
                 .unwrap(),
         )
         .await
@@ -1674,8 +1664,7 @@ async fn delete_hpke_config() {
             Request::delete("/hpke_configs/1234310294")
                 .header("authorization", format!("Bearer {AUTH_TOKEN}"))
                 .header("accept", CONTENT_TYPE)
-                .header("content-type", CONTENT_TYPE)
-                .body(Body::from(serde_json::to_vec(&req).unwrap()))
+                .body(Body::empty())
                 .unwrap(),
         )
         .await
@@ -1688,7 +1677,7 @@ async fn delete_hpke_config() {
         .oneshot(
             Request::delete("/hpke_configs/123")
                 .header("accept", CONTENT_TYPE)
-                .body(Body::from(serde_json::to_vec(&req).unwrap()))
+                .body(Body::empty())
                 .unwrap(),
         )
         .await
@@ -1709,7 +1698,6 @@ async fn delete_hpke_config() {
             Request::delete(format!("/hpke_configs/{}", keypair.config().id()))
                 .header("authorization", format!("Bearer {AUTH_TOKEN}"))
                 .header("accept", CONTENT_TYPE)
-                .header("content-type", CONTENT_TYPE)
                 .body(Body::empty())
                 .unwrap(),
         )

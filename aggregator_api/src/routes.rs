@@ -8,7 +8,6 @@ use aws_lc_rs::digest::{SHA256, digest};
 use axum::{
     Json,
     extract::{Path, Query, State},
-    response::IntoResponse,
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::TimeDelta;
@@ -386,7 +385,7 @@ pub(super) async fn get_hpke_config<C: Clock>(
 pub(super) async fn put_hpke_config<C: Clock>(
     State(state): State<Arc<ApiState<C>>>,
     Json(req): Json<PutHpkeConfigReq>,
-) -> Result<impl IntoResponse, Error> {
+) -> Result<(StatusCode, Json<HpkeConfigResp>), Error> {
     let existing_keypairs = state
         .ds
         .run_tx("put_hpke_config_determine_id", |tx| {
@@ -488,7 +487,7 @@ pub(super) async fn get_taskprov_peer_aggregators<C: Clock>(
 pub(super) async fn post_taskprov_peer_aggregator<C: Clock>(
     State(state): State<Arc<ApiState<C>>>,
     Json(req): Json<PostTaskprovPeerAggregatorReq>,
-) -> Result<impl IntoResponse, Error> {
+) -> Result<(StatusCode, Json<TaskprovPeerAggregatorResp>), Error> {
     let to_insert = PeerAggregator::new(
         req.endpoint,
         req.peer_role,

@@ -90,6 +90,7 @@ pub fn aggregator_api_handler<C: Clock>(
                 .post(post_taskprov_peer_aggregator::<C>)
                 .delete(delete_taskprov_peer_aggregator::<C>),
         )
+        // Axum layers execute bottom-to-top: metrics wraps auth wraps MIME validation.
         .layer(middleware::from_fn(replace_mime_types))
         .layer(middleware::from_fn_with_state(
             Arc::clone(&state),
