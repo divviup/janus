@@ -123,7 +123,8 @@ async fn auth_check<C: Clock>(
 async fn replace_mime_types(mut request: Request, next: Next) -> Response {
     let headers = request.headers();
 
-    // Content-Type should either be the versioned API, or nothing for GET/DELETE
+    // Content-Type should either be the versioned API, or nothing for GET/DELETE.
+    // unwrap_or("") maps non-UTF-8 headers to "", which falls through to the Some(_) rejection.
     let content_type = headers
         .get(CONTENT_TYPE_HEADER)
         .map(|v| v.to_str().unwrap_or(""));
@@ -142,7 +143,8 @@ async fn replace_mime_types(mut request: Request, next: Next) -> Response {
         Some(_) => return StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response(),
     }
 
-    // Accept should always be the versioned API
+    // Accept should always be the versioned API.
+    // unwrap_or("") maps non-UTF-8 headers to "", which falls through to the _ rejection.
     let accept = request
         .headers()
         .get(http::header::ACCEPT)
