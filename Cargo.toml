@@ -97,7 +97,7 @@ serde_json = "1.0.149"
 serde_test = "1.0.177"
 serde_urlencoded = "0.7.1"
 yaml_serde = "0.10"
-signal-hook = "0.4.3"
+signal-hook = "0.4.4"
 signal-hook-tokio = "0.4.0"
 # Disable default features to avoid pulling in drivers for databases we don't use, such as
 # sqlx-mysql which pulls in the vulnerable rsa crate
@@ -113,7 +113,7 @@ tracing-log = "0.2.0"
 tracing-opentelemetry = "0.28"
 tracing-stackdriver = "0.10.0"
 tracing-subscriber = "0.3"
-tokio = { version = "1.50", features = ["full", "tracing"] }
+tokio = { version = "1.51", features = ["full", "tracing"] }
 tokio-postgres = "0.7.17"
 tokio-util = "0.7"
 tower = "0.5"
