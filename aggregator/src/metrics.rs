@@ -12,13 +12,14 @@ use tokio::runtime::Runtime;
 #[cfg(feature = "prometheus")]
 use {
     anyhow::Context,
+    axum::http::StatusCode,
+    axum::response::IntoResponse,
     prometheus::Registry,
     std::{
-        net::{IpAddr, Ipv4Addr},
+        net::{IpAddr, Ipv4Addr, SocketAddr},
         str::FromStr,
     },
-    tokio::{sync::oneshot, task::JoinHandle},
-    trillium::{Info, Init},
+    tokio::task::JoinHandle,
 };
 #[cfg(any(feature = "otlp", feature = "prometheus"))]
 use {
@@ -135,28 +136,50 @@ async fn prometheus_metrics_server(
     host: IpAddr,
     port: u16,
 ) -> Result<(JoinHandle<()>, u16), Error> {
-    let router = trillium_prometheus::text_format_handler(registry.clone());
+    use axum::{Router, routing::get};
+    use prometheus::Encoder;
 
-    let (sender, receiver) = oneshot::channel();
-    let init = Init::new(|info: Info| async move {
-        // Ignore error if the receiver is dropped.
-        let _ = sender.send(info.tcp_socket_addr().map(|socket_addr| socket_addr.port()));
-    });
-
-    let handle = tokio::task::spawn(
-        trillium_tokio::config()
-            .with_port(port)
-            .with_host(&host.to_string())
-            .without_signals()
-            .run_async((init, router)),
+    let app = Router::new().route(
+        "/metrics",
+        get(move || {
+            let registry = registry.clone();
+            async move {
+                let encoder = prometheus::TextEncoder::new();
+                let metric_families = registry.gather();
+                let mut buffer = Vec::new();
+                match encoder.encode(&metric_families, &mut buffer) {
+                    Ok(()) => (
+                        StatusCode::OK,
+                        [(
+                            http::header::CONTENT_TYPE,
+                            encoder.format_type().to_string(),
+                        )],
+                        buffer,
+                    )
+                        .into_response(),
+                    Err(err) => {
+                        tracing::error!(?err, "Failed to encode metrics");
+                        StatusCode::INTERNAL_SERVER_ERROR.into_response()
+                    }
+                }
+            }
+        }),
     );
 
-    let port = receiver
+    let addr = SocketAddr::new(host, port);
+    let listener = tokio::net::TcpListener::bind(addr)
         .await
-        .context("Init handler was dropped before sending port")?
-        .context("server does not have a TCP port")?;
+        .context("failed to bind metrics server")?;
+    let actual_port = listener
+        .local_addr()
+        .context("metrics server does not have a local address")?
+        .port();
 
-    Ok((handle, port))
+    let handle = tokio::task::spawn(async move {
+        axum::serve(listener, app).await.ok();
+    });
+
+    Ok((handle, actual_port))
 }
 
 /// Install a metrics provider and exporter, per the given configuration.

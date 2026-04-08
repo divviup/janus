@@ -22,7 +22,6 @@ otlp = [
 prometheus = [
     "dep:opentelemetry-prometheus",
     "dep:prometheus",
-    "dep:trillium-prometheus",
 ]
 test-util = [
     "janus_aggregator_core/test-util",
@@ -99,9 +98,6 @@ tracing-stackdriver = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["std", "env-filter", "fmt", "json"] }
 tower = { workspace = true }
 tower-http = { workspace = true }
-trillium.workspace = true
-trillium-prometheus = { workspace = true, optional = true }
-trillium-tokio.workspace = true
 url.workspace = true
 uuid = { workspace = true, features = ["serde"] }
 

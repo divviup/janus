@@ -1,7 +1,7 @@
 use std::{
     future::{Future, ready},
     iter::Iterator,
-    net::{Ipv6Addr, SocketAddr},
+    net::SocketAddr,
     path::PathBuf,
     sync::Arc,
     time::Duration,
@@ -103,7 +103,7 @@ async fn run_aggregator(
         aggregator_handler = aggregator_handler.with_helper_aggregation_request_queue(harq);
     }
 
-    let aggregator_router = aggregator_handler.build()?;
+    let mut aggregator_router = aggregator_handler.build()?;
 
     let garbage_collector_handle = {
         let datastore = Arc::clone(&datastore);
@@ -121,29 +121,26 @@ async fn run_aggregator(
     let aggregator_api_handle =
         match build_aggregator_api_handler(&options, &config, &datastore, &meter)? {
             Some((handler, config)) => {
-                let listen_address = if let Some(listen_address) = config.listen_address {
-                    listen_address
-                } else if config.path_prefix.is_some() {
-                    // TODO(#4283): Use Router::nest() to serve the aggregator API on the
-                    // same port as the DAP API. For now, serve it on a separate ephemeral
-                    // port.
-                    tracing::warn!(
-                        "path_prefix aggregator API config is temporarily unsupported; \
-                         serving on a loopback ephemeral port. See issue #4283."
+                if let Some(listen_address) = config.listen_address {
+                    let (aggregator_api_bound_address, aggregator_api_server) =
+                        setup_server(listen_address, stopper.clone(), handler)
+                            .await
+                            .context("failed to create aggregator API server")?;
+
+                    info!(?aggregator_api_bound_address, "Running aggregator API");
+
+                    spawn(aggregator_api_server)
+                } else if let Some(path_prefix) = &config.path_prefix {
+                    info!(
+                        aggregator_bound_address = ?config.listen_address,
+                        path_prefix,
+                        "Serving aggregator API relative to DAP API"
                     );
-                    SocketAddr::from((Ipv6Addr::LOCALHOST, 0))
+                    aggregator_router = aggregator_router.nest(&format!("/{path_prefix}"), handler);
+                    spawn(ready(()))
                 } else {
                     unreachable!("the configuration should not have deserialized to this state")
-                };
-
-                let (aggregator_api_bound_address, aggregator_api_server) =
-                    setup_server(listen_address, stopper.clone(), handler)
-                        .await
-                        .context("failed to create aggregator API server")?;
-
-                info!(?aggregator_api_bound_address, "Running aggregator API");
-
-                spawn(aggregator_api_server)
+                }
             }
             None => spawn(ready(())),
         };
@@ -245,13 +242,10 @@ pub struct AggregatorApi {
     /// and serve its API endpoints, independently from the address on which the DAP API is
     /// served. This is mutually exclusive with `path_prefix`.
     pub listen_address: Option<SocketAddr>,
-    /// The Janus aggregator API will be served relative to the provided prefix on the DAP API's
-    /// address. e.g., if `path_prefix` is `aggregator-api`, then task IDs could be obtained at
-    /// `{listen-address}/aggregator-api/task_ids`. This is mutually exclusive with
-    /// `listen_address`.
-    ///
-    /// Note: during the axum migration (#4283), `path_prefix` mode temporarily serves on a
-    /// separate ephemeral loopback port instead of sharing the DAP port.
+    /// The Janus aggregator API will be served on the same address as the DAP API, but relative
+    /// to the provided prefix. e.g., if `path_prefix` is `aggregator-api`, then task IDs could
+    /// be obtained at `{listen-address}/aggregator-api/task_ids`. This is mutually exclusive
+    /// with `listen_address`.
     pub path_prefix: Option<String>,
     /// Resource location at which the DAP service managed by this aggregator api can be found
     /// on the public internet. Required.
