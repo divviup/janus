@@ -57,7 +57,7 @@ pub(super) async fn get_config<C: Clock>(
 
     Json(AggregatorApiConfig {
         protocol: "DAP-18",
-        dap_url: state.cfg.public_dap_url.clone(),
+        dap_url: state.config.public_dap_url.clone(),
         role: AggregatorRole::Either,
         vdafs: Vec::from([
             SupportedVdaf::Prio3Count,
@@ -93,7 +93,7 @@ pub(super) async fn get_task_ids<C: Clock>(
         .map_err(|err| Error::BadRequest(err.into()))?;
 
     let task_ids = state
-        .ds
+        .datastore
         .run_tx("get_task_ids", |tx| {
             Box::pin(async move { tx.get_task_ids(lower_bound).await })
         })
@@ -216,7 +216,7 @@ pub(super) async fn post_task<C: Clock>(
     );
 
     state
-        .ds
+        .datastore
         .run_tx("post_task", |tx| {
             let task = Arc::clone(&task);
             Box::pin(async move {
@@ -265,7 +265,7 @@ pub(super) async fn get_task<C: Clock>(
     let task_id = parse_task_id_param(&task_id)?;
 
     let task = state
-        .ds
+        .datastore
         .run_tx("get_task", |tx| {
             Box::pin(async move { tx.get_aggregator_task(&task_id).await })
         })
@@ -283,7 +283,7 @@ pub(super) async fn delete_task<C: Clock>(
 ) -> Result<StatusCode, Error> {
     let task_id = parse_task_id_param(&task_id)?;
     match state
-        .ds
+        .datastore
         .run_tx("delete_task", |tx| {
             Box::pin(async move { tx.delete_task(&task_id).await })
         })
@@ -301,7 +301,7 @@ pub(super) async fn patch_task<C: Clock>(
 ) -> Result<Json<TaskResp>, Error> {
     let task_id = parse_task_id_param(&task_id)?;
     let task = state
-        .ds
+        .datastore
         .run_tx("patch_task", |tx| {
             Box::pin(async move {
                 if let Some(task_end) = req.task_end {
@@ -325,7 +325,7 @@ pub(super) async fn get_task_upload_metrics<C: Clock>(
     let task_id = parse_task_id_param(&task_id)?;
     Ok(Json(GetTaskUploadMetricsResp(
         state
-            .ds
+            .datastore
             .run_tx("get_task_upload_metrics", |tx| {
                 Box::pin(async move { TaskUploadCounter::load(tx, &task_id).await })
             })
@@ -341,7 +341,7 @@ pub(super) async fn get_task_aggregation_metrics<C: Clock>(
     let task_id = parse_task_id_param(&task_id)?;
     Ok(Json(GetTaskAggregationMetricsResp(
         state
-            .ds
+            .datastore
             .run_tx("get_task_aggregation_metrics", |tx| {
                 Box::pin(async move { TaskAggregationCounter::load(tx, &task_id).await })
             })
@@ -355,7 +355,7 @@ pub(super) async fn get_hpke_configs<C: Clock>(
 ) -> Result<Json<Vec<HpkeConfigResp>>, Error> {
     Ok(Json(
         state
-            .ds
+            .datastore
             .run_tx("get_hpke_configs", |tx| {
                 Box::pin(async move { tx.get_hpke_keypairs().await })
             })
@@ -373,7 +373,7 @@ pub(super) async fn get_hpke_config<C: Clock>(
     let config_id = parse_hpke_config_id_param(&config_id)?;
     Ok(Json(HpkeConfigResp::from(
         state
-            .ds
+            .datastore
             .run_tx("get_hpke_config", |tx| {
                 Box::pin(async move { tx.get_hpke_keypair(&config_id).await })
             })
@@ -387,7 +387,7 @@ pub(super) async fn put_hpke_config<C: Clock>(
     Json(req): Json<PutHpkeConfigReq>,
 ) -> Result<(StatusCode, Json<HpkeConfigResp>), Error> {
     let existing_keypairs = state
-        .ds
+        .datastore
         .run_tx("put_hpke_config_determine_id", |tx| {
             Box::pin(async move { tx.get_hpke_keypairs().await })
         })
@@ -411,7 +411,7 @@ pub(super) async fn put_hpke_config<C: Clock>(
     )?;
 
     let inserted_keypair = state
-        .ds
+        .datastore
         .run_tx("put_hpke_config", |tx| {
             let keypair = keypair.clone();
             Box::pin(async move {
@@ -436,7 +436,7 @@ pub(super) async fn patch_hpke_config<C: Clock>(
     let config_id = parse_hpke_config_id_param(&config_id)?;
 
     state
-        .ds
+        .datastore
         .run_tx("patch_hpke_keypair", |tx| {
             Box::pin(async move { tx.set_hpke_keypair_state(&config_id, &req.state).await })
         })
@@ -451,7 +451,7 @@ pub(super) async fn delete_hpke_config<C: Clock>(
 ) -> Result<StatusCode, Error> {
     let config_id = parse_hpke_config_id_param(&config_id)?;
     match state
-        .ds
+        .datastore
         .run_tx("delete_hpke_config", |tx| {
             Box::pin(async move { tx.delete_hpke_keypair(&config_id).await })
         })
@@ -467,7 +467,7 @@ pub(super) async fn get_taskprov_peer_aggregators<C: Clock>(
 ) -> Result<Json<Vec<TaskprovPeerAggregatorResp>>, Error> {
     Ok(Json(
         state
-            .ds
+            .datastore
             .run_tx("get_taskprov_peer_aggregators", |tx| {
                 Box::pin(async move { tx.get_taskprov_peer_aggregators().await })
             })
@@ -504,7 +504,7 @@ pub(super) async fn post_taskprov_peer_aggregator<C: Clock>(
     .map_err(|e| Error::BadRequest(e.into()))?;
 
     let inserted = state
-        .ds
+        .datastore
         .run_tx("post_taskprov_peer_aggregator", |tx| {
             let to_insert = to_insert.clone();
             Box::pin(async move {
@@ -525,7 +525,7 @@ pub(super) async fn delete_taskprov_peer_aggregator<C: Clock>(
     Json(req): Json<DeleteTaskprovPeerAggregatorReq>,
 ) -> Result<StatusCode, Error> {
     let res = state
-        .ds
+        .datastore
         .run_tx("delete_taskprov_peer_aggregator", |tx| {
             let req = req.clone();
             Box::pin(async move {

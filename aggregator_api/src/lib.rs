@@ -23,6 +23,7 @@ use janus_core::{auth_tokens::AuthenticationToken, hpke, http::extract_bearer_to
 use janus_messages::{HpkeConfigId, RoleParseError, TaskId};
 use opentelemetry::metrics::Meter;
 use routes::*;
+use tower::ServiceBuilder;
 use tracing::error;
 use url::Url;
 
@@ -38,8 +39,8 @@ const CONTENT_TYPE: &str = "application/vnd.janus.aggregator+json;version=0.1";
 
 /// Shared state for the aggregator API.
 pub(crate) struct ApiState<C: Clock> {
-    pub(crate) ds: Arc<Datastore<C>>,
-    pub(crate) cfg: Arc<Config>,
+    pub(crate) datastore: Arc<Datastore<C>>,
+    pub(crate) config: Config,
 }
 
 /// Returns a new handler for an instance of the aggregator API, backed by the given datastore,
@@ -52,8 +53,8 @@ pub fn aggregator_api_handler<C: Clock>(
     let http_metrics = HttpMetrics::new(meter, "janus_aggregator_api_responses");
 
     let state = Arc::new(ApiState {
-        ds,
-        cfg: Arc::new(cfg),
+        datastore: ds,
+        config: cfg,
     });
 
     Router::new()
@@ -90,14 +91,16 @@ pub fn aggregator_api_handler<C: Clock>(
                 .post(post_taskprov_peer_aggregator::<C>)
                 .delete(delete_taskprov_peer_aggregator::<C>),
         )
-        // Axum layers execute bottom-to-top: metrics wraps auth wraps MIME validation.
-        .layer(middleware::from_fn(replace_mime_types))
-        .layer(middleware::from_fn_with_state(
-            Arc::clone(&state),
-            auth_check::<C>,
-        ))
-        .layer(middleware::from_fn(http_metrics_middleware))
-        .layer(axum::Extension(http_metrics))
+        .layer(
+            ServiceBuilder::new()
+                .layer(axum::Extension(http_metrics))
+                .layer(middleware::from_fn(http_metrics_middleware))
+                .layer(middleware::from_fn_with_state(
+                    Arc::clone(&state),
+                    auth_check::<C>,
+                ))
+                .layer(middleware::from_fn(replace_mime_types)),
+        )
         .with_state(state)
 }
 
@@ -112,7 +115,7 @@ async fn auth_check<C: Clock>(
         return StatusCode::UNAUTHORIZED.into_response();
     };
 
-    if state.cfg.auth_tokens.contains(&bearer_token) {
+    if state.config.auth_tokens.contains(&bearer_token) {
         next.run(request).await
     } else {
         StatusCode::UNAUTHORIZED.into_response()
