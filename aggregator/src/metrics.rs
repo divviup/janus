@@ -12,9 +12,8 @@ use tokio::runtime::Runtime;
 #[cfg(feature = "prometheus")]
 use {
     anyhow::Context,
-    axum::http::StatusCode,
-    axum::response::IntoResponse,
-    prometheus::Registry,
+    axum::{Router, http::StatusCode, response::IntoResponse, routing::get},
+    prometheus::{Encoder, Registry},
     std::{
         net::{IpAddr, Ipv4Addr, SocketAddr},
         str::FromStr,
@@ -136,9 +135,6 @@ async fn prometheus_metrics_server(
     host: IpAddr,
     port: u16,
 ) -> Result<(JoinHandle<()>, u16), Error> {
-    use axum::{Router, routing::get};
-    use prometheus::Encoder;
-
     let app = Router::new().route(
         "/metrics",
         get(move || {
