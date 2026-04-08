@@ -42,8 +42,6 @@ use serde::{Deserialize, Serialize};
 use tower::ServiceBuilder;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::warn;
-use trillium::Handler;
-use trillium_proxy::{Proxy, upstream::IntoUpstreamSelector};
 
 use super::{
     Aggregator, Config, Error,
@@ -591,41 +589,6 @@ where
     pub fn build(self) -> Result<axum::Router, Error> {
         let queue = self.build_helper_queue()?;
         Ok(self.build_axum_router(queue))
-    }
-
-    /// Build a Trillium handler that proxies to an internal axum server. This is used by tests
-    /// that haven't yet been migrated to axum's `tower::oneshot` style.
-    // TODO(#4283): Remove when all tests are migrated to axum.
-    pub async fn build_trillium_handler(
-        self,
-        helper_queue: Option<Arc<LIFORequestQueue>>,
-    ) -> Result<impl Handler, Error> {
-        let axum_router = self.build_axum_router(helper_queue);
-
-        // Bind on the IPv6 loopback to avoid a DNS lookup for "localhost" and restrict to local
-        // connections. Deployments require IPv6 loopback to be available (standard in Linux).
-        let axum_listener = tokio::net::TcpListener::bind((std::net::Ipv6Addr::LOCALHOST, 0))
-            .await
-            .map_err(|err| Error::Internal(format!("binding axum listener: {err}").into()))?;
-        let axum_address = axum_listener.local_addr().map_err(|err| {
-            Error::Internal(format!("getting axum listener address: {err}").into())
-        })?;
-        tokio::spawn(async move {
-            axum::serve(axum_listener, axum_router).await.ok();
-        });
-
-        // Proxy all requests to the local axum server. We use `proxy_not_found()` so that
-        // axum's intentional 404 responses (e.g. for missing collection jobs) are forwarded
-        // back to the client rather than being swallowed by the proxy.
-        let upstream = format!("http://{axum_address}/").into_upstream();
-        let proxy = Proxy::new(
-            trillium_proxy::Client::new(trillium_tokio::ClientConfig::default())
-                .with_default_pool(),
-            upstream,
-        )
-        .proxy_not_found();
-
-        Ok(proxy)
     }
 }
 
