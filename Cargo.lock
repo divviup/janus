@@ -2691,9 +2691,6 @@ dependencies = [
  "tracing-opentelemetry",
  "tracing-stackdriver",
  "tracing-subscriber",
- "trillium",
- "trillium-prometheus",
- "trillium-tokio",
  "trycmd",
  "url",
  "uuid",
@@ -6273,18 +6270,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "trillium-prometheus"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37f303a99a7a00c127cff63985b16d4d78c8ec9af17102a40debe80eb19a68e1"
-dependencies = [
- "prometheus",
- "tracing",
- "trillium",
- "trillium-router",
 ]
 
 [[package]]
