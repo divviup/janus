@@ -122,44 +122,39 @@ async fn auth_check<C: Clock>(
     }
 }
 
-/// Middleware that validates and replaces Content-Type/Accept headers.
-async fn replace_mime_types(mut request: Request, next: Next) -> Response {
-    let headers = request.headers();
-
-    // Content-Type should either be the versioned API, or nothing for GET/DELETE.
-    // unwrap_or("") maps non-UTF-8 headers to "", which falls through to the Some(_) rejection.
-    let content_type = headers
+/// Middleware that validates Content-Type and Accept headers and sets the response Content-Type.
+///
+/// For Content-Type: if present, it must be our versioned API content type; if absent, axum's
+/// `Json` extractor will reject POST/PATCH/PUT with 415, which is correct behavior.
+///
+/// Axum's `Json` extractor already accepts our content type (its subtype suffix is "json"), so
+/// we leave the request Content-Type header as-is.
+async fn replace_mime_types(request: Request, next: Next) -> Response {
+    // Content-Type: if present, must be our versioned type; if absent, that's fine for GET/DELETE.
+    match request
+        .headers()
         .get(CONTENT_TYPE_HEADER)
-        .map(|v| v.to_str().unwrap_or(""));
-    match content_type {
-        Some(CONTENT_TYPE) => {
-            // Replace the versioned API content-type with application/json so axum's
-            // Json extractor can parse request bodies.
-            request.headers_mut().insert(
-                CONTENT_TYPE_HEADER,
-                HeaderValue::from_static("application/json"),
-            );
-        }
-        // No Content-Type is fine for GET/DELETE. For POST/PATCH/PUT without Content-Type,
-        // axum's Json extractor will reject the request with 415, which is correct behavior.
-        None => {}
+        .map(|v| v.to_str())
+    {
+        Some(Ok(CONTENT_TYPE)) | None => {}
+        // Present but wrong content type, or non-UTF-8 header value.
         Some(_) => return StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response(),
     }
 
-    // Accept should always be the versioned API.
-    // unwrap_or("") maps non-UTF-8 headers to "", which falls through to the _ rejection.
-    let accept = request
+    // Accept must always be the versioned API content type.
+    match request
         .headers()
         .get(http::header::ACCEPT)
-        .map(|v| v.to_str().unwrap_or(""));
-    match accept {
-        Some(CONTENT_TYPE) => {}
+        .map(|v| v.to_str())
+    {
+        Some(Ok(CONTENT_TYPE)) => {}
+        // Missing, wrong, or non-UTF-8 Accept header.
         _ => return StatusCode::NOT_ACCEPTABLE.into_response(),
     }
 
     let mut response = next.run(request).await;
 
-    // API responses should always have versioned API content type
+    // API responses should always have versioned API content type.
     response
         .headers_mut()
         .insert(CONTENT_TYPE_HEADER, HeaderValue::from_static(CONTENT_TYPE));

@@ -1331,11 +1331,12 @@ async fn get_hpke_configs() {
 
     assert_eq!(resp, expected);
 
-    // Verify: unauthorized requests are denied appropriately.
+    // Verify: unauthorized requests are denied appropriately (uses PUT to also exercise that
+    // method's auth check).
     let response = handler
         .clone()
         .oneshot(
-            Request::get("/hpke_configs")
+            Request::put("/hpke_configs")
                 .header("accept", CONTENT_TYPE)
                 .body(Body::empty())
                 .unwrap(),
