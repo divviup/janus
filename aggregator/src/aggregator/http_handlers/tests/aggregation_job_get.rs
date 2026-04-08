@@ -595,12 +595,7 @@ async fn get_aggregation_job_and_decode(
     let mut response = get_aggregation_job(task, aggregation_job_id, step, router).await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
-        response
-            .headers()
-            .get(http::header::CONTENT_TYPE)
-            .unwrap()
-            .to_str()
-            .unwrap(),
+        response.headers().get(http::header::CONTENT_TYPE).unwrap(),
         AggregationJobResp::MEDIA_TYPE
     );
     decode_response_body::<AggregationJobResp>(&mut response).await

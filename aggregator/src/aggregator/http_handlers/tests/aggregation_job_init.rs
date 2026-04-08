@@ -603,12 +603,7 @@ async fn aggregate_init_sync() {
         let mut response = put_aggregation_job(&task, &aggregation_job_id, &request, &router).await;
         assert_eq!(response.status(), StatusCode::CREATED);
         assert_eq!(
-            response
-                .headers()
-                .get(http::header::CONTENT_TYPE)
-                .unwrap()
-                .to_str()
-                .unwrap(),
+            response.headers().get(http::header::CONTENT_TYPE).unwrap(),
             AggregationJobResp::MEDIA_TYPE
         );
         let aggregate_resp: AggregationJobResp = decode_response_body(&mut response).await;
@@ -1100,12 +1095,7 @@ async fn aggregate_init_prep_init_failed() {
     let mut response = put_aggregation_job(&task, &aggregation_job_id, &request, &router).await;
     assert_eq!(response.status(), StatusCode::CREATED);
     assert_eq!(
-        response
-            .headers()
-            .get(http::header::CONTENT_TYPE)
-            .unwrap()
-            .to_str()
-            .unwrap(),
+        response.headers().get(http::header::CONTENT_TYPE).unwrap(),
         AggregationJobResp::MEDIA_TYPE
     );
     let aggregate_resp: AggregationJobResp = decode_response_body(&mut response).await;
@@ -1170,12 +1160,7 @@ async fn aggregate_init_prep_step_failed() {
     let mut response = put_aggregation_job(&task, &aggregation_job_id, &request, &router).await;
     assert_eq!(response.status(), StatusCode::CREATED);
     assert_eq!(
-        response
-            .headers()
-            .get(http::header::CONTENT_TYPE)
-            .unwrap()
-            .to_str()
-            .unwrap(),
+        response.headers().get(http::header::CONTENT_TYPE).unwrap(),
         AggregationJobResp::MEDIA_TYPE
     );
     let aggregate_resp: AggregationJobResp = decode_response_body(&mut response).await;

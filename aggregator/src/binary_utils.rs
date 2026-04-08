@@ -45,8 +45,7 @@ use crate::{
     trace::{TraceReloadHandle, install_trace_subscriber},
 };
 
-/// A cancellation token used to signal shutdown. Wraps `CancellationToken` and provides an API
-/// compatible with the former `trillium_tokio::Stopper`.
+/// A cancellation token used to signal shutdown. Wraps `CancellationToken`.
 #[derive(Clone, Debug)]
 pub struct Stopper(CancellationToken);
 

@@ -221,16 +221,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "async-dup"
-version = "1.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c2886ab563af5038f79ec016dd7b87947ed138b794e8dd64992962c9cca0411"
-dependencies = [
- "async-lock 3.3.0",
- "futures-io",
-]
-
-[[package]]
 name = "async-executor"
 version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2777,9 +2767,6 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-log",
- "trillium",
- "trillium-macros 0.0.6",
- "trillium-router",
  "url",
  "yaml_serde",
 ]
@@ -2883,8 +2870,6 @@ dependencies = [
  "tracing",
  "tracing-log",
  "tracing-subscriber",
- "trillium",
- "trillium-testing",
  "url",
  "yaml_serde",
 ]
@@ -4027,15 +4012,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "portpicker"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be97d76faf1bfab666e1375477b23fde79eccf0276e9b63b92a39d676a889ba9"
-dependencies = [
- "rand 0.8.5",
-]
-
-[[package]]
 name = "postgres-derive"
 version = "0.4.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4549,17 +4525,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3560f70f30a0f16d11d01ed078a07740fe6b489667abc7c7b029155d9f21c3d8"
 dependencies = [
  "libc",
-]
-
-[[package]]
-name = "routefinder"
-version = "0.5.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0971d3c8943a6267d6bd0d782fdc4afa7593e7381a92a3df950ff58897e066b5"
-dependencies = [
- "memchr",
- "smartcow",
- "smartstring",
 ]
 
 [[package]]
@@ -6273,17 +6238,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "trillium-router"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a7aed20d63101d7dcd165fd047141423009a7f4ccfc75db5b875312d8127dbe"
-dependencies = [
- "log",
- "routefinder",
- "trillium",
-]
-
-[[package]]
 name = "trillium-rustls"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6312,27 +6266,6 @@ dependencies = [
  "rlimit",
  "trillium",
  "trillium-http",
- "url",
-]
-
-[[package]]
-name = "trillium-testing"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c6c5d4d9d6f6844131f166cbe4d779894f09f9b846945ab2024272bcd6e198c"
-dependencies = [
- "async-channel 2.2.0",
- "async-dup",
- "cfg-if",
- "dashmap",
- "fastrand",
- "futures-lite",
- "once_cell",
- "portpicker",
- "trillium",
- "trillium-http",
- "trillium-macros 0.0.6",
- "trillium-server-common",
  "url",
 ]
 
