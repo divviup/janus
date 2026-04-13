@@ -60,5 +60,6 @@ rustls-webpki = { version = "0.103.10", features = ["std"] }
 tempfile = { workspace = true }
 rustls.workspace = true
 tracing.workspace = true
+# TODO(divviup/divviup-api#...): Remove once divviup-client is migrated off Trillium.
 trillium-rustls.workspace = true
 trillium-tokio.workspace = true

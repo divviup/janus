@@ -41,10 +41,6 @@ updates:
           - opentelemetry-*
           - opentelemetry_*
           - tracing-opentelemetry
-      trillium:
-        patterns:
-          - trillium
-          - trillium-*
       kube:
         patterns:
           - kube
@@ -126,10 +122,6 @@ updates:
           - opentelemetry-*
           - opentelemetry_*
           - tracing-opentelemetry
-      trillium:
-        patterns:
-          - trillium
-          - trillium-*
       kube:
         patterns:
           - kube

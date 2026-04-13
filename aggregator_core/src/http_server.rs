@@ -7,11 +7,7 @@ use opentelemetry::{
     metrics::{Counter, Histogram, Meter},
 };
 use tower_http::trace::TraceLayer;
-use tracing::{Instrument, Span, debug, info_span};
-use trillium::{Conn, Handler, Status};
-use trillium_macros::Handler;
-use trillium_router::RouterConnExt;
-
+use tracing::{Span, debug, info_span};
 /// These boundaries are intended to be able to capture the length of short-lived operations
 /// (e.g. HTTP requests) as well as longer-running operations.
 pub const TIME_HISTOGRAM_BOUNDARIES: &[f64] = &[
@@ -23,45 +19,6 @@ pub const BYTES_HISTOGRAM_BOUNDARIES: &[f64] = &[
     1024.0, 2048.0, 4096.0, 8192.0, 16384.0, 32768.0, 65536.0, 131072.0, 262144.0, 524288.0,
     1048576.0, 2097152.0, 4194304.0, 8388608.0, 16777216.0, 33554432.0,
 ];
-
-// -- Trillium --
-
-pub fn instrumented<H: Handler>(handler: H) -> impl Handler {
-    InstrumentedHandler(handler)
-}
-
-struct InstrumentedHandlerSpan(Span);
-
-#[derive(Handler)]
-struct InstrumentedHandler<H>(#[handler(except = [run, before_send])] H);
-
-impl<H: Handler> InstrumentedHandler<H> {
-    async fn run(&self, mut conn: Conn) -> Conn {
-        let route = conn.route().expect("no route in conn").to_string();
-        let method = conn.method();
-        let span = info_span!("endpoint", route, %method);
-        conn.insert_state(InstrumentedHandlerSpan(span.clone()));
-        self.0.run(conn).instrument(span).await
-    }
-
-    async fn before_send(&self, mut conn: Conn) -> Conn {
-        if let Some(span) = conn.take_state::<InstrumentedHandlerSpan>() {
-            let conn = self.0.before_send(conn).instrument(span.0.clone()).await;
-            span.0.in_scope(|| {
-                let status = conn
-                    .status()
-                    .as_ref()
-                    .map_or("unknown", Status::canonical_reason);
-                debug!(status, "Finished handling request");
-            });
-            conn
-        } else {
-            self.0.before_send(conn).await
-        }
-    }
-}
-
-// -- Axum --
 
 /// Newtype holding a textual error code, stored in response extensions for metrics.
 #[derive(Clone, Copy)]
@@ -109,7 +66,7 @@ impl HttpMetrics {
 }
 
 /// Extracts the matched route from an axum request and rewrites `{param}` to `:param`
-/// for metric label continuity with the existing Trillium convention.
+/// for metric label continuity.
 fn normalize_axum_route(request: &Request<Body>) -> String {
     request
         .extensions()
@@ -125,8 +82,8 @@ fn normalize_axum_route(request: &Request<Body>) -> String {
 
 /// Axum middleware that records HTTP server metrics (response counter, request duration,
 /// body sizes).
-// TODO(#4283): Replace with `opentelemetry-instrumentation-tower` once OpenTelemetry is
-// upgraded to 0.31 or later, which we can do after we're off Trillium.
+// TODO: Replace with `opentelemetry-instrumentation-tower` once OpenTelemetry is upgraded
+// to 0.31 or later.
 pub async fn http_metrics_middleware(
     axum::Extension(metrics): axum::Extension<Arc<HttpMetrics>>,
     request: Request<Body>,
@@ -196,8 +153,7 @@ pub async fn http_metrics_middleware(
     response
 }
 
-/// Returns a [`TraceLayer`] that instruments axum request handlers with tracing spans,
-/// mirroring the Trillium `instrumented` handler's span structure.
+/// Returns a [`TraceLayer`] that instruments axum request handlers with tracing spans.
 #[allow(clippy::type_complexity)]
 pub fn trace_layer() -> TraceLayer<
     tower_http::classify::SharedClassifier<tower_http::classify::ServerErrorsAsFailures>,

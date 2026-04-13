@@ -488,12 +488,7 @@ async fn aggregate_share_request() {
                 "test case: {label:?}, iteration: {iteration}"
             );
             assert_eq!(
-                response
-                    .headers()
-                    .get(http::header::CONTENT_TYPE)
-                    .unwrap()
-                    .to_str()
-                    .unwrap(),
+                response.headers().get(http::header::CONTENT_TYPE).unwrap(),
                 AggregateShareMessage::MEDIA_TYPE,
             );
             let aggregate_share_resp: AggregateShareMessage =
@@ -834,12 +829,7 @@ async fn aggregate_share_request_get_poll_after_put() {
     assert_eq!(response.status(), StatusCode::OK);
 
     assert_eq!(
-        response
-            .headers()
-            .get(http::header::CONTENT_TYPE)
-            .unwrap()
-            .to_str()
-            .unwrap(),
+        response.headers().get(http::header::CONTENT_TYPE).unwrap(),
         AggregateShareMessage::MEDIA_TYPE,
     );
     let aggregate_share_resp: AggregateShareMessage = decode_response_body(&mut response).await;

@@ -8,11 +8,15 @@ use http::{
 use janus_messages::{
     AggregateShareId, AggregationJobId, CollectionJobId, TaskId, problem_type::DapProblemType,
 };
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 use tracing::warn;
 
 /// The media type for problem details formatted as a JSON document, per RFC 7807.
 static PROBLEM_DETAILS_JSON_MEDIA_TYPE: &str = "application/problem+json";
+
+fn serialize_status<S: Serializer>(status: &StatusCode, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_u16(status.as_u16())
+}
 
 /// Serialization helper struct for [DAP JSON problem details error responses][1].
 ///
@@ -22,7 +26,8 @@ pub struct ProblemDocument<'a> {
     #[serde(rename = "type")]
     type_: &'static str,
     title: &'static str,
-    status: u16,
+    #[serde(serialize_with = "serialize_status")]
+    status: StatusCode,
     #[serde(skip_serializing_if = "Option::is_none")]
     taskid: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -46,7 +51,7 @@ impl<'a> ProblemDocument<'a> {
         Self {
             type_,
             title,
-            status: status.as_u16(),
+            status,
             taskid: None,
             detail: None,
             aggregation_job_id: None,
@@ -106,7 +111,7 @@ impl<'a> ProblemDocument<'a> {
 
     /// Returns the HTTP status code for this problem document.
     pub fn status_code(&self) -> StatusCode {
-        StatusCode::from_u16(self.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
+        self.status
     }
 
     /// Converts this problem document into an axum [`Response`].
