@@ -78,11 +78,11 @@ impl Stopper {
 
 /// Reads, parses, and returns the config referenced by the given options, or None if no config file
 /// path was set.
-pub fn read_config<Config: BinaryConfig>(options: &CommonBinaryOptions) -> Result<Config> {
-    let config_content = fs::read_to_string(&options.config_file)
-        .with_context(|| format!("couldn't read config file {:?}", options.config_file))?;
+pub fn read_config<Config: BinaryConfig>(config_file: &PathBuf) -> Result<Config> {
+    let config_content = fs::read_to_string(config_file)
+        .with_context(|| format!("couldn't read config file {:?}", config_file))?;
     yaml_serde::from_str(&config_content)
-        .with_context(|| format!("couldn't parse config file {:?}", options.config_file))
+        .with_context(|| format!("couldn't parse config file {:?}", config_file))
 }
 
 /// Connects to a database, given a config. `db_password` is mutually exclusive with the database
@@ -295,7 +295,7 @@ where
     initialize_rustls();
 
     // Read and parse config.
-    let config: Config = read_config(options.common_options())?;
+    let config: Config = read_config(&options.common_options().config_file)?;
 
     let mut runtime_builder = runtime::Builder::new_multi_thread();
     runtime_builder.enable_all();

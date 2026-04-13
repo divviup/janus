@@ -1,5 +1,5 @@
 //! This crate implements the Janus Aggregator API.
-mod models;
+pub mod models;
 mod routes;
 #[cfg(test)]
 mod tests;
@@ -35,7 +35,7 @@ pub struct Config {
 }
 
 /// Content type
-const CONTENT_TYPE: &str = "application/vnd.janus.aggregator+json;version=0.1";
+pub const CONTENT_TYPE: &str = "application/vnd.janus.aggregator+json;version=0.1";
 
 /// Shared state for the aggregator API.
 pub(crate) struct ApiState<C: Clock> {
