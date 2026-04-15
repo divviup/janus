@@ -1395,7 +1395,7 @@ dependencies = [
  "thiserror 2.0.18",
  "time",
  "trillium-client",
- "trillium-http",
+ "trillium-http 0.3.17",
  "url",
  "uuid",
 ]
@@ -1641,6 +1641,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
 
 [[package]]
+name = "fieldwork"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4e4ce2198f558616d979bf4e13c0684f695ffeebe1a541ca466c928ddf42185b"
+dependencies = [
+ "fieldwork-derive",
+]
+
+[[package]]
+name = "fieldwork-derive"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "31f4ce202eae2f2828b8f461bb6e8c40ed5358db1c3dce9e34108c94e68fe580"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "filetime"
 version = "0.2.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1707,6 +1727,12 @@ name = "foldhash"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
+
+[[package]]
+name = "foldhash"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
 name = "form_urlencoded"
@@ -2064,7 +2090,7 @@ checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
 dependencies = [
  "allocator-api2",
  "equivalent",
- "foldhash",
+ "foldhash 0.1.5",
 ]
 
 [[package]]
@@ -2072,6 +2098,11 @@ name = "hashbrown"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
+dependencies = [
+ "allocator-api2",
+ "equivalent",
+ "foldhash 0.2.0",
+]
 
 [[package]]
 name = "hashlink"
@@ -2674,7 +2705,7 @@ dependencies = [
  "tracing-opentelemetry",
  "tracing-stackdriver",
  "tracing-subscriber",
- "trillium",
+ "trillium 0.2.20",
  "trillium-api",
  "trillium-caching-headers",
  "trillium-head",
@@ -2715,7 +2746,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
- "trillium",
+ "trillium 0.2.20",
  "trillium-api",
  "trillium-opentelemetry",
  "trillium-router",
@@ -2771,7 +2802,7 @@ dependencies = [
  "tokio-postgres",
  "tracing",
  "tracing-log",
- "trillium",
+ "trillium 0.2.20",
  "trillium-macros 0.0.6",
  "trillium-router",
  "url",
@@ -2874,7 +2905,7 @@ dependencies = [
  "tracing",
  "tracing-log",
  "tracing-subscriber",
- "trillium",
+ "trillium 0.2.20",
  "trillium-testing",
  "url",
 ]
@@ -2918,7 +2949,7 @@ dependencies = [
  "testcontainers",
  "tokio",
  "tracing",
- "trillium",
+ "trillium 0.2.20",
  "trillium-macros 0.0.6",
  "trillium-rustls",
  "trillium-tokio",
@@ -2956,7 +2987,7 @@ dependencies = [
  "tracing",
  "tracing-log",
  "tracing-subscriber",
- "trillium",
+ "trillium 0.2.20",
  "trillium-api",
  "trillium-proxy",
  "trillium-router",
@@ -3341,9 +3372,9 @@ dependencies = [
 
 [[package]]
 name = "memchr"
-version = "2.7.6"
+version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
+checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 
 [[package]]
 name = "mime"
@@ -3931,9 +3962,9 @@ dependencies = [
 
 [[package]]
 name = "pin-project-lite"
-version = "0.2.16"
+version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b3cff922bd51709b605d9ead9aa71031d81447142d828eb4a6eba76fe619f9b"
+checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pin-utils"
@@ -5596,6 +5627,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
+name = "swansong"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f0a5cbf2806d6447b5a881b458e2c510178c0efadd95189d724fd355f80c243f"
+dependencies = [
+ "event-listener 5.4.1",
+ "futures-core",
+ "log",
+ "pin-project-lite",
+]
+
+[[package]]
 name = "syn"
 version = "2.0.117"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6268,23 +6311,34 @@ checksum = "b84b5b14b3b2dda42a660fd7476a00f25c7565c4f1dc63b4322a7855a1c5384f"
 dependencies = [
  "async-trait",
  "log",
- "trillium-http",
+ "trillium-http 0.3.17",
+]
+
+[[package]]
+name = "trillium"
+version = "1.0.0-rc.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ae22820e21dc43940c082cb6f395cfd305052b6899f44f22b8889c93bfe2187"
+dependencies = [
+ "futures-lite 2.6.1",
+ "log",
+ "trillium-http 1.0.0-rc.1",
+ "trillium-macros 0.1.0-rc.1",
 ]
 
 [[package]]
 name = "trillium-api"
-version = "0.2.0-rc.12"
+version = "0.3.0-rc.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87ac0b2a746f70736c3b1c78078d361d71a1705121f2b134a791d50de2a4f78d"
+checksum = "a2927c493cf6e00159aa2509dd953b1bcba1461de54fbdd613f6626fabe62e56"
 dependencies = [
  "log",
  "mime",
  "serde",
- "serde_json",
  "serde_path_to_error",
- "thiserror 1.0.69",
- "trillium",
- "trillium-macros 0.0.6",
+ "thiserror 2.0.18",
+ "trillium 1.0.0-rc.1",
+ "trillium-macros 0.1.0-rc.1",
 ]
 
 [[package]]
@@ -6295,7 +6349,7 @@ checksum = "531cab8c8b475e6d575491d96178d8d0e1265b8fdb4cd27cc3b7db18a38d8eeb"
 dependencies = [
  "etag",
  "httpdate",
- "trillium",
+ "trillium 0.2.20",
 ]
 
 [[package]]
@@ -6316,7 +6370,7 @@ dependencies = [
  "serde_json",
  "size",
  "thiserror 1.0.69",
- "trillium-http",
+ "trillium-http 0.3.17",
  "trillium-server-common",
 ]
 
@@ -6328,7 +6382,7 @@ checksum = "683796aeee40649ad14ef91d90c4963ffeea3ff283edfb9b0ea750eea03c40c0"
 dependencies = [
  "cidr",
  "log",
- "trillium",
+ "trillium 0.2.20",
 ]
 
 [[package]]
@@ -6337,7 +6391,7 @@ version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bc125c6f329f4c7d26688ebb551f84ad6e03460094dd2f03f06f35b292aee474"
 dependencies = [
- "trillium",
+ "trillium 0.2.20",
 ]
 
 [[package]]
@@ -6363,6 +6417,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "trillium-http"
+version = "1.0.0-rc.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "898acdecd46617ca309c3b2fb01449ca5c4fba76ba59e8dfeaf9489563ef9174"
+dependencies = [
+ "encoding_rs",
+ "fastrand 2.3.0",
+ "fieldwork",
+ "futures-lite 2.6.1",
+ "hashbrown 0.16.1",
+ "httparse",
+ "httpdate",
+ "log",
+ "memchr",
+ "mime",
+ "pin-project-lite",
+ "smallvec",
+ "smartcow",
+ "smartstring",
+ "swansong",
+ "sync_wrapper",
+ "thiserror 2.0.18",
+ "trillium-macros 0.1.0-rc.1",
+ "type-set",
+]
+
+[[package]]
 name = "trillium-macros"
 version = "0.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6385,6 +6466,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "trillium-macros"
+version = "0.1.0-rc.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3b6c4cbf12ca8d831a3099979ed727311ed3890e1991ca37934fcff06be5fa84"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "trillium-opentelemetry"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6392,7 +6484,7 @@ checksum = "369989011133b91f356bc790cfda4eae9243ffd33929dfb067fb135a728f88af"
 dependencies = [
  "opentelemetry",
  "opentelemetry-semantic-conventions",
- "trillium",
+ "trillium 0.2.20",
  "trillium-macros 0.0.6",
 ]
 
@@ -6404,7 +6496,7 @@ checksum = "37f303a99a7a00c127cff63985b16d4d78c8ec9af17102a40debe80eb19a68e1"
 dependencies = [
  "prometheus",
  "tracing",
- "trillium",
+ "trillium 0.2.20",
  "trillium-router",
 ]
 
@@ -6420,10 +6512,10 @@ dependencies = [
  "log",
  "size",
  "sluice",
- "trillium",
+ "trillium 0.2.20",
  "trillium-client",
  "trillium-forwarding",
- "trillium-http",
+ "trillium-http 0.3.17",
  "url",
 ]
 
@@ -6435,7 +6527,7 @@ checksum = "6a7aed20d63101d7dcd165fd047141423009a7f4ccfc75db5b875312d8127dbe"
 dependencies = [
  "log",
  "routefinder",
- "trillium",
+ "trillium 0.2.20",
 ]
 
 [[package]]
@@ -6465,8 +6557,8 @@ dependencies = [
  "log",
  "pin-project-lite",
  "rlimit",
- "trillium",
- "trillium-http",
+ "trillium 0.2.20",
+ "trillium-http 0.3.17",
  "url",
 ]
 
@@ -6484,8 +6576,8 @@ dependencies = [
  "futures-lite 2.6.1",
  "once_cell",
  "portpicker",
- "trillium",
- "trillium-http",
+ "trillium 0.2.20",
+ "trillium-http 0.3.17",
  "trillium-macros 0.0.6",
  "trillium-server-common",
  "trillium-tokio",
@@ -6504,8 +6596,8 @@ dependencies = [
  "signal-hook-tokio 0.3.1",
  "tokio",
  "tokio-stream",
- "trillium",
- "trillium-http",
+ "trillium 0.2.20",
+ "trillium-http 0.3.17",
  "trillium-macros 0.0.5",
  "trillium-server-common",
 ]
@@ -6550,6 +6642,12 @@ dependencies = [
  "thiserror 2.0.18",
  "utf-8",
 ]
+
+[[package]]
+name = "type-set"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "845e18586b78ef401c37d9d2d2cca631c19816d5aa26af12647e828739bd6614"
 
 [[package]]
 name = "typenum"
