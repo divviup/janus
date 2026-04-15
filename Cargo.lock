@@ -2911,7 +2911,6 @@ dependencies = [
  "regex",
  "reqwest",
  "rstest",
- "rustls-webpki",
  "serde",
  "serde_json",
  "tempfile",
