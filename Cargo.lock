@@ -2909,7 +2909,6 @@ dependencies = [
  "reqwest",
  "rstest",
  "rustls",
- "rustls-webpki",
  "serde",
  "serde_json",
  "tempfile",
