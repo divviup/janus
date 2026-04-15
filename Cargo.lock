@@ -481,9 +481,9 @@ dependencies = [
 
 [[package]]
 name = "axum"
-version = "0.8.8"
+version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b52af3cb4058c895d37317bb27508dccc8e5f2d39454016b297bf4a400597b8"
+checksum = "31b698c5f9a010f6573133b09e0de5408834d0c82f8d7475a89fc1867a71cd90"
 dependencies = [
  "axum-core 0.5.6",
  "bytes",
@@ -2332,7 +2332,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.3",
+ "socket2 0.5.9",
  "tokio",
  "tower-service",
  "tracing",
@@ -2614,7 +2614,7 @@ dependencies = [
  "async-stream",
  "async-trait",
  "aws-lc-rs",
- "axum 0.8.8",
+ "axum 0.8.9",
  "backon",
  "base64 0.22.1",
  "bytes",
@@ -2695,7 +2695,7 @@ dependencies = [
  "anyhow",
  "assert_matches",
  "aws-lc-rs",
- "axum 0.8.8",
+ "axum 0.8.9",
  "base64 0.22.1",
  "chrono",
  "educe",
@@ -2726,7 +2726,7 @@ dependencies = [
  "assert_matches",
  "async-trait",
  "aws-lc-rs",
- "axum 0.8.8",
+ "axum 0.8.9",
  "backon",
  "base64 0.22.1",
  "bytes",
@@ -2880,7 +2880,7 @@ version = "0.9.0-prerelease-1"
 dependencies = [
  "anyhow",
  "assert_matches",
- "axum 0.8.8",
+ "axum 0.8.9",
  "backon",
  "base64 0.22.1",
  "chrono",
@@ -2927,7 +2927,7 @@ name = "janus_interop_binaries"
 version = "0.9.0-prerelease-1"
 dependencies = [
  "anyhow",
- "axum 0.8.8",
+ "axum 0.8.9",
  "backon",
  "base64 0.22.1",
  "clap",
@@ -3707,7 +3707,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.45.0",
 ]
 
 [[package]]
@@ -4625,7 +4625,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4692,7 +4692,7 @@ dependencies = [
  "security-framework 3.5.1",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5545,7 +5545,7 @@ dependencies = [
  "getrandom 0.4.1",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5936,7 +5936,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eb7613188ce9f7df5bfe185db26c5814347d110db17920415cf2fbcad85e7203"
 dependencies = [
  "async-trait",
- "axum 0.8.8",
+ "axum 0.8.9",
  "base64 0.22.1",
  "bytes",
  "h2",
