@@ -109,10 +109,10 @@ impl Context {
                 collection_job_id,
                 query: _,
             } => self.started_collection_job_ids.push(*collection_job_id),
-            Op::CollectorPoll { collection_job_id } => {
-                if !self.polled_collection_job_ids.contains(collection_job_id) {
-                    self.polled_collection_job_ids.push(*collection_job_id);
-                }
+            Op::CollectorPoll { collection_job_id }
+                if !self.polled_collection_job_ids.contains(collection_job_id) =>
+            {
+                self.polled_collection_job_ids.push(*collection_job_id);
             }
             _ => {}
         }

@@ -330,7 +330,7 @@ where
 
                     batch_aggregations = batch_aggregations
                         .into_iter()
-                        .chain(empty_batch_aggregations.into_iter())
+                        .chain(empty_batch_aggregations)
                         .collect();
 
                     Ok(Some((task, collection_job, batch_aggregations)))
