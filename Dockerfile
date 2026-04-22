@@ -1,4 +1,4 @@
-FROM rust:1.94.1-alpine AS chef
+FROM rust:1.95.0-alpine AS chef
 ENV CARGO_INCREMENTAL=0
 RUN apk add --no-cache libc-dev
 RUN cargo install cargo-chef --version 0.1.71 --locked && \
