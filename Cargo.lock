@@ -559,7 +559,7 @@ dependencies = [
  "getrandom 0.2.17",
  "instant",
  "pin-project-lite",
- "rand 0.8.5",
+ "rand 0.8.6",
  "tokio",
 ]
 
@@ -2647,7 +2647,7 @@ dependencies = [
  "prometheus",
  "quickcheck",
  "quickcheck_macros",
- "rand 0.8.5",
+ "rand 0.8.6",
  "rayon",
  "regex",
  "reqwest",
@@ -2707,7 +2707,7 @@ dependencies = [
  "janus_messages 0.7.118",
  "opentelemetry",
  "querystring",
- "rand 0.8.5",
+ "rand 0.8.6",
  "rstest",
  "serde",
  "serde_json",
@@ -2753,7 +2753,7 @@ dependencies = [
  "postgres-protocol",
  "postgres-types",
  "prio",
- "rand 0.8.5",
+ "rand 0.8.6",
  "regex",
  "reqwest",
  "rstest",
@@ -2793,7 +2793,7 @@ dependencies = [
  "mockito",
  "ohttp",
  "prio",
- "rand 0.8.5",
+ "rand 0.8.6",
  "reqwest",
  "thiserror 2.0.18",
  "tokio",
@@ -2819,7 +2819,7 @@ dependencies = [
  "janus_messages 0.7.118",
  "mockito",
  "prio",
- "rand 0.8.5",
+ "rand 0.8.6",
  "reqwest",
  "retry-after",
  "serde",
@@ -2856,7 +2856,7 @@ dependencies = [
  "mockito",
  "prio",
  "quickcheck",
- "rand 0.8.5",
+ "rand 0.8.6",
  "regex",
  "reqwest",
  "rstest",
@@ -2907,7 +2907,7 @@ dependencies = [
  "opentelemetry",
  "prio",
  "quickcheck",
- "rand 0.8.5",
+ "rand 0.8.6",
  "regex",
  "reqwest",
  "rstest",
@@ -2945,7 +2945,7 @@ dependencies = [
  "janus_interop_binaries",
  "janus_messages 0.7.118",
  "prio",
- "rand 0.8.5",
+ "rand 0.8.6",
  "regex",
  "reqwest",
  "serde",
@@ -2975,7 +2975,7 @@ dependencies = [
  "hex",
  "num_enum",
  "prio",
- "rand 0.8.5",
+ "rand 0.8.6",
  "serde",
  "thiserror 2.0.18",
  "url",
@@ -2993,7 +2993,7 @@ dependencies = [
  "num_enum",
  "pretty_assertions",
  "prio",
- "rand 0.8.5",
+ "rand 0.8.6",
  "serde",
  "serde_test",
  "thiserror 2.0.18",
@@ -3014,7 +3014,7 @@ dependencies = [
  "janus_core",
  "janus_messages 0.7.118",
  "prio",
- "rand 0.8.5",
+ "rand 0.8.6",
  "reqwest",
  "serde_json",
  "serde_yaml",
@@ -3469,7 +3469,7 @@ checksum = "a5e44f723f1133c9deac646763579fdb3ac745e418f2a7af9cd0c431da1f20b9"
 dependencies = [
  "num-integer",
  "num-traits",
- "rand 0.8.5",
+ "rand 0.8.6",
  "serde",
 ]
 
@@ -3484,7 +3484,7 @@ dependencies = [
  "num-integer",
  "num-iter",
  "num-traits",
- "rand 0.8.5",
+ "rand 0.8.6",
  "smallvec",
  "zeroize",
 ]
@@ -3704,7 +3704,7 @@ dependencies = [
  "once_cell",
  "opentelemetry",
  "percent-encoding",
- "rand 0.8.5",
+ "rand 0.8.6",
  "serde_json",
  "thiserror 1.0.69",
  "tokio",
@@ -4036,7 +4036,7 @@ version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be97d76faf1bfab666e1375477b23fde79eccf0276e9b63b92a39d676a889ba9"
 dependencies = [
- "rand 0.8.5",
+ "rand 0.8.6",
 ]
 
 [[package]]
@@ -4159,7 +4159,7 @@ dependencies = [
  "num-iter",
  "num-rational",
  "num-traits",
- "rand 0.8.5",
+ "rand 0.8.6",
  "rand_core 0.6.4",
  "rayon",
  "serde",
@@ -4369,9 +4369,9 @@ checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
 
 [[package]]
 name = "rand"
-version = "0.8.5"
+version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34af8d1a0e25924bc5b7c43c079c942339d8f0a8b57c39049bef581b46327404"
+checksum = "5ca0ecfa931c29007047d1bc58e623ab12e5590e8c7cc53200d5202b69266d8a"
 dependencies = [
  "libc",
  "rand_chacha 0.3.1",
@@ -4675,7 +4675,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b3a8fb4672e840a587a66fc577a5491375df51ddb88f2a2c2a792598c326fe14"
 dependencies = [
  "quote",
- "rand 0.8.5",
+ "rand 0.8.6",
  "syn",
 ]
 
@@ -5447,7 +5447,7 @@ dependencies = [
  "memchr",
  "once_cell",
  "percent-encoding",
- "rand 0.8.5",
+ "rand 0.8.6",
  "rsa",
  "sha1",
  "sha2 0.10.9",
@@ -5484,7 +5484,7 @@ dependencies = [
  "md-5 0.10.6",
  "memchr",
  "once_cell",
- "rand 0.8.5",
+ "rand 0.8.6",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -6079,7 +6079,7 @@ dependencies = [
  "indexmap 1.9.3",
  "pin-project",
  "pin-project-lite",
- "rand 0.8.5",
+ "rand 0.8.6",
  "slab",
  "tokio",
  "tokio-util",
@@ -7565,7 +7565,7 @@ version = "7.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d4e079d30939088cfc89b5318a5d3557d4a92890c917aa40475ea763bd473d5"
 dependencies = [
- "rand 0.8.5",
+ "rand 0.8.6",
 ]
 
 [[package]]
