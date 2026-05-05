@@ -380,18 +380,11 @@ impl AggregatorTask {
     /// Returns true if the `batch_size` is valid given this task's query type and batch size
     /// parameters, per
     /// <https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-09#name-batch-validation>
+    ///
+    /// Note that this is a divergence from DAP-09, as later DAP has removed the max_batch_size
+    /// check.
     pub fn validate_batch_size(&self, batch_size: u64) -> bool {
-        match self.common_parameters.query_type {
-            QueryType::TimeInterval => {
-                // https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-09#section-4.6.5.1.2
-                batch_size >= self.common_parameters.min_batch_size
-            }
-            QueryType::FixedSize { max_batch_size, .. } => {
-                // https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-09#section-4.6.5.2.2
-                batch_size >= self.common_parameters.min_batch_size
-                    && max_batch_size.map_or(true, |max_batch_size| batch_size <= max_batch_size)
-            }
-        }
+        batch_size >= self.common_parameters.min_batch_size
     }
 
     /// Returns the [`VerifyKey`] used by this aggregator to prepare report shares with other
