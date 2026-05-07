@@ -4,9 +4,19 @@ use aws_lc_rs::digest::{SHA256, SHA256_OUTPUT_LEN, digest};
 use janus_messages::{ReportId, ReportIdChecksum};
 
 /// Additional methods for working with a [`ReportIdChecksum`].
-pub trait ReportIdChecksumExt {
+pub trait ReportIdChecksumExt: Sized {
     /// Initialize a checksum from a single report ID.
     fn for_report_id(report_id: &ReportId) -> Self;
+
+    /// Initialize a checksum from multiple report IDs.
+    fn from_report_ids(report_ids: &[ReportId]) -> Self {
+        let mut ret = Self::for_report_id(&report_ids[0]);
+        for report_id in &report_ids[1..] {
+            ret = ret.updated_with(report_id);
+        }
+
+        ret
+    }
 
     /// Incorporate the provided report ID into this checksum.
     fn updated_with(self, report_id: &ReportId) -> Self;
