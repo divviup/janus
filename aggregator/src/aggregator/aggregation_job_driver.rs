@@ -34,8 +34,8 @@ use janus_core::{
 };
 use janus_messages::{
     AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp, MediaType,
-    PartialBatchSelector, PrepareContinue, PrepareInit, PrepareResp, PrepareStepResult,
-    ReportError, ReportMetadata, ReportShare, Role,
+    PartialBatchSelector, ReportError, ReportMetadata, ReportShare, Role, VerifyContinue,
+    VerifyInit, VerifyResp, VerifyStepResult,
     batch_mode::{LeaderSelected, TimeInterval},
 };
 use opentelemetry::{
@@ -449,7 +449,7 @@ where
                 let ctx = vdaf_application_context(&task_id);
 
                 // Compute report shares to send to helper, and decrypt our input shares &
-                // initialize preparation state.
+                // initialize verification state.
                 report_aggregations.into_par_iter().try_for_each(
                     |report_aggregation| {
                         let _entered = span.enter();
@@ -505,7 +505,7 @@ where
                         )).map_err(|_| ());
                     }
 
-                    // Initialize the leader's preparation state from the input share.
+                    // Initialize the leader's verification state from the input share.
                     let public_share_bytes = match public_share.get_encoded() {
                         Ok(public_share_bytes) => public_share_bytes,
                         Err(err) => {
@@ -521,7 +521,7 @@ where
                         }
                     };
 
-                    match trace_span!("VDAF preparation (leader initialization)").in_scope(|| {
+                    match trace_span!("VDAF verification (leader initialization)").in_scope(|| {
                         vdaf.leader_initialized(
                             verify_key.as_bytes(),
                             &ctx,
@@ -546,7 +546,7 @@ where
                         Ok(Continued { message, verifier_state }) => {
                             pi_and_sa_sender.send((
                                 report_aggregation.ord(),
-                                PrepareInit::new(
+                                VerifyInit::new(
                                     ReportShare::new(
                                         ReportMetadata::new(
                                             *report_aggregation.report_id(),
@@ -560,7 +560,7 @@ where
                                 ),
                                 SteppedAggregation::new(
                                     report_aggregation,
-                                    Either::PrepareState(verifier_state),
+                                    Either::VerifyState(verifier_state),
                                 ),
                             )).map_err(|_| ())
                         }
@@ -576,7 +576,7 @@ where
             }
         });
 
-        let (report_aggregations_to_write, (prepare_inits, stepped_aggregations)) = join!(
+        let (report_aggregations_to_write, (verify_inits, stepped_aggregations)) = join!(
             async move {
                 let mut report_aggregations_to_write = Vec::with_capacity(report_aggregation_count);
                 while ra_receiver
@@ -590,9 +590,9 @@ where
                 let mut pis_and_sas = Vec::with_capacity(report_aggregation_count);
                 while pi_and_sa_receiver.recv_many(&mut pis_and_sas, 10).await > 0 {}
                 pis_and_sas.sort_unstable_by_key(|(ord, _, _)| *ord);
-                let (prepare_inits, stepped_aggregations): (Vec<_>, Vec<_>) =
+                let (verify_inits, stepped_aggregations): (Vec<_>, Vec<_>) =
                     pis_and_sas.into_iter().map(|(_, pi, sa)| (pi, sa)).unzip();
-                (prepare_inits, stepped_aggregations)
+                (verify_inits, stepped_aggregations)
             },
         );
 
@@ -606,12 +606,12 @@ where
             }
         });
         assert_eq!(
-            report_aggregations_to_write.len() + prepare_inits.len(),
+            report_aggregations_to_write.len() + verify_inits.len(),
             report_aggregation_count
         );
-        assert_eq!(prepare_inits.len(), stepped_aggregations.len());
+        assert_eq!(verify_inits.len(), stepped_aggregations.len());
 
-        let (resp, retry_after) = if !prepare_inits.is_empty() {
+        let (resp, retry_after) = if !verify_inits.is_empty() {
             // Construct request, send it to the helper, and process the response.
             let request = AggregationJobInitializeReq::<B>::new(
                 aggregation_job
@@ -619,7 +619,7 @@ where
                     .get_encoded()
                     .map_err(Error::MessageEncode)?,
                 PartialBatchSelector::new(aggregation_job.partial_batch_identifier().clone()),
-                prepare_inits,
+                verify_inits,
             );
 
             let http_response = send_request_to_helper(
@@ -666,7 +666,7 @@ where
             // artificial aggregation job response instead, which will finish the aggregation job.
             (
                 Some(AggregationJobResp {
-                    prepare_resps: Vec::new(),
+                    verify_resps: Vec::new(),
                 }),
                 None,
             )
@@ -752,7 +752,7 @@ where
                         };
 
                         let (message, either) =
-                            match trace_span!("VDAF preparation (leader continuation evaluation)")
+                            match trace_span!("VDAF verification (leader continuation evaluation)")
                                 .in_scope(|| continuation.evaluate(&ctx, vdaf.as_ref()))
                             {
                                 // If we are continuing, then the state can only be Continued or
@@ -760,7 +760,7 @@ where
                                 Ok(PingPongState::Continued(Continued {
                                     message,
                                     verifier_state,
-                                })) => (message, Either::PrepareState(verifier_state)),
+                                })) => (message, Either::VerifyState(verifier_state)),
                                 Ok(PingPongState::FinishedWithOutbound {
                                     message,
                                     output_share,
@@ -788,7 +788,7 @@ where
                         pc_and_sa_sender
                             .send((
                                 report_aggregation.ord(),
-                                PrepareContinue::new(
+                                VerifyContinue::new(
                                     *report_aggregation.report_id(),
                                     message.clone(),
                                 ),
@@ -799,7 +799,7 @@ where
             }
         });
 
-        let (report_aggregations_to_write, (prepare_continues, stepped_aggregations)) = join!(
+        let (report_aggregations_to_write, (verify_continues, stepped_aggregations)) = join!(
             async move {
                 let mut report_aggregations_to_write = Vec::with_capacity(report_aggregation_count);
                 while ra_receiver
@@ -813,9 +813,9 @@ where
                 let mut pcs_and_sas = Vec::with_capacity(report_aggregation_count);
                 while pc_and_sa_receiver.recv_many(&mut pcs_and_sas, 10).await > 0 {}
                 pcs_and_sas.sort_unstable_by_key(|(ord, _, _)| *ord);
-                let (prepare_continues, stepped_aggregations): (Vec<_>, Vec<_>) =
+                let (verify_continues, stepped_aggregations): (Vec<_>, Vec<_>) =
                     pcs_and_sas.into_iter().map(|(_, pc, sa)| (pc, sa)).unzip();
-                (prepare_continues, stepped_aggregations)
+                (verify_continues, stepped_aggregations)
             }
         );
 
@@ -829,13 +829,13 @@ where
             }
         });
         assert_eq!(
-            report_aggregations_to_write.len() + prepare_continues.len(),
+            report_aggregations_to_write.len() + verify_continues.len(),
             report_aggregation_count
         );
-        assert_eq!(prepare_continues.len(), stepped_aggregations.len());
+        assert_eq!(verify_continues.len(), stepped_aggregations.len());
 
         // Construct request, send it to the helper, and process the response.
-        let request = AggregationJobContinueReq::new(aggregation_job.step(), prepare_continues);
+        let request = AggregationJobContinueReq::new(aggregation_job.step(), verify_continues);
 
         let http_response = send_request_to_helper(
             &self.http_client,
@@ -908,10 +908,10 @@ where
             .into_iter()
             .filter_map(|report_aggregation| {
                 let leader_state_or_output_share = match report_aggregation.state() {
-                    // Leader was in the init state, so re-hydrate the prepare state into
+                    // Leader was in the init state, so re-hydrate the verify state into
                     // PingPongState::Continued.
-                    ReportAggregationState::LeaderPollInit { prepare_state } => {
-                        Ok(Either::PrepareState(prepare_state.clone()))
+                    ReportAggregationState::LeaderPollInit { verify_state } => {
+                        Ok(Either::VerifyState(verify_state.clone()))
                     }
                     // Leader was in the continue state, so re-evaluate the transition into either
                     // PingPongState::Continued or ::Finished.
@@ -922,7 +922,7 @@ where
                         .map_err(|e| Error::Internal(e.into()))
                         .map(|ping_pong_state| match ping_pong_state {
                             PingPongState::Continued(Continued { verifier_state, .. }) => {
-                                Either::PrepareState(verifier_state)
+                                Either::VerifyState(verifier_state)
                             }
                             PingPongState::Finished { output_share }
                             | PingPongState::FinishedWithOutbound { output_share, .. } => {
@@ -1020,7 +1020,7 @@ where
                 .await
             }
 
-            Some(AggregationJobResp { prepare_resps }) => {
+            Some(AggregationJobResp { verify_resps }) => {
                 self.step_aggregation_job_leader_process_response_finished(
                     datastore,
                     vdaf,
@@ -1029,7 +1029,7 @@ where
                     aggregation_job,
                     stepped_aggregations,
                     report_aggregations_to_write,
-                    prepare_resps,
+                    verify_resps,
                 )
                 .await
             }
@@ -1065,8 +1065,8 @@ where
                     // Transition from init state to polling init state
                     (
                         ReportAggregationState::LeaderInit { .. },
-                        Either::PrepareState(prepare_state),
-                    ) => ReportAggregationState::LeaderPollInit { prepare_state },
+                        Either::VerifyState(verify_state),
+                    ) => ReportAggregationState::LeaderPollInit { verify_state },
                     // Transition from continue state to polling continue state
                     (ReportAggregationState::LeaderContinue { continuation }, _) => {
                         ReportAggregationState::LeaderPollContinue {
@@ -1156,23 +1156,24 @@ where
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         stepped_aggregations: Vec<SteppedAggregation<SEED_SIZE, A>>,
         mut report_aggregations_to_write: Vec<WritableReportAggregation<SEED_SIZE, A>>,
-        prepare_resps: Vec<PrepareResp>,
+        verify_resps: Vec<VerifyResp>,
     ) -> Result<(), Error> {
         // Handle response, computing the new report aggregations to be stored.
         let task_aggregation_counters = TaskAggregationCounter::default();
         let expected_report_aggregation_count =
             report_aggregations_to_write.len() + stepped_aggregations.len();
-        if stepped_aggregations.len() != prepare_resps.len() {
+        if stepped_aggregations.len() != verify_resps.len() {
             return Err(Error::Internal(
-                "missing, duplicate, out-of-order, or unexpected prepare steps in response".into(),
+                "missing, duplicate, out-of-order, or unexpected verify steps in response".into(),
             ));
         }
-        for (stepped_aggregation, helper_prep_resp) in
-            stepped_aggregations.iter().zip(&prepare_resps)
+        for (stepped_aggregation, helper_verify_resp) in
+            stepped_aggregations.iter().zip(&verify_resps)
         {
-            if stepped_aggregation.report_aggregation.report_id() != helper_prep_resp.report_id() {
+            if stepped_aggregation.report_aggregation.report_id() != helper_verify_resp.report_id()
+            {
                 return Err(Error::Internal(
-                    "missing, duplicate, out-of-order, or unexpected prepare steps in response"
+                    "missing, duplicate, out-of-order, or unexpected verify steps in response"
                         .into(),
                 ));
             }
@@ -1201,51 +1202,52 @@ where
 
                 stepped_aggregations
                     .into_par_iter()
-                    .zip(prepare_resps)
-                    .try_for_each(|(stepped_aggregation, helper_prep_resp)| {
+                    .zip(verify_resps)
+                    .try_for_each(|(stepped_aggregation, helper_verify_resp)| {
                         let _entered = span.enter();
 
                         let (new_state, output_share) = match (
                             stepped_aggregation.leader_state_or_output_share,
-                            helper_prep_resp.result(),
+                            helper_verify_resp.result(),
                         ) {
                             // Leader is in state continued, incoming helper message is continue.
                             // Leader continues.
                             // This can happen while handling a response to AggregationJobInitReq or
                             // AggregationJobContinueReq.
                             (
-                                Either::PrepareState(leader_prepare_state),
-                                PrepareStepResult::Continue {
-                                    message: helper_prep_msg,
+                                Either::VerifyState(leader_verify_state),
+                                VerifyStepResult::Continue {
+                                    message: helper_verify_msg,
                                 },
                             ) => {
-                                let continuation_and_state = trace_span!(
-                                    "VDAF preparation (leader continuation)"
-                                )
-                                .in_scope(|| {
-                                    vdaf.leader_continued(
-                                        &ctx,
-                                        aggregation_job.aggregation_parameter(),
-                                        leader_prepare_state.clone(),
-                                        helper_prep_msg,
-                                    )
-                                    .and_then(|c| Ok((c.clone(), c.evaluate(&ctx, &vdaf)?)))
-                                    .map_err(
-                                        |ping_pong_error| {
-                                            let report_error = handle_ping_pong_error(
-                                                &task_id,
-                                                Role::Leader,
-                                                stepped_aggregation.report_aggregation.report_id(),
-                                                ping_pong_error,
-                                                &aggregate_step_failure_counter,
-                                            );
+                                let continuation_and_state =
+                                    trace_span!("VDAF verification (leader continuation)")
+                                        .in_scope(|| {
+                                            vdaf.leader_continued(
+                                                &ctx,
+                                                aggregation_job.aggregation_parameter(),
+                                                leader_verify_state.clone(),
+                                                helper_verify_msg,
+                                            )
+                                            .and_then(|c| Ok((c.clone(), c.evaluate(&ctx, &vdaf)?)))
+                                            .map_err(
+                                                |ping_pong_error| {
+                                                    let report_error = handle_ping_pong_error(
+                                                        &task_id,
+                                                        Role::Leader,
+                                                        stepped_aggregation
+                                                            .report_aggregation
+                                                            .report_id(),
+                                                        ping_pong_error,
+                                                        &aggregate_step_failure_counter,
+                                                    );
 
-                                            task_aggregation_counters
-                                                .increment_with_report_error(report_error);
-                                            report_error
-                                        },
-                                    )
-                                });
+                                                    task_aggregation_counters
+                                                        .increment_with_report_error(report_error);
+                                                    report_error
+                                                },
+                                            )
+                                        });
 
                                 match continuation_and_state {
                                     // Leader has an outbound message: continue.
@@ -1274,7 +1276,7 @@ where
                             }
                             // If helper continued but leader is in any state but continue, that's
                             // illegal.
-                            (_, PrepareStepResult::Continue { .. }) => {
+                            (_, VerifyStepResult::Continue { .. }) => {
                                 warn!(
                                     report_id = %stepped_aggregation.report_aggregation.report_id(),
                                     "Helper continued but Leader did not",
@@ -1282,10 +1284,10 @@ where
                                 aggregate_step_failure_counter
                                     .add(1, &[KeyValue::new("type", "continue_mismatch")]);
                                 task_aggregation_counters
-                                    .increment_with_report_error(ReportError::VdafPrepError);
+                                    .increment_with_report_error(ReportError::VdafVerifyError);
                                 (
                                     ReportAggregationState::Failed {
-                                        report_error: ReportError::VdafPrepError,
+                                        report_error: ReportError::VdafVerifyError,
                                     },
                                     None,
                                 )
@@ -1294,12 +1296,12 @@ where
                             // finished. Leader commits output share.
                             // This can only happen while handling a response to
                             // AggregationJobContinueReq.
-                            (Either::OutputShare(output_share), PrepareStepResult::Finished) => {
+                            (Either::OutputShare(output_share), VerifyStepResult::Finished) => {
                                 (ReportAggregationState::Finished, Some(output_share.clone()))
                             }
                             // If helper finished but leader is in any state but finished, that's
                             // illegal.
-                            (_, PrepareStepResult::Finished) => {
+                            (_, VerifyStepResult::Finished) => {
                                 warn!(
                                     report_id = %stepped_aggregation.report_aggregation.report_id(),
                                     "Helper finished but Leader did not",
@@ -1307,10 +1309,10 @@ where
                                 aggregate_step_failure_counter
                                     .add(1, &[KeyValue::new("type", "finish_mismatch")]);
                                 task_aggregation_counters
-                                    .increment_with_report_error(ReportError::VdafPrepError);
+                                    .increment_with_report_error(ReportError::VdafVerifyError);
                                 (
                                     ReportAggregationState::Failed {
-                                        report_error: ReportError::VdafPrepError,
+                                        report_error: ReportError::VdafVerifyError,
                                     },
                                     None,
                                 )
@@ -1319,7 +1321,7 @@ where
                             // helper message is rejected. Leader drops this report.
                             // This can happen while handling a response to AggregationJobInitReq or
                             // AggregationJobContinueReq.
-                            (_, PrepareStepResult::Reject(err)) => {
+                            (_, VerifyStepResult::Reject(err)) => {
                                 // TODO(#236): is it correct to just record the transition error
                                 // that the helper reports?
                                 info!(
@@ -1967,7 +1969,7 @@ where
     }
 }
 
-/// SteppedAggregation represents a report aggregation along with the associated preparation-state.
+/// SteppedAggregation represents a report aggregation along with the associated verification-state.
 struct SteppedAggregation<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> {
     report_aggregation: ReportAggregation<SEED_SIZE, A>,
     leader_state_or_output_share: Either<A::VerifyState, A::OutputShare>,
@@ -1987,7 +1989,7 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> SteppedAggregation<S
 
 #[derive(Debug)]
 enum Either<PS, OS> {
-    PrepareState(PS),
+    VerifyState(PS),
     OutputShare(OS),
 }
 

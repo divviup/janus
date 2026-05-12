@@ -195,7 +195,7 @@ CREATE TABLE task_aggregation_counters(
     report_dropped BIGINT NOT NULL DEFAULT 0,
     hpke_unknown_config_id BIGINT NOT NULL DEFAULT 0,
     hpke_decrypt_failure BIGINT NOT NULL DEFAULT 0,
-    vdaf_prep_error BIGINT NOT NULL DEFAULT 0,
+    vdaf_verify_error BIGINT NOT NULL DEFAULT 0,
     task_not_started BIGINT NOT NULL DEFAULT 0,
     task_expired BIGINT NOT NULL DEFAULT 0,
     invalid_message BIGINT NOT NULL DEFAULT 0,
@@ -207,7 +207,7 @@ CREATE TABLE task_aggregation_counters(
     helper_report_dropped BIGINT NOT NULL DEFAULT 0,
     helper_hpke_unknown_config_id BIGINT NOT NULL DEFAULT 0,
     helper_hpke_decrypt_failure BIGINT NOT NULL DEFAULT 0,
-    helper_vdaf_prep_error BIGINT NOT NULL DEFAULT 0,
+    helper_vdaf_verify_error BIGINT NOT NULL DEFAULT 0,
     helper_task_not_started BIGINT NOT NULL DEFAULT 0,
     helper_task_expired BIGINT NOT NULL DEFAULT 0,
     helper_invalid_message BIGINT NOT NULL DEFAULT 0,
@@ -296,8 +296,8 @@ CREATE TYPE REPORT_AGGREGATION_STATE AS ENUM(
     'CONTINUE_PROCESSING',  -- the aggregator is processing an aggregation continuation request asynchronously (helper only)
     'POLL_INIT',            -- the aggregator is polling for completion of a previous initialization operation (leader only)
     'POLL_CONTINUE',        -- the aggregator is polling for completion of a previous continuation operation (leader only)
-    'FINISHED',             -- the aggregator has completed the preparation process successfully
-    'FAILED'                -- the aggregator has completed the preparation process unsuccessfully
+    'FINISHED',             -- the aggregator has completed the verification process successfully
+    'FAILED'                -- the aggregator has completed the verification process unsuccessfully
 );
 
 -- An aggregation attempt for a single client report. An aggregation job logically contains a number
@@ -311,7 +311,7 @@ CREATE TABLE report_aggregations(
     client_report_id    BYTEA NOT NULL,                     -- the client report ID this report aggregation is associated with
     -- the client timestamp this report aggregation is associated with
     client_timestamp    TIMESTAMP WITH TIME ZONE NOT NULL,
-    last_prep_resp      BYTEA,                              -- the last PrepareResp message sent to the Leader, to assist in replay (opaque DAP message, populated for Helper only)
+    last_verify_resp    BYTEA,                              -- the last VerifyResp message sent to the Leader, to assist in replay (opaque DAP message, populated for Helper only)
     state               REPORT_AGGREGATION_STATE NOT NULL,  -- the current state of this report aggregation
 
     -- Additional data for state LeaderInit.
@@ -322,20 +322,20 @@ CREATE TABLE report_aggregations(
     helper_encrypted_input_share  BYTEA,  -- encoded HPKE ciphertext of helper input share (opaque DAP message)
 
     -- Additional data for state LeaderContinue or LeaderPollContinue
-    leader_prep_transition  BYTEA,  -- the current VDAF prepare transition (opaque VDAF message)
+    leader_verify_transition  BYTEA,  -- the current VDAF verify transition (opaque VDAF message)
 
     -- Additional data for state LeaderPollInit.
-    leader_prep_state    BYTEA,  -- the current prepare state (opaque VDAF message)
+    leader_verify_state  BYTEA,  -- the current verify state (opaque VDAF message)
 
     -- Additional data for state HelperInitProcessing.
-    prepare_init  BYTEA,                  -- the preparation initialization message received from the Leader (opaque DAP message)
+    verify_init   BYTEA,                  -- the verification initialization message received from the Leader (opaque DAP message)
     require_taskbind_extension  BOOLEAN,  -- is the taskprov extension required?
 
     -- Additional data for state HelperContinue & HelperContinueProcessing.
-    helper_prep_state  BYTEA,  -- the current VDAF prepare state (opaque VDAF message)
+    helper_verify_state  BYTEA,  -- the current VDAF verify state (opaque VDAF message)
 
     -- Additional data for state HelperContinueProcessing.
-    prepare_continue  BYTEA,  -- the preparation continuation message received from the Leader (opaque VDAF message)
+    verify_continue   BYTEA,  -- the verification continuation message received from the Leader (opaque DAP message)
 
     -- Additional data for state Failed.
     error_code  SMALLINT,  -- error code corresponding to a DAP ReportShareError value
@@ -393,7 +393,7 @@ CREATE INDEX batch_aggregations_gc_time ON batch_aggregations(task_id, UPPER(COA
 -- Specifies the possible state of a collection job.
 CREATE TYPE COLLECTION_JOB_STATE AS ENUM(
     'START',           -- this collection job is waiting for reports to be aggregated
-    'POLL',            -- this collection job is waiting for the helper to complete preparing its aggregate share
+    'POLL',            -- this collection job is waiting for the helper to complete computing its aggregate share
     'FINISHED',        -- this collection job has run successfully and is ready to be retrieved by the collector
     'ABANDONED',       -- this collection job has been abandoned & will never be run again
     'DELETED'          -- this collection job has been deleted

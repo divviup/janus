@@ -108,14 +108,14 @@ pub enum VdafInstance {
     #[cfg(feature = "test-util")]
     #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
     Fake { rounds: u32 },
-    /// A fake, no-op VDAF that always fails during initialization of input preparation.
+    /// A fake, no-op VDAF that always fails during initialization of input verification.
     #[cfg(feature = "test-util")]
     #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
-    FakeFailsPrepInit,
-    /// A fake, no-op VDAF that always fails when stepping input preparation.
+    FakeFailsVerifyInit,
+    /// A fake, no-op VDAF that always fails when stepping input verification.
     #[cfg(feature = "test-util")]
     #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
-    FakeFailsPrepStep,
+    FakeFailsVerifyStep,
 }
 
 impl VdafInstance {
@@ -124,8 +124,8 @@ impl VdafInstance {
         match self {
             #[cfg(feature = "test-util")]
             VdafInstance::Fake { .. }
-            | VdafInstance::FakeFailsPrepInit
-            | VdafInstance::FakeFailsPrepStep => 0,
+            | VdafInstance::FakeFailsVerifyInit
+            | VdafInstance::FakeFailsVerifyStep => 0,
 
             VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 { .. } => {
                 VERIFY_KEY_LENGTH_PRIO3_HMACSHA256_AES128
@@ -340,10 +340,10 @@ macro_rules! vdaf_dispatch_impl_test_util {
                 $body
             }
 
-            ::janus_core::vdaf::VdafInstance::FakeFailsPrepInit => {
+            ::janus_core::vdaf::VdafInstance::FakeFailsVerifyInit => {
                 let $vdaf = ::prio::vdaf::dummy::Vdaf::new(1).with_verify_init_fn(|_| {
                     ::std::result::Result::Err(::prio::vdaf::VdafError::Uncategorized(
-                        "FakeFailsPrepInit failed at prep_init".to_string(),
+                        "FakeFailsVerifyInit failed at verify_init".to_string(),
                     ))
                 });
                 type $Vdaf = ::prio::vdaf::dummy::Vdaf;
@@ -353,10 +353,10 @@ macro_rules! vdaf_dispatch_impl_test_util {
                 $body
             }
 
-            ::janus_core::vdaf::VdafInstance::FakeFailsPrepStep => {
+            ::janus_core::vdaf::VdafInstance::FakeFailsVerifyStep => {
                 let $vdaf = ::prio::vdaf::dummy::Vdaf::new(1).with_verify_next_fn(|_| {
                     ::std::result::Result::Err(::prio::vdaf::VdafError::Uncategorized(
-                        "FakeFailsPrepStep failed at prep_step".to_string(),
+                        "FakeFailsVerifyStep failed at verify_step".to_string(),
                     ))
                 });
                 type $Vdaf = ::prio::vdaf::dummy::Vdaf;
@@ -386,8 +386,8 @@ macro_rules! vdaf_dispatch_impl {
             }
 
             ::janus_core::vdaf::VdafInstance::Fake { .. }
-            | ::janus_core::vdaf::VdafInstance::FakeFailsPrepInit
-            | ::janus_core::vdaf::VdafInstance::FakeFailsPrepStep => {
+            | ::janus_core::vdaf::VdafInstance::FakeFailsVerifyInit
+            | ::janus_core::vdaf::VdafInstance::FakeFailsVerifyStep => {
                 ::janus_core::vdaf_dispatch_impl_test_util!(impl match test_util $vdaf_instance, ($vdaf, $Vdaf, $VERIFY_KEY_LEN, $dp_strategy, $DpStrategy) => $body)
             }
 
@@ -649,17 +649,17 @@ mod tests {
             ],
         );
         assert_tokens(
-            &VdafInstance::FakeFailsPrepInit,
+            &VdafInstance::FakeFailsVerifyInit,
             &[Token::UnitVariant {
                 name: "VdafInstance",
-                variant: "FakeFailsPrepInit",
+                variant: "FakeFailsVerifyInit",
             }],
         );
         assert_tokens(
-            &VdafInstance::FakeFailsPrepStep,
+            &VdafInstance::FakeFailsVerifyStep,
             &[Token::UnitVariant {
                 name: "VdafInstance",
-                variant: "FakeFailsPrepStep",
+                variant: "FakeFailsVerifyStep",
             }],
         );
     }

@@ -19,7 +19,7 @@ pub mod runtime;
 pub mod testcontainers;
 
 #[derive(Clone, Debug)]
-pub struct PrepareTransition<const VERIFY_KEY_LENGTH: usize, V>
+pub struct VerifyTransition<const VERIFY_KEY_LENGTH: usize, V>
 where
     V: vdaf::Aggregator<VERIFY_KEY_LENGTH, 16>,
 {
@@ -27,11 +27,11 @@ where
     pub state: PingPongState<V::VerifyState, V::OutputShare>,
 }
 
-impl<const VERIFY_KEY_LENGTH: usize, V> PrepareTransition<VERIFY_KEY_LENGTH, V>
+impl<const VERIFY_KEY_LENGTH: usize, V> VerifyTransition<VERIFY_KEY_LENGTH, V>
 where
     V: vdaf::Aggregator<VERIFY_KEY_LENGTH, 16>,
 {
-    pub fn prepare_state(&self) -> &V::VerifyState {
+    pub fn verify_state(&self) -> &V::VerifyState {
         assert_matches!(self.state, PingPongState::Continued(Continued{
             ref verifier_state, ..
         }) => verifier_state)
@@ -63,12 +63,12 @@ where
     /// The leader's states and messages computed throughout the protocol run. Indexed by the
     /// aggregation job step.
     #[allow(clippy::type_complexity)]
-    pub leader_prepare_transitions: Vec<PrepareTransition<VERIFY_KEY_LENGTH, V>>,
+    pub leader_verify_transitions: Vec<VerifyTransition<VERIFY_KEY_LENGTH, V>>,
 
     /// The helper's states and messages computed throughout the protocol run. Indexed by the
     /// aggregation job step.
     #[allow(clippy::type_complexity)]
-    pub helper_prepare_transitions: Vec<PrepareTransition<VERIFY_KEY_LENGTH, V>>,
+    pub helper_verify_transitions: Vec<VerifyTransition<VERIFY_KEY_LENGTH, V>>,
 
     /// The leader's computed output share.
     pub leader_output_share: V::OutputShare,
@@ -98,10 +98,10 @@ where
 {
     let ctx = vdaf_application_context(task_id);
 
-    let mut leader_prepare_transitions = Vec::new();
-    let mut helper_prepare_transitions = Vec::new();
+    let mut leader_verify_transitions = Vec::new();
+    let mut helper_verify_transitions = Vec::new();
 
-    // Shard inputs into input shares, and initialize the initial PrepareTransitions.
+    // Shard inputs into input shares, and initialize the initial VerifyTransitions.
     let (public_share, input_shares) = vdaf.shard(&ctx, measurement, report_id.as_ref()).unwrap();
 
     let leader_state = vdaf
@@ -115,7 +115,7 @@ where
         )
         .unwrap();
 
-    leader_prepare_transitions.push(PrepareTransition {
+    leader_verify_transitions.push(VerifyTransition {
         continuation: None,
         state: PingPongState::Continued(leader_state.clone()),
     });
@@ -133,7 +133,7 @@ where
         .unwrap();
     let helper_state = helper_transition.evaluate(&ctx, vdaf).unwrap();
 
-    helper_prepare_transitions.push(PrepareTransition {
+    helper_verify_transitions.push(VerifyTransition {
         continuation: Some(helper_transition),
         state: helper_state,
     });
@@ -145,12 +145,12 @@ where
         for role in [Role::Leader, Role::Helper] {
             let (curr_state, last_peer_message) = match role {
                 Role::Leader => (
-                    leader_prepare_transitions.last().unwrap().state.clone(),
-                    helper_prepare_transitions.last().unwrap().message(),
+                    leader_verify_transitions.last().unwrap().state.clone(),
+                    helper_verify_transitions.last().unwrap().message(),
                 ),
                 Role::Helper => (
-                    helper_prepare_transitions.last().unwrap().state.clone(),
-                    leader_prepare_transitions.last().unwrap().message(),
+                    helper_verify_transitions.last().unwrap().state.clone(),
+                    leader_verify_transitions.last().unwrap().message(),
                 ),
                 _ => panic!(),
             };
@@ -180,11 +180,11 @@ where
                     let state = continuation.evaluate(&ctx, vdaf).unwrap();
 
                     match role {
-                        Role::Leader => leader_prepare_transitions.push(PrepareTransition {
+                        Role::Leader => leader_verify_transitions.push(VerifyTransition {
                             continuation: Some(continuation),
                             state,
                         }),
-                        Role::Helper => helper_prepare_transitions.push(PrepareTransition {
+                        Role::Helper => helper_verify_transitions.push(VerifyTransition {
                             continuation: Some(continuation),
                             state,
                         }),
@@ -216,8 +216,8 @@ where
         public_share,
         leader_input_share: input_shares[0].clone(),
         helper_input_share: input_shares[1].clone(),
-        leader_prepare_transitions,
-        helper_prepare_transitions,
+        leader_verify_transitions,
+        helper_verify_transitions,
         leader_output_share: leader_output_share.unwrap(),
         helper_output_share: helper_output_share.unwrap(),
         leader_aggregate_share,
