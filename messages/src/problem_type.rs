@@ -67,7 +67,7 @@ impl DapProblemType {
                 "Leader and helper disagree on reports aggregated in a batch."
             }
             DapProblemType::StepMismatch => {
-                "The leader and helper are not on the same step of VDAF preparation."
+                "The leader and helper are not on the same step of VDAF verification."
             }
             DapProblemType::BatchOverlap => {
                 "The queried batch overlaps with a previously queried batch."

@@ -67,7 +67,7 @@ async fn aggregate_share_request_to_leader() {
         ..
     } = HttpHandlerTest::new().await;
 
-    // Prepare parameters.
+    // Set up parameters.
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,
@@ -112,7 +112,7 @@ async fn aggregate_share_request_invalid_batch_interval() {
         ..
     } = HttpHandlerTest::new().await;
 
-    // Prepare parameters.
+    // Set up parameters.
     let time_precision = TimePrecision::from_hours(8);
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,

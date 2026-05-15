@@ -35,9 +35,9 @@ use janus_core::{
 };
 use janus_messages::{
     AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
-    Duration, Extension, ExtensionType, Interval, MediaType, PartialBatchSelector, PrepareContinue,
-    PrepareInit, PrepareResp, PrepareStepResult, ReportError, ReportIdChecksum, ReportMetadata,
-    ReportShare, Role, Time, TimePrecision,
+    Duration, Extension, ExtensionType, Interval, MediaType, PartialBatchSelector, ReportError,
+    ReportIdChecksum, ReportMetadata, ReportShare, Role, Time, TimePrecision, VerifyContinue,
+    VerifyInit, VerifyResp, VerifyStepResult,
     batch_mode::{LeaderSelected, TimeInterval},
     problem_type::DapProblemType,
 };
@@ -125,7 +125,7 @@ async fn aggregation_job_driver() {
         ReportError::ReportDropped,
         ReportError::HpkeUnknownConfigId,
         ReportError::HpkeDecryptError,
-        ReportError::VdafPrepError,
+        ReportError::VdafVerifyError,
         ReportError::TaskNotStarted,
         ReportError::TaskExpired,
         ReportError::InvalidMessage,
@@ -133,7 +133,7 @@ async fn aggregation_job_driver() {
     ];
     let mut rejected_reports: Vec<_> = report_errors
         .into_iter()
-        .map(|prepare_error| {
+        .map(|verify_error| {
             let rejected_report_metadata = ReportMetadata::new(random(), time, Vec::new());
             let rejected_transcript = run_vdaf(
                 vdaf.as_ref(),
@@ -151,7 +151,7 @@ async fn aggregation_job_driver() {
                 &rejected_transcript,
             );
 
-            (rejected_report, prepare_error)
+            (rejected_report, verify_error)
         })
         .collect();
     rejected_reports.sort_by_key(|(report, _)| *report.metadata().id());
@@ -243,10 +243,10 @@ async fn aggregation_job_driver() {
             AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
             AggregationJobResp::MEDIA_TYPE,
             AggregationJobResp {
-                prepare_resps: Vec::from([PrepareResp::new(
+                verify_resps: Vec::from([VerifyResp::new(
                     *accepted_report.metadata().id(),
-                    PrepareStepResult::Continue {
-                        message: accepted_transcript.helper_prepare_transitions[0]
+                    VerifyStepResult::Continue {
+                        message: accepted_transcript.helper_verify_transitions[0]
                             .message()
                             .unwrap()
                             .clone(),
@@ -258,9 +258,9 @@ async fn aggregation_job_driver() {
                     rejected_reports
                         .iter()
                         .map(|(rejected_report, report_error)| {
-                            PrepareResp::new(
+                            VerifyResp::new(
                                 *rejected_report.metadata().id(),
-                                PrepareStepResult::Reject(*report_error),
+                                VerifyStepResult::Reject(*report_error),
                             )
                         }),
                 )
@@ -274,9 +274,9 @@ async fn aggregation_job_driver() {
             AggregationJobContinueReq::MEDIA_TYPE,
             AggregationJobResp::MEDIA_TYPE,
             AggregationJobResp {
-                prepare_resps: Vec::from([PrepareResp::new(
+                verify_resps: Vec::from([VerifyResp::new(
                     *accepted_report.metadata().id(),
-                    PrepareStepResult::Finished,
+                    VerifyStepResult::Finished,
                 )]),
             }
             .get_encoded()
@@ -676,23 +676,23 @@ async fn leader_sync_time_interval_aggregation_job_init_single_step() {
     let leader_request = AggregationJobInitializeReq::new(
         ().get_encoded().unwrap(),
         PartialBatchSelector::new_time_interval(),
-        Vec::from([PrepareInit::new(
+        Vec::from([VerifyInit::new(
             ReportShare::new(
                 report.metadata().clone(),
                 report.public_share().get_encoded().unwrap(),
                 report.helper_encrypted_input_share().clone(),
             ),
-            transcript.leader_prepare_transitions[0]
+            transcript.leader_verify_transitions[0]
                 .message()
                 .unwrap()
                 .clone(),
         )]),
     );
     let helper_response = AggregationJobResp {
-        prepare_resps: Vec::from([PrepareResp::new(
+        verify_resps: Vec::from([VerifyResp::new(
             *report.metadata().id(),
-            PrepareStepResult::Continue {
-                message: transcript.helper_prepare_transitions[0]
+            VerifyStepResult::Continue {
+                message: transcript.helper_verify_transitions[0]
                     .message()
                     .unwrap()
                     .clone(),
@@ -1062,23 +1062,23 @@ async fn leader_sync_time_interval_aggregation_job_init_two_steps() {
     let leader_request = AggregationJobInitializeReq::new(
         aggregation_param.get_encoded().unwrap(),
         PartialBatchSelector::new_time_interval(),
-        Vec::from([PrepareInit::new(
+        Vec::from([VerifyInit::new(
             ReportShare::new(
                 report.metadata().clone(),
                 report.public_share().get_encoded().unwrap(),
                 report.helper_encrypted_input_share().clone(),
             ),
-            transcript.leader_prepare_transitions[0]
+            transcript.leader_verify_transitions[0]
                 .message()
                 .unwrap()
                 .clone(),
         )]),
     );
     let helper_response = AggregationJobResp {
-        prepare_resps: Vec::from([PrepareResp::new(
+        verify_resps: Vec::from([VerifyResp::new(
             *report.metadata().id(),
-            PrepareStepResult::Continue {
-                message: transcript.helper_prepare_transitions[0]
+            VerifyStepResult::Continue {
+                message: transcript.helper_verify_transitions[0]
                     .message()
                     .unwrap()
                     .clone(),
@@ -1151,7 +1151,7 @@ async fn leader_sync_time_interval_aggregation_job_init_two_steps() {
         0,
         None,
         ReportAggregationState::LeaderContinue {
-            continuation: transcript.leader_prepare_transitions[1]
+            continuation: transcript.leader_verify_transitions[1]
                 .continuation
                 .clone()
                 .unwrap(),
@@ -1435,24 +1435,24 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
         ().get_encoded().unwrap(),
         PartialBatchSelector::new_time_interval(),
         Vec::from([
-            PrepareInit::new(
+            VerifyInit::new(
                 ReportShare::new(
                     gc_eligible_report.metadata().clone(),
                     gc_eligible_report.public_share().get_encoded().unwrap(),
                     gc_eligible_report.helper_encrypted_input_share().clone(),
                 ),
-                gc_eligible_transcript.leader_prepare_transitions[0]
+                gc_eligible_transcript.leader_verify_transitions[0]
                     .message()
                     .unwrap()
                     .clone(),
             ),
-            PrepareInit::new(
+            VerifyInit::new(
                 ReportShare::new(
                     gc_ineligible_report.metadata().clone(),
                     gc_ineligible_report.public_share().get_encoded().unwrap(),
                     gc_ineligible_report.helper_encrypted_input_share().clone(),
                 ),
-                gc_ineligible_transcript.leader_prepare_transitions[0]
+                gc_ineligible_transcript.leader_verify_transitions[0]
                     .message()
                     .unwrap()
                     .clone(),
@@ -1460,20 +1460,20 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
         ]),
     );
     let helper_response = AggregationJobResp {
-        prepare_resps: Vec::from([
-            PrepareResp::new(
+        verify_resps: Vec::from([
+            VerifyResp::new(
                 *gc_eligible_report.metadata().id(),
-                PrepareStepResult::Continue {
-                    message: gc_eligible_transcript.helper_prepare_transitions[0]
+                VerifyStepResult::Continue {
+                    message: gc_eligible_transcript.helper_verify_transitions[0]
                         .message()
                         .unwrap()
                         .clone(),
                 },
             ),
-            PrepareResp::new(
+            VerifyResp::new(
                 *gc_ineligible_report.metadata().id(),
-                PrepareStepResult::Continue {
-                    message: gc_ineligible_transcript.helper_prepare_transitions[0]
+                VerifyStepResult::Continue {
+                    message: gc_ineligible_transcript.helper_verify_transitions[0]
                         .message()
                         .unwrap()
                         .clone(),
@@ -1763,23 +1763,23 @@ async fn leader_sync_leader_selected_aggregation_job_init_single_step() {
     let leader_request = AggregationJobInitializeReq::new(
         ().get_encoded().unwrap(),
         PartialBatchSelector::new_leader_selected(batch_id),
-        Vec::from([PrepareInit::new(
+        Vec::from([VerifyInit::new(
             ReportShare::new(
                 report.metadata().clone(),
                 report.public_share().get_encoded().unwrap(),
                 report.helper_encrypted_input_share().clone(),
             ),
-            transcript.leader_prepare_transitions[0]
+            transcript.leader_verify_transitions[0]
                 .message()
                 .unwrap()
                 .clone(),
         )]),
     );
     let helper_response = AggregationJobResp {
-        prepare_resps: Vec::from([PrepareResp::new(
+        verify_resps: Vec::from([VerifyResp::new(
             *report.metadata().id(),
-            PrepareStepResult::Continue {
-                message: transcript.helper_prepare_transitions[0]
+            VerifyStepResult::Continue {
+                message: transcript.helper_verify_transitions[0]
                     .message()
                     .unwrap()
                     .clone(),
@@ -2081,23 +2081,23 @@ async fn leader_sync_leader_selected_aggregation_job_init_two_steps() {
     let leader_request = AggregationJobInitializeReq::new(
         aggregation_param.get_encoded().unwrap(),
         PartialBatchSelector::new_leader_selected(batch_id),
-        Vec::from([PrepareInit::new(
+        Vec::from([VerifyInit::new(
             ReportShare::new(
                 report.metadata().clone(),
                 report.public_share().get_encoded().unwrap(),
                 report.helper_encrypted_input_share().clone(),
             ),
-            transcript.leader_prepare_transitions[0]
+            transcript.leader_verify_transitions[0]
                 .message()
                 .unwrap()
                 .clone(),
         )]),
     );
     let helper_response = AggregationJobResp {
-        prepare_resps: Vec::from([PrepareResp::new(
+        verify_resps: Vec::from([VerifyResp::new(
             *report.metadata().id(),
-            PrepareStepResult::Continue {
-                message: transcript.helper_prepare_transitions[0]
+            VerifyStepResult::Continue {
+                message: transcript.helper_verify_transitions[0]
                     .message()
                     .unwrap()
                     .clone(),
@@ -2170,7 +2170,7 @@ async fn leader_sync_leader_selected_aggregation_job_init_two_steps() {
         0,
         None,
         ReportAggregationState::LeaderContinue {
-            continuation: transcript.leader_prepare_transitions[1]
+            continuation: transcript.leader_verify_transitions[1]
                 .continuation
                 .clone()
                 .unwrap(),
@@ -2329,7 +2329,7 @@ async fn leader_sync_time_interval_aggregation_job_continue() {
                     0,
                     None,
                     ReportAggregationState::LeaderContinue {
-                        continuation: transcript.leader_prepare_transitions[1]
+                        continuation: transcript.leader_verify_transitions[1]
                             .continuation
                             .clone()
                             .unwrap(),
@@ -2391,18 +2391,18 @@ async fn leader_sync_time_interval_aggregation_job_continue() {
     // verification -- but mockito does not expose this functionality at time of writing.)
     let leader_request = AggregationJobContinueReq::new(
         AggregationJobStep::from(1),
-        Vec::from([PrepareContinue::new(
+        Vec::from([VerifyContinue::new(
             *report.metadata().id(),
-            transcript.leader_prepare_transitions[1]
+            transcript.leader_verify_transitions[1]
                 .message()
                 .unwrap()
                 .clone(),
         )]),
     );
     let helper_response = AggregationJobResp {
-        prepare_resps: Vec::from([PrepareResp::new(
+        verify_resps: Vec::from([VerifyResp::new(
             *report.metadata().id(),
-            PrepareStepResult::Finished,
+            VerifyStepResult::Finished,
         )]),
     };
     let mocked_aggregate_failure = server
@@ -2681,7 +2681,7 @@ async fn leader_sync_leader_selected_aggregation_job_continue() {
                     0,
                     None,
                     ReportAggregationState::LeaderContinue {
-                        continuation: transcript.leader_prepare_transitions[1]
+                        continuation: transcript.leader_verify_transitions[1]
                             .continuation
                             .clone()
                             .unwrap(),
@@ -2727,18 +2727,18 @@ async fn leader_sync_leader_selected_aggregation_job_continue() {
     // verification -- but mockito does not expose this functionality at time of writing.)
     let leader_request = AggregationJobContinueReq::new(
         AggregationJobStep::from(1),
-        Vec::from([PrepareContinue::new(
+        Vec::from([VerifyContinue::new(
             *report.metadata().id(),
-            transcript.leader_prepare_transitions[1]
+            transcript.leader_verify_transitions[1]
                 .message()
                 .unwrap()
                 .clone(),
         )]),
     );
     let helper_response = AggregationJobResp {
-        prepare_resps: Vec::from([PrepareResp::new(
+        verify_resps: Vec::from([VerifyResp::new(
             *report.metadata().id(),
-            PrepareStepResult::Finished,
+            VerifyStepResult::Finished,
         )]),
     };
     let mocked_aggregate_failure = server
@@ -3000,13 +3000,13 @@ async fn leader_async_aggregation_job_init_to_pending() {
     let leader_request = AggregationJobInitializeReq::new(
         aggregation_param.get_encoded().unwrap(),
         PartialBatchSelector::new_time_interval(),
-        Vec::from([PrepareInit::new(
+        Vec::from([VerifyInit::new(
             ReportShare::new(
                 report.metadata().clone(),
                 report.public_share().get_encoded().unwrap(),
                 report.helper_encrypted_input_share().clone(),
             ),
-            transcript.leader_prepare_transitions[0]
+            transcript.leader_verify_transitions[0]
                 .message()
                 .unwrap()
                 .clone(),
@@ -3077,7 +3077,7 @@ async fn leader_async_aggregation_job_init_to_pending() {
         0,
         None,
         ReportAggregationState::LeaderPollInit {
-            prepare_state: *transcript.leader_prepare_transitions[0].prepare_state(),
+            verify_state: *transcript.leader_verify_transitions[0].verify_state(),
         },
     );
 
@@ -3256,13 +3256,13 @@ async fn leader_async_aggregation_job_init_to_pending_two_step() {
     let leader_request = AggregationJobInitializeReq::new(
         aggregation_param.get_encoded().unwrap(),
         PartialBatchSelector::new_time_interval(),
-        Vec::from([PrepareInit::new(
+        Vec::from([VerifyInit::new(
             ReportShare::new(
                 report.metadata().clone(),
                 report.public_share().get_encoded().unwrap(),
                 report.helper_encrypted_input_share().clone(),
             ),
-            transcript.leader_prepare_transitions[0]
+            transcript.leader_verify_transitions[0]
                 .message()
                 .unwrap()
                 .clone(),
@@ -3333,7 +3333,7 @@ async fn leader_async_aggregation_job_init_to_pending_two_step() {
         0,
         None,
         ReportAggregationState::LeaderPollInit {
-            prepare_state: *transcript.leader_prepare_transitions[0].prepare_state(),
+            verify_state: *transcript.leader_verify_transitions[0].verify_state(),
         },
     );
 
@@ -3453,7 +3453,7 @@ async fn leader_async_aggregation_job_continue_to_pending() {
         .run_unnamed_tx(|tx| {
             let task = leader_task.clone();
             let report = report.clone();
-            let continuation = transcript.leader_prepare_transitions[1]
+            let continuation = transcript.leader_verify_transitions[1]
                 .continuation
                 .clone()
                 .unwrap();
@@ -3522,9 +3522,9 @@ async fn leader_async_aggregation_job_continue_to_pending() {
     // Setup: prepare mocked HTTP response.
     let leader_request = AggregationJobContinueReq::new(
         AggregationJobStep::from(1),
-        Vec::from([PrepareContinue::new(
+        Vec::from([VerifyContinue::new(
             *report.metadata().id(),
-            transcript.leader_prepare_transitions[1]
+            transcript.leader_verify_transitions[1]
                 .message()
                 .unwrap()
                 .clone(),
@@ -3592,7 +3592,7 @@ async fn leader_async_aggregation_job_continue_to_pending() {
         0,
         None,
         ReportAggregationState::LeaderPollContinue {
-            continuation: transcript.leader_prepare_transitions[1]
+            continuation: transcript.leader_verify_transitions[1]
                 .continuation
                 .clone()
                 .unwrap(),
@@ -3714,7 +3714,7 @@ async fn leader_async_aggregation_job_init_poll_to_pending() {
         .run_unnamed_tx(|tx| {
             let task = leader_task.clone();
             let report = report.clone();
-            let prepare_state = *transcript.leader_prepare_transitions[0].prepare_state();
+            let verify_state = *transcript.leader_verify_transitions[0].verify_state();
 
             Box::pin(async move {
                 tx.put_aggregator_task(&task).await.unwrap();
@@ -3743,7 +3743,7 @@ async fn leader_async_aggregation_job_init_poll_to_pending() {
                     *report.metadata().time(),
                     0,
                     None,
-                    ReportAggregationState::LeaderPollInit { prepare_state },
+                    ReportAggregationState::LeaderPollInit { verify_state },
                 ))
                 .await
                 .unwrap();
@@ -3839,7 +3839,7 @@ async fn leader_async_aggregation_job_init_poll_to_pending() {
         0,
         None,
         ReportAggregationState::LeaderPollInit {
-            prepare_state: *transcript.leader_prepare_transitions[0].prepare_state(),
+            verify_state: *transcript.leader_verify_transitions[0].verify_state(),
         },
     );
 
@@ -3958,7 +3958,7 @@ async fn leader_async_aggregation_job_init_poll_to_pending_two_step() {
         .run_unnamed_tx(|tx| {
             let task = leader_task.clone();
             let report = report.clone();
-            let prepare_state = *transcript.leader_prepare_transitions[0].prepare_state();
+            let verify_state = *transcript.leader_verify_transitions[0].verify_state();
 
             Box::pin(async move {
                 tx.put_aggregator_task(&task).await.unwrap();
@@ -3987,7 +3987,7 @@ async fn leader_async_aggregation_job_init_poll_to_pending_two_step() {
                     *report.metadata().time(),
                     0,
                     None,
-                    ReportAggregationState::LeaderPollInit { prepare_state },
+                    ReportAggregationState::LeaderPollInit { verify_state },
                 ))
                 .await
                 .unwrap();
@@ -4083,7 +4083,7 @@ async fn leader_async_aggregation_job_init_poll_to_pending_two_step() {
         0,
         None,
         ReportAggregationState::LeaderPollInit {
-            prepare_state: *transcript.leader_prepare_transitions[0].prepare_state(),
+            verify_state: *transcript.leader_verify_transitions[0].verify_state(),
         },
     );
 
@@ -4202,7 +4202,7 @@ async fn leader_async_aggregation_job_init_poll_to_finished() {
         .run_unnamed_tx(|tx| {
             let task = leader_task.clone();
             let report = report.clone();
-            let prepare_state = *transcript.leader_prepare_transitions[0].prepare_state();
+            let verify_state = *transcript.leader_verify_transitions[0].verify_state();
 
             Box::pin(async move {
                 tx.put_aggregator_task(&task).await.unwrap();
@@ -4231,7 +4231,7 @@ async fn leader_async_aggregation_job_init_poll_to_finished() {
                     *report.metadata().time(),
                     0,
                     None,
-                    ReportAggregationState::LeaderPollInit { prepare_state },
+                    ReportAggregationState::LeaderPollInit { verify_state },
                 ))
                 .await
                 .unwrap();
@@ -4267,10 +4267,10 @@ async fn leader_async_aggregation_job_init_poll_to_finished() {
 
     // Setup: prepare mocked HTTP response.
     let helper_response = AggregationJobResp {
-        prepare_resps: Vec::from([PrepareResp::new(
+        verify_resps: Vec::from([VerifyResp::new(
             *report.metadata().id(),
-            PrepareStepResult::Continue {
-                message: transcript.helper_prepare_transitions[0]
+            VerifyStepResult::Continue {
+                message: transcript.helper_verify_transitions[0]
                     .message()
                     .unwrap()
                     .clone(),
@@ -4463,7 +4463,7 @@ async fn leader_async_aggregation_job_init_poll_to_continue() {
         .run_unnamed_tx(|tx| {
             let task = leader_task.clone();
             let report = report.clone();
-            let prepare_state = *transcript.leader_prepare_transitions[0].prepare_state();
+            let verify_state = *transcript.leader_verify_transitions[0].verify_state();
 
             Box::pin(async move {
                 tx.put_aggregator_task(&task).await.unwrap();
@@ -4492,7 +4492,7 @@ async fn leader_async_aggregation_job_init_poll_to_continue() {
                     *report.metadata().time(),
                     0,
                     None,
-                    ReportAggregationState::LeaderPollInit { prepare_state },
+                    ReportAggregationState::LeaderPollInit { verify_state },
                 ))
                 .await
                 .unwrap();
@@ -4528,10 +4528,10 @@ async fn leader_async_aggregation_job_init_poll_to_continue() {
 
     // Setup: prepare mocked HTTP response.
     let helper_response = AggregationJobResp {
-        prepare_resps: Vec::from([PrepareResp::new(
+        verify_resps: Vec::from([VerifyResp::new(
             *report.metadata().id(),
-            PrepareStepResult::Continue {
-                message: transcript.helper_prepare_transitions[0]
+            VerifyStepResult::Continue {
+                message: transcript.helper_verify_transitions[0]
                     .message()
                     .unwrap()
                     .clone(),
@@ -4602,7 +4602,7 @@ async fn leader_async_aggregation_job_init_poll_to_continue() {
         0,
         None,
         ReportAggregationState::LeaderContinue {
-            continuation: transcript.leader_prepare_transitions[1]
+            continuation: transcript.leader_verify_transitions[1]
                 .continuation
                 .clone()
                 .unwrap(),
@@ -4724,7 +4724,7 @@ async fn leader_async_aggregation_job_continue_poll_to_pending() {
         .run_unnamed_tx(|tx| {
             let task = leader_task.clone();
             let report = report.clone();
-            let continuation = transcript.leader_prepare_transitions[1]
+            let continuation = transcript.leader_verify_transitions[1]
                 .continuation
                 .clone()
                 .unwrap();
@@ -4855,7 +4855,7 @@ async fn leader_async_aggregation_job_continue_poll_to_pending() {
         0,
         None,
         ReportAggregationState::LeaderPollContinue {
-            continuation: transcript.leader_prepare_transitions[1]
+            continuation: transcript.leader_verify_transitions[1]
                 .continuation
                 .clone()
                 .unwrap(),
@@ -4977,7 +4977,7 @@ async fn leader_async_aggregation_job_continue_poll_to_finished() {
         .run_unnamed_tx(|tx| {
             let task = leader_task.clone();
             let report = report.clone();
-            let continuation = transcript.leader_prepare_transitions[1]
+            let continuation = transcript.leader_verify_transitions[1]
                 .continuation
                 .clone()
                 .unwrap();
@@ -5049,9 +5049,9 @@ async fn leader_async_aggregation_job_continue_poll_to_finished() {
 
     // Setup: prepare mocked HTTP responses.
     let helper_response = AggregationJobResp {
-        prepare_resps: Vec::from([PrepareResp::new(
+        verify_resps: Vec::from([VerifyResp::new(
             *report.metadata().id(),
-            PrepareStepResult::Finished,
+            VerifyStepResult::Finished,
         )]),
     };
     let mocked_aggregate_success = server
@@ -5234,7 +5234,7 @@ async fn helper_async_init_processing_to_finished() {
         .run_unnamed_tx(|tx| {
             let helper_task = helper_task.clone();
             let report_share = report_share.clone();
-            let message = transcript.leader_prepare_transitions[0]
+            let message = transcript.leader_verify_transitions[0]
                 .message()
                 .unwrap()
                 .clone();
@@ -5268,7 +5268,7 @@ async fn helper_async_init_processing_to_finished() {
                     0,
                     None,
                     ReportAggregationState::HelperInitProcessing {
-                        prepare_init: PrepareInit::new(report_share, message),
+                        verify_init: VerifyInit::new(report_share, message),
                         require_taskbind_extension: false,
                     },
                 ))
@@ -5349,10 +5349,10 @@ async fn helper_async_init_processing_to_finished() {
         *report_share.metadata().id(),
         *report_share.metadata().time(),
         0,
-        Some(PrepareResp::new(
+        Some(VerifyResp::new(
             *report_share.metadata().id(),
-            PrepareStepResult::Continue {
-                message: transcript.helper_prepare_transitions[0]
+            VerifyStepResult::Continue {
+                message: transcript.helper_verify_transitions[0]
                     .message()
                     .unwrap()
                     .clone(),
@@ -5477,7 +5477,7 @@ async fn helper_async_init_processing_to_continue() {
         .run_unnamed_tx(|tx| {
             let helper_task = helper_task.clone();
             let report_share = report_share.clone();
-            let message = transcript.leader_prepare_transitions[0]
+            let message = transcript.leader_verify_transitions[0]
                 .message()
                 .unwrap()
                 .clone();
@@ -5511,7 +5511,7 @@ async fn helper_async_init_processing_to_continue() {
                     0,
                     None,
                     ReportAggregationState::HelperInitProcessing {
-                        prepare_init: PrepareInit::new(report_share, message),
+                        verify_init: VerifyInit::new(report_share, message),
                         require_taskbind_extension: false,
                     },
                 ))
@@ -5592,17 +5592,17 @@ async fn helper_async_init_processing_to_continue() {
         *report_share.metadata().id(),
         *report_share.metadata().time(),
         0,
-        Some(PrepareResp::new(
+        Some(VerifyResp::new(
             *report_share.metadata().id(),
-            PrepareStepResult::Continue {
-                message: transcript.helper_prepare_transitions[0]
+            VerifyStepResult::Continue {
+                message: transcript.helper_verify_transitions[0]
                     .message()
                     .unwrap()
                     .clone(),
             },
         )),
         ReportAggregationState::HelperContinue {
-            prepare_state: *transcript.helper_prepare_transitions[0].prepare_state(),
+            verify_state: *transcript.helper_verify_transitions[0].verify_state(),
         },
     );
 
@@ -5717,8 +5717,8 @@ async fn helper_async_continue_processing_to_finished() {
         .run_unnamed_tx(|tx| {
             let helper_task = helper_task.clone();
             let report_share = report_share.clone();
-            let prepare_state = *transcript.helper_prepare_transitions[0].prepare_state();
-            let message = transcript.leader_prepare_transitions[1]
+            let verify_state = *transcript.helper_verify_transitions[0].verify_state();
+            let message = transcript.leader_verify_transitions[1]
                 .message()
                 .unwrap()
                 .clone();
@@ -5752,8 +5752,8 @@ async fn helper_async_continue_processing_to_finished() {
                     0,
                     None,
                     ReportAggregationState::HelperContinueProcessing {
-                        prepare_state,
-                        prepare_continue: PrepareContinue::new(report_id, message),
+                        verify_state,
+                        verify_continue: VerifyContinue::new(report_id, message),
                     },
                 ))
                 .await
@@ -5833,9 +5833,9 @@ async fn helper_async_continue_processing_to_finished() {
         *report_share.metadata().id(),
         *report_share.metadata().time(),
         0,
-        Some(PrepareResp::new(
+        Some(VerifyResp::new(
             *report_share.metadata().id(),
-            PrepareStepResult::Finished,
+            VerifyStepResult::Finished,
         )),
         ReportAggregationState::Finished,
     );

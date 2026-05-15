@@ -3,8 +3,8 @@ use prio::topology::ping_pong::PingPongMessage;
 use crate::{
     AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
     BatchId, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, LeaderSelected,
-    PartialBatchSelector, PrepareContinue, PrepareInit, PrepareResp, PrepareStepResult,
-    ReportError, ReportId, ReportMetadata, ReportShare, Time, TimePrecision, roundtrip_encoding,
+    PartialBatchSelector, ReportError, ReportId, ReportMetadata, ReportShare, Time, TimePrecision,
+    VerifyContinue, VerifyInit, VerifyResp, VerifyStepResult, roundtrip_encoding,
 };
 
 const TEST_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(1);
@@ -114,10 +114,10 @@ fn roundtrip_report_share() {
 }
 
 #[test]
-fn roundtrip_prepare_init() {
+fn roundtrip_verify_init() {
     roundtrip_encoding(&[
         (
-            PrepareInit {
+            VerifyInit {
                 report_share: ReportShare {
                     metadata: ReportMetadata::new(
                         ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
@@ -179,7 +179,7 @@ fn roundtrip_prepare_init() {
             ),
         ),
         (
-            PrepareInit {
+            VerifyInit {
                 report_share: ReportShare {
                     metadata: ReportMetadata::new(
                         ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
@@ -252,12 +252,12 @@ fn roundtrip_prepare_init() {
 }
 
 #[test]
-fn roundtrip_prepare_resp() {
+fn roundtrip_verify_resp() {
     roundtrip_encoding(&[
         (
-            PrepareResp {
+            VerifyResp {
                 report_id: ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
-                result: PrepareStepResult::Continue {
+                result: VerifyStepResult::Continue {
                     message: PingPongMessage::Continue {
                         verifier_message: Vec::from("012345"),
                         verifier_share: Vec::from("6789"),
@@ -266,7 +266,7 @@ fn roundtrip_prepare_resp() {
             },
             concat!(
                 "0102030405060708090A0B0C0D0E0F10", // report_id
-                "00",                               // prepare_step_result
+                "00",                               // verify_step_result
                 concat!(
                     // message
                     "00000013", // ping pong message length
@@ -283,23 +283,23 @@ fn roundtrip_prepare_resp() {
             ),
         ),
         (
-            PrepareResp {
+            VerifyResp {
                 report_id: ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
-                result: PrepareStepResult::Finished,
+                result: VerifyStepResult::Finished,
             },
             concat!(
                 "100F0E0D0C0B0A090807060504030201", // report_id
-                "01",                               // prepare_step_result
+                "01",                               // verify_step_result
             ),
         ),
         (
-            PrepareResp {
+            VerifyResp {
                 report_id: ReportId::from([255; 16]),
-                result: PrepareStepResult::Reject(ReportError::VdafPrepError),
+                result: VerifyStepResult::Reject(ReportError::VdafVerifyError),
             },
             concat!(
                 "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // report_id
-                "02",                               // prepare_step_result
+                "02",                               // verify_step_result
                 "06",                               // report_share_error
             ),
         ),
@@ -315,7 +315,7 @@ fn roundtrip_report_share_error() {
         (ReportError::ReportDropped, "03"),
         (ReportError::HpkeUnknownConfigId, "04"),
         (ReportError::HpkeDecryptError, "05"),
-        (ReportError::VdafPrepError, "06"),
+        (ReportError::VdafVerifyError, "06"),
         (ReportError::TaskExpired, "07"),
         (ReportError::InvalidMessage, "08"),
         (ReportError::ReportTooEarly, "09"),
@@ -330,8 +330,8 @@ fn roundtrip_aggregation_job_initialize_req() {
         AggregationJobInitializeReq {
             aggregation_parameter: Vec::from("012345"),
             partial_batch_selector: PartialBatchSelector::new_time_interval(),
-            prepare_inits: Vec::from([
-                PrepareInit {
+            verify_inits: Vec::from([
+                VerifyInit {
                     report_share: ReportShare {
                         metadata: ReportMetadata::new(
                             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
@@ -349,7 +349,7 @@ fn roundtrip_aggregation_job_initialize_req() {
                         verifier_share: Vec::from("012345"),
                     },
                 },
-                PrepareInit {
+                VerifyInit {
                     report_share: ReportShare {
                         metadata: ReportMetadata::new(
                             ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
@@ -382,7 +382,7 @@ fn roundtrip_aggregation_job_initialize_req() {
                 "",     // opaque data
             ),
             concat!(
-                // prepare_inits
+                // verify_inits
                 "00000082", // length
                 concat!(
                     concat!(
@@ -486,8 +486,8 @@ fn roundtrip_aggregation_job_initialize_req() {
             partial_batch_selector: PartialBatchSelector::new_leader_selected(BatchId::from(
                 [2u8; 32],
             )),
-            prepare_inits: Vec::from([
-                PrepareInit {
+            verify_inits: Vec::from([
+                VerifyInit {
                     report_share: ReportShare {
                         metadata: ReportMetadata::new(
                             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
@@ -505,7 +505,7 @@ fn roundtrip_aggregation_job_initialize_req() {
                         verifier_share: Vec::from("012345"),
                     },
                 },
-                PrepareInit {
+                VerifyInit {
                     report_share: ReportShare {
                         metadata: ReportMetadata::new(
                             ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
@@ -538,7 +538,7 @@ fn roundtrip_aggregation_job_initialize_req() {
                 "0202020202020202020202020202020202020202020202020202020202020202", // opaque data
             ),
             concat!(
-                // prepare_inits
+                // verify_inits
                 "00000082", // length
                 concat!(
                     concat!(
@@ -641,8 +641,8 @@ fn roundtrip_aggregation_job_continue_req() {
     roundtrip_encoding(&[(
         AggregationJobContinueReq {
             step: AggregationJobStep(42405),
-            prepare_continues: Vec::from([
-                PrepareContinue {
+            verify_continues: Vec::from([
+                VerifyContinue {
                     report_id: ReportId::from([
                         1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
                     ]),
@@ -650,7 +650,7 @@ fn roundtrip_aggregation_job_continue_req() {
                         verifier_share: Vec::from("012345"),
                     },
                 },
-                PrepareContinue {
+                VerifyContinue {
                     report_id: ReportId::from([
                         16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1,
                     ]),
@@ -663,7 +663,7 @@ fn roundtrip_aggregation_job_continue_req() {
         concat!(
             "A5A5", // step
             concat!(
-                // prepare_steps
+                // verify_steps
                 "0000003e", // length
                 concat!(
                     "0102030405060708090A0B0C0D0E0F10", // report_id
@@ -698,32 +698,32 @@ fn roundtrip_aggregation_job_continue_req() {
 fn roundtrip_aggregation_job_resp() {
     roundtrip_encoding(&[(
         AggregationJobResp {
-            prepare_resps: Vec::from([
-                PrepareResp {
+            verify_resps: Vec::from([
+                VerifyResp {
                     report_id: ReportId::from([
                         1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
                     ]),
-                    result: PrepareStepResult::Continue {
+                    result: VerifyStepResult::Continue {
                         message: PingPongMessage::Continue {
                             verifier_message: Vec::from("01234"),
                             verifier_share: Vec::from("56789"),
                         },
                     },
                 },
-                PrepareResp {
+                VerifyResp {
                     report_id: ReportId::from([
                         16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1,
                     ]),
-                    result: PrepareStepResult::Finished,
+                    result: VerifyStepResult::Finished,
                 },
             ]),
         },
         concat!(
-            // prepare_steps
+            // verify_steps
             "00000039", // length
             concat!(
                 "0102030405060708090A0B0C0D0E0F10", // report_id
-                "00",                               // prepare_step_result
+                "00",                               // verify_step_result
                 concat!(
                     "00000013", // ping pong message length
                     "01",       // ping pong message type
@@ -741,7 +741,7 @@ fn roundtrip_aggregation_job_resp() {
             ),
             concat!(
                 "100F0E0D0C0B0A090807060504030201", // report_id
-                "01",                               // prepare_step_result
+                "01",                               // verify_step_result
             )
         ),
     )])

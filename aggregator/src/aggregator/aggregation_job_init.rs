@@ -15,8 +15,8 @@ use janus_core::{
     vdaf::vdaf_application_context,
 };
 use janus_messages::{
-    ExtensionType, InputShareAad, PlaintextInputShare, PrepareResp, PrepareStepResult, ReportError,
-    Role,
+    ExtensionType, InputShareAad, PlaintextInputShare, ReportError, Role, VerifyResp,
+    VerifyStepResult,
 };
 use opentelemetry::{
     KeyValue,
@@ -135,24 +135,24 @@ where
 
                         // Assert safety: this function should only be called with report
                         // aggregations in the HelperInitProcessing state.
-                        let (prepare_init, require_taskbind_extension) = assert_matches!(
+                        let (verify_init, require_taskbind_extension) = assert_matches!(
                             report_aggregation.state(),
                             ReportAggregationState::HelperInitProcessing {
-                                prepare_init,
+                                verify_init,
                                 require_taskbind_extension,
-                            } => (prepare_init, *require_taskbind_extension)
+                            } => (verify_init, *require_taskbind_extension)
                         );
 
                         // If decryption fails, then the aggregator MUST fail with error
                         // `hpke-decrypt-error`. (§4.6.2.3 [dap-16])
                         let hpke_keypair = hpke_keypairs.keypair(
-                            prepare_init
+                            verify_init
                                 .report_share()
                                 .encrypted_input_share()
                                 .config_id(),
                         ).ok_or_else(|| {
                             debug!(
-                                config_id = %prepare_init.report_share().encrypted_input_share().config_id(),
+                                config_id = %verify_init.report_share().encrypted_input_share().config_id(),
                                 "Helper encrypted input share references unknown HPKE config ID"
                             );
                             metrics
@@ -164,14 +164,14 @@ where
                         let plaintext = hpke_keypair.and_then(|hpke_keypair| {
                             let input_share_aad = InputShareAad::new(
                                 *task.id(),
-                                prepare_init.report_share().metadata().clone(),
-                                prepare_init.report_share().public_share().to_vec(),
+                                verify_init.report_share().metadata().clone(),
+                                verify_init.report_share().public_share().to_vec(),
                             )
                             .get_encoded()
                             .map_err(|err| {
                                 debug!(
                                     task_id = %task.id(),
-                                    report_id = ?prepare_init.report_share().metadata().id(),
+                                    report_id = ?verify_init.report_share().metadata().id(),
                                     ?err,
                                     "Couldn't encode input share AAD"
                                 );
@@ -192,7 +192,7 @@ where
                                     &Role::Client,
                                     &Role::Helper,
                                 ),
-                                prepare_init.report_share().encrypted_input_share(),
+                                verify_init.report_share().encrypted_input_share(),
                                 &input_share_aad,
                             )
                             .inspect(|_| {
@@ -201,7 +201,7 @@ where
                                     &[KeyValue::new(
                                         "hpke_config_id",
                                         i64::from(u8::from(
-                                            *prepare_init
+                                            *verify_init
                                                 .report_share()
                                                 .encrypted_input_share()
                                                 .config_id(),
@@ -212,7 +212,7 @@ where
                             .map_err(|error| {
                                 debug!(
                                     task_id = %task.id(),
-                                    report_id = ?prepare_init.report_share().metadata().id(),
+                                    report_id = ?verify_init.report_share().metadata().id(),
                                     ?error,
                                     "Couldn't decrypt helper's report share"
                                 );
@@ -228,7 +228,7 @@ where
                                 .map_err(|error| {
                                     debug!(
                                         task_id = %task.id(),
-                                        report_id = ?prepare_init.report_share().metadata().id(),
+                                        report_id = ?verify_init.report_share().metadata().id(),
                                         ?error, "Couldn't decode helper's plaintext input share",
                                     );
                                     metrics.aggregate_step_failure_counter.add(
@@ -247,12 +247,12 @@ where
                             for extension in plaintext_input_share
                                 .private_extensions()
                                 .iter()
-                                .chain(prepare_init.report_share().metadata().public_extensions())
+                                .chain(verify_init.report_share().metadata().public_extensions())
                             {
                                 if matches!(extension.extension_type(), ExtensionType::Unknown(_)) {
                                     debug!(
                                         task_id = %task.id(),
-                                        report_id = ?prepare_init.report_share().metadata().id(),
+                                        report_id = ?verify_init.report_share().metadata().id(),
                                         unrecognized_extension_type = ?extension.extension_type(),
                                         "Received report share with unrecognized extension type",
                                     );
@@ -267,7 +267,7 @@ where
                                 {
                                     debug!(
                                         task_id = %task.id(),
-                                        report_id = ?prepare_init.report_share().metadata().id(),
+                                        report_id = ?verify_init.report_share().metadata().id(),
                                         "Received report share with duplicate extensions",
                                     );
                                     metrics
@@ -285,7 +285,7 @@ where
                                 if !valid_taskbind_extension_present {
                                     debug!(
                                         task_id = %task.id(),
-                                        report_id = ?prepare_init.report_share().metadata().id(),
+                                        report_id = ?verify_init.report_share().metadata().id(),
                                         "Taskprov task received report with missing or malformed \
                                         taskbind extension",
                                     );
@@ -302,7 +302,7 @@ where
                                 // taskprov not enabled, but the taskbind extension is present.
                                 debug!(
                                     task_id = %task.id(),
-                                    report_id = ?prepare_init.report_share().metadata().id(),
+                                    report_id = ?verify_init.report_share().metadata().id(),
                                     "Non-taskprov task received report with unexpected taskbind \
                                     extension",
                                 );
@@ -324,7 +324,7 @@ where
                             .map_err(|error| {
                                 debug!(
                                     task_id = %task.id(),
-                                    report_id = ?prepare_init.report_share().metadata().id(),
+                                    report_id = ?verify_init.report_share().metadata().id(),
                                     ?error, "Couldn't decode helper's input share",
                                 );
                                 metrics
@@ -336,12 +336,12 @@ where
 
                         let public_share = A::PublicShare::get_decoded_with_param(
                             &vdaf,
-                            prepare_init.report_share().public_share(),
+                            verify_init.report_share().public_share(),
                         )
                         .map_err(|error| {
                             debug!(
                                 task_id = %task.id(),
-                                report_id = ?prepare_init.report_share().metadata().id(),
+                                report_id = ?verify_init.report_share().metadata().id(),
                                 ?error, "Couldn't decode public share",
                             );
                             metrics
@@ -353,7 +353,7 @@ where
                         let shares =
                             input_share.and_then(|input_share| Ok((public_share?, input_share)));
 
-                        if let Ok(report_time_dt) = prepare_init
+                        if let Ok(report_time_dt) = verify_init
                             .report_share()
                             .metadata()
                             .time()
@@ -377,7 +377,7 @@ where
 
                         // Reject reports from too far in the future. (§4.6.2.4 step 2 [dap-16])
                         let shares = shares.and_then(|shares| {
-                            if prepare_init
+                            if verify_init
                                 .report_share()
                                 .metadata()
                                 .time()
@@ -391,7 +391,7 @@ where
                         // Reject reports before the task has started. (§4.6.2.4 step 3 [dap-16])
                         let shares = shares.and_then(|shares| {
                             if let Some(task_start) = task.task_start() {
-                                if prepare_init
+                                if verify_init
                                     .report_share()
                                     .metadata()
                                     .time()
@@ -407,7 +407,7 @@ where
                         // of the task_end time. (§4.6.2.4 step 4 [dap-16])
                         let shares = shares.and_then(|shares| {
                             if let Some(task_end) = task.task_end() {
-                                if prepare_init
+                                if verify_init
                                     .report_share()
                                     .metadata()
                                     .time()
@@ -419,28 +419,28 @@ where
                             Ok(shares)
                         });
 
-                        // Next, the aggregator runs the preparation-state initialization algorithm
+                        // Next, the aggregator runs the verification-state initialization algorithm
                         // for the VDAF associated with the task and computes the first state
                         // transition. [...] If either step fails, then the aggregator MUST fail
                         // with error `vdaf-prep-error`. (§4.6.2 [dap-16])
                         let init_rslt = shares.and_then(|(public_share, input_share)| {
-                            trace_span!("VDAF preparation (helper initialization)").in_scope(|| {
+                            trace_span!("VDAF verification (helper initialization)").in_scope(|| {
                                 vdaf.helper_initialized(
                                     verify_key.as_bytes(),
                                     &ctx,
                                     aggregation_job.aggregation_parameter(),
                                     /* report ID is used as VDAF nonce */
-                                    prepare_init.report_share().metadata().id().as_ref(),
+                                    verify_init.report_share().metadata().id().as_ref(),
                                     &public_share,
                                     &input_share,
-                                    prepare_init.message(),
+                                    verify_init.message(),
                                 )
                                 .and_then(|continuation| continuation.evaluate(&ctx, &vdaf))
                                 .map_err(|error| {
                                     handle_ping_pong_error(
                                         task.id(),
                                         Role::Helper,
-                                        prepare_init.report_share().metadata().id(),
+                                        verify_init.report_share().metadata().id(),
                                         error,
                                         &metrics.aggregate_step_failure_counter,
                                     )
@@ -448,17 +448,17 @@ where
                             })
                         });
 
-                        let (report_aggregation_state, prepare_step_result, output_share) =
+                        let (report_aggregation_state, verify_step_result, output_share) =
                             match init_rslt {
-                                // Helper is not finished. Store the new prepare state, respond to
+                                // Helper is not finished. Store the new verify state, respond to
                                 // the leader with the outgoing message and await the next message
                                 // from the Leader to advance to the next step.
                                 Ok(PingPongState::Continued(Continued{verifier_state, message})) => {
                                     (
                                         ReportAggregationState::HelperContinue {
-                                            prepare_state: verifier_state
+                                            verify_state: verifier_state
                                         },
-                                        PrepareStepResult::Continue { message },
+                                        VerifyStepResult::Continue { message },
                                         None,
                                     )
                                 }
@@ -467,16 +467,16 @@ where
                                 // share and respond to the leader with the outgoing message.
                                 Ok(PingPongState::FinishedWithOutbound{output_share, message}) => (
                                     ReportAggregationState::Finished,
-                                    PrepareStepResult::Continue { message },
+                                    VerifyStepResult::Continue { message },
                                     Some(output_share),
                                 ),
 
                                 // Helper cannot finish at this stage
                                 Ok(PingPongState::Finished{ .. }) => (
                                     ReportAggregationState::Failed {
-                                        report_error: ReportError::VdafPrepError,
+                                        report_error: ReportError::VdafVerifyError,
                                     },
-                                    PrepareStepResult::Reject(ReportError::VdafPrepError),
+                                    VerifyStepResult::Reject(ReportError::VdafVerifyError),
                                     None,
                                 ),
 
@@ -484,18 +484,18 @@ where
                                 // abort further processing.
                                 Err(report_error) => (
                                     ReportAggregationState::Failed { report_error },
-                                    PrepareStepResult::Reject(report_error),
+                                    VerifyStepResult::Reject(report_error),
                                     None,
                                 ),
                             };
 
-                        let report_id = *prepare_init.report_share().metadata().id();
+                        let report_id = *verify_init.report_share().metadata().id();
                         sender.send(WritableReportAggregation::new(
                                 report_aggregation
-                                    .with_last_prep_resp(
-                                        Some(PrepareResp::new(
+                                    .with_last_verify_resp(
+                                        Some(VerifyResp::new(
                                             report_id,
-                                            prepare_step_result,
+                                            verify_step_result,
                                         ))
                                     )
                                     .with_state(report_aggregation_state),
@@ -540,7 +540,7 @@ pub mod test_util {
     };
     use janus_messages::{
         AggregationJobId, AggregationJobInitializeReq, Extension, HpkeConfig, MediaType,
-        PrepareInit, ReportMetadata, ReportShare,
+        ReportMetadata, ReportShare, VerifyInit,
         batch_mode::{self},
     };
     use prio::{
@@ -553,7 +553,7 @@ pub mod test_util {
     use crate::aggregator::test_util::generate_helper_report_share;
 
     #[derive(Clone)]
-    pub struct PrepareInitGenerator<const VERIFY_KEY_SIZE: usize, V>
+    pub struct VerifyInitGenerator<const VERIFY_KEY_SIZE: usize, V>
     where
         V: vdaf::Vdaf,
     {
@@ -565,7 +565,7 @@ pub mod test_util {
         private_extensions: Vec<Extension>,
     }
 
-    impl<const VERIFY_KEY_SIZE: usize, V> PrepareInitGenerator<VERIFY_KEY_SIZE, V>
+    impl<const VERIFY_KEY_SIZE: usize, V> VerifyInitGenerator<VERIFY_KEY_SIZE, V>
     where
         V: AsyncAggregator<VERIFY_KEY_SIZE> + vdaf::Client<16>,
     {
@@ -594,7 +594,7 @@ pub mod test_util {
         pub fn next(
             &self,
             measurement: &V::Measurement,
-        ) -> (PrepareInit, VdafTranscript<VERIFY_KEY_SIZE, V>) {
+        ) -> (VerifyInit, VdafTranscript<VERIFY_KEY_SIZE, V>) {
             self.next_with_metadata(
                 ReportMetadata::new(
                     random(),
@@ -609,13 +609,13 @@ pub mod test_util {
             &self,
             report_metadata: ReportMetadata,
             measurement: &V::Measurement,
-        ) -> (PrepareInit, VdafTranscript<VERIFY_KEY_SIZE, V>) {
+        ) -> (VerifyInit, VdafTranscript<VERIFY_KEY_SIZE, V>) {
             let (report_share, transcript) =
                 self.next_report_share_with_metadata(report_metadata, measurement);
             (
-                PrepareInit::new(
+                VerifyInit::new(
                     report_share,
-                    transcript.leader_prepare_transitions[0]
+                    transcript.leader_verify_transitions[0]
                         .message()
                         .unwrap()
                         .clone(),
@@ -711,8 +711,8 @@ mod tests {
     };
     use janus_messages::{
         AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, Duration, Extension,
-        ExtensionType, MediaType, PartialBatchSelector, PrepareResp, PrepareStepResult,
-        ReportError, ReportMetadata, TimePrecision, batch_mode::TimeInterval,
+        ExtensionType, MediaType, PartialBatchSelector, ReportError, ReportMetadata, TimePrecision,
+        VerifyResp, VerifyStepResult, batch_mode::TimeInterval,
     };
     use prio::{
         codec::Encode,
@@ -724,7 +724,7 @@ mod tests {
 
     use crate::aggregator::{
         Config,
-        aggregation_job_init::test_util::{PrepareInitGenerator, put_aggregation_job},
+        aggregation_job_init::test_util::{VerifyInitGenerator, put_aggregation_job},
         http_handlers::{
             AggregatorHandlerBuilder,
             test_util::{decode_response_body, take_problem_details},
@@ -737,7 +737,7 @@ mod tests {
     > {
         pub(super) clock: MockClock,
         pub(super) task: Task,
-        pub(super) prepare_init_generator: PrepareInitGenerator<VERIFY_KEY_SIZE, V>,
+        pub(super) verify_init_generator: VerifyInitGenerator<VERIFY_KEY_SIZE, V>,
         pub(super) aggregation_job_id: AggregationJobId,
         pub(super) aggregation_job_init_req: AggregationJobInitializeReq<TimeInterval>,
         aggregation_job_init_resp: Option<AggregationJobResp>,
@@ -794,18 +794,15 @@ mod tests {
         assert_eq!(response.status(), StatusCode::CREATED);
 
         let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut response).await;
-        let prepare_resps = assert_matches!(
+        let verify_resps = assert_matches!(
             &aggregation_job_resp,
-            AggregationJobResp { prepare_resps } => prepare_resps
+            AggregationJobResp { verify_resps } => verify_resps
         );
         assert_eq!(
-            prepare_resps.len(),
-            test_case.aggregation_job_init_req.prepare_inits().len(),
+            verify_resps.len(),
+            test_case.aggregation_job_init_req.verify_inits().len(),
         );
-        assert_matches!(
-            prepare_resps[0].result(),
-            &PrepareStepResult::Continue { .. }
-        );
+        assert_matches!(verify_resps[0].result(), &VerifyStepResult::Continue { .. });
 
         test_case.aggregation_job_init_resp = Some(aggregation_job_resp);
         test_case
@@ -853,7 +850,7 @@ mod tests {
         .unwrap();
         let router = builder.build_axum_router(None);
 
-        let prepare_init_generator = PrepareInitGenerator::new(
+        let verify_init_generator = VerifyInitGenerator::new(
             clock.clone(),
             helper_task.clone(),
             keypair.config().clone(),
@@ -861,22 +858,22 @@ mod tests {
             aggregation_param.clone(),
         );
 
-        let prepare_inits = Vec::from([
-            prepare_init_generator.next(&measurement).0,
-            prepare_init_generator.next(&measurement).0,
+        let verify_inits = Vec::from([
+            verify_init_generator.next(&measurement).0,
+            verify_init_generator.next(&measurement).0,
         ]);
 
         let aggregation_job_id = random();
         let aggregation_job_init_req = AggregationJobInitializeReq::new(
             aggregation_param.get_encoded().unwrap(),
             PartialBatchSelector::new_time_interval(),
-            prepare_inits.clone(),
+            verify_inits.clone(),
         );
 
         AggregationJobInitTestCase {
             clock,
             task,
-            prepare_init_generator,
+            verify_init_generator,
             aggregation_job_id,
             aggregation_job_init_req,
             aggregation_job_init_resp: None,
@@ -983,8 +980,8 @@ mod tests {
         )
         .await;
 
-        let prepare_init = test_case
-            .prepare_init_generator
+        let verify_init = test_case
+            .verify_init_generator
             .clone()
             .with_private_extensions(Vec::from([Extension::new(
                 ExtensionType::Taskbind,
@@ -992,11 +989,11 @@ mod tests {
             )]))
             .next(&0)
             .0;
-        let report_id = *prepare_init.report_share().metadata().id();
+        let report_id = *verify_init.report_share().metadata().id();
         let aggregation_job_init_req = AggregationJobInitializeReq::new(
             dummy::AggregationParam(1).get_encoded().unwrap(),
             PartialBatchSelector::new_time_interval(),
-            Vec::from([prepare_init]),
+            Vec::from([verify_init]),
         );
 
         let mut response = put_aggregation_job(
@@ -1009,9 +1006,9 @@ mod tests {
         assert_eq!(response.status(), StatusCode::CREATED);
 
         let want_aggregation_job_resp = AggregationJobResp {
-            prepare_resps: Vec::from([PrepareResp::new(
+            verify_resps: Vec::from([VerifyResp::new(
                 report_id,
-                PrepareStepResult::Reject(ReportError::InvalidMessage),
+                VerifyStepResult::Reject(ReportError::InvalidMessage),
             )]),
         };
         let got_aggregation_job_resp: AggregationJobResp =
@@ -1027,7 +1024,7 @@ mod tests {
         let mutated_aggregation_job_init_req = AggregationJobInitializeReq::new(
             dummy::AggregationParam(1).get_encoded().unwrap(),
             PartialBatchSelector::new_time_interval(),
-            test_case.aggregation_job_init_req.prepare_inits().to_vec(),
+            test_case.aggregation_job_init_req.verify_inits().to_vec(),
         );
 
         let response = put_aggregation_job(
@@ -1044,32 +1041,28 @@ mod tests {
     async fn aggregation_job_mutation_report_shares() {
         let test_case = setup_aggregate_init_test().await;
 
-        let prepare_inits = test_case.aggregation_job_init_req.prepare_inits();
+        let verify_inits = test_case.aggregation_job_init_req.verify_inits();
 
         // Put the aggregation job again, mutating the associated report shares' metadata such that
         // uniqueness constraints on client_reports are violated
-        for mutated_prepare_inits in [
+        for mutated_verify_inits in [
             // Omit a report share that was included previously
-            Vec::from(&prepare_inits[0..prepare_inits.len() - 1]),
+            Vec::from(&verify_inits[0..verify_inits.len() - 1]),
             // Include a different report share than was included previously
             [
-                &prepare_inits[0..prepare_inits.len() - 1],
-                &[test_case.prepare_init_generator.next(&0).0],
+                &verify_inits[0..verify_inits.len() - 1],
+                &[test_case.verify_init_generator.next(&0).0],
             ]
             .concat(),
             // Include an extra report share than was included previously
-            [
-                prepare_inits,
-                &[test_case.prepare_init_generator.next(&0).0],
-            ]
-            .concat(),
+            [verify_inits, &[test_case.verify_init_generator.next(&0).0]].concat(),
             // Reverse the order of the reports
-            prepare_inits.iter().rev().cloned().collect(),
+            verify_inits.iter().rev().cloned().collect(),
         ] {
             let mutated_aggregation_job_init_req = AggregationJobInitializeReq::new(
                 test_case.aggregation_param.get_encoded().unwrap(),
                 PartialBatchSelector::new_time_interval(),
-                mutated_prepare_inits,
+                mutated_verify_inits,
             );
             let response = put_aggregation_job(
                 &test_case.task,
@@ -1089,15 +1082,15 @@ mod tests {
         let test_case = setup_multi_step_aggregate_init_test().await;
 
         // Generate some new reports using the existing reports' metadata, but varying the
-        // measurement values such that the prepare state computed during aggregation
+        // measurement values such that the verify state computed during aggregation
         // initializaton won't match the first aggregation job.
-        let mutated_prepare_inits = test_case
+        let mutated_verify_inits = test_case
             .aggregation_job_init_req
-            .prepare_inits()
+            .verify_inits()
             .iter()
             .map(|s| {
                 test_case
-                    .prepare_init_generator
+                    .verify_init_generator
                     .next_with_metadata(s.report_share().metadata().clone(), &13)
                     .0
             })
@@ -1106,7 +1099,7 @@ mod tests {
         let mutated_aggregation_job_init_req = AggregationJobInitializeReq::new(
             test_case.aggregation_param.get_encoded().unwrap(),
             PartialBatchSelector::new_time_interval(),
-            mutated_prepare_inits,
+            mutated_verify_inits,
         );
 
         let response = put_aggregation_job(
@@ -1136,7 +1129,7 @@ mod tests {
             Vec::from([
                 // Barely tolerable.
                 test_case
-                    .prepare_init_generator
+                    .verify_init_generator
                     .next_with_metadata(
                         ReportMetadata::new(
                             random(),
@@ -1153,7 +1146,7 @@ mod tests {
                     .0,
                 // Barely intolerable.
                 test_case
-                    .prepare_init_generator
+                    .verify_init_generator
                     .next_with_metadata(
                         ReportMetadata::new(
                             random(),
@@ -1183,21 +1176,18 @@ mod tests {
         assert_eq!(response.status(), StatusCode::CREATED);
 
         let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut response).await;
-        let prepare_resps = assert_matches!(
+        let verify_resps = assert_matches!(
             aggregation_job_resp,
-            AggregationJobResp { prepare_resps } => prepare_resps
+            AggregationJobResp { verify_resps } => verify_resps
         );
         assert_eq!(
-            prepare_resps.len(),
-            test_case.aggregation_job_init_req.prepare_inits().len(),
+            verify_resps.len(),
+            test_case.aggregation_job_init_req.verify_inits().len(),
         );
+        assert_matches!(verify_resps[0].result(), &VerifyStepResult::Continue { .. });
         assert_matches!(
-            prepare_resps[0].result(),
-            &PrepareStepResult::Continue { .. }
-        );
-        assert_matches!(
-            prepare_resps[1].result(),
-            &PrepareStepResult::Reject(ReportError::ReportTooEarly)
+            verify_resps[1].result(),
+            &VerifyStepResult::Reject(ReportError::ReportTooEarly)
         );
     }
 
@@ -1241,7 +1231,7 @@ mod tests {
         let vdaf = dummy::Vdaf::new(1);
         let aggregation_param = dummy::AggregationParam(0);
 
-        let prepare_init_generator = PrepareInitGenerator::new(
+        let verify_init_generator = VerifyInitGenerator::new(
             clock.clone(),
             helper_task.clone(),
             keypair.config().clone(),
@@ -1256,7 +1246,7 @@ mod tests {
             PartialBatchSelector::new_time_interval(),
             Vec::from([
                 // Report with timestamp before task end should be accepted.
-                prepare_init_generator
+                verify_init_generator
                     .next_with_metadata(
                         ReportMetadata::new(
                             random(),
@@ -1267,7 +1257,7 @@ mod tests {
                     )
                     .0,
                 // Report with timestamp after task end should be rejected.
-                prepare_init_generator
+                verify_init_generator
                     .next_with_metadata(
                         ReportMetadata::new(
                             random(),
@@ -1278,7 +1268,7 @@ mod tests {
                     )
                     .0,
                 // Report with timestamp exactly at task end should also be rejected.
-                prepare_init_generator
+                verify_init_generator
                     .next_with_metadata(
                         ReportMetadata::new(random(), task_end_time, Vec::new()),
                         &0,
@@ -1297,25 +1287,22 @@ mod tests {
         assert_eq!(response.status(), StatusCode::CREATED);
 
         let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut response).await;
-        let prepare_resps = assert_matches!(
+        let verify_resps = assert_matches!(
             aggregation_job_resp,
-            AggregationJobResp { prepare_resps } => prepare_resps
+            AggregationJobResp { verify_resps } => verify_resps
         );
         assert_eq!(
-            prepare_resps.len(),
-            aggregation_job_init_req.prepare_inits().len(),
+            verify_resps.len(),
+            aggregation_job_init_req.verify_inits().len(),
+        );
+        assert_matches!(verify_resps[0].result(), &VerifyStepResult::Continue { .. });
+        assert_matches!(
+            verify_resps[1].result(),
+            &VerifyStepResult::Reject(ReportError::TaskExpired)
         );
         assert_matches!(
-            prepare_resps[0].result(),
-            &PrepareStepResult::Continue { .. }
-        );
-        assert_matches!(
-            prepare_resps[1].result(),
-            &PrepareStepResult::Reject(ReportError::TaskExpired)
-        );
-        assert_matches!(
-            prepare_resps[2].result(),
-            &PrepareStepResult::Reject(ReportError::TaskExpired)
+            verify_resps[2].result(),
+            &VerifyStepResult::Reject(ReportError::TaskExpired)
         );
     }
 
@@ -1385,7 +1372,7 @@ mod tests {
         let vdaf = dummy::Vdaf::new(1);
         let aggregation_param = dummy::AggregationParam(0);
 
-        let prepare_init_generator = PrepareInitGenerator::new(
+        let verify_init_generator = VerifyInitGenerator::new(
             clock.clone(),
             helper_task.clone(),
             keypair.config().clone(),
@@ -1400,7 +1387,7 @@ mod tests {
             PartialBatchSelector::new_time_interval(),
             Vec::from([
                 // Report with timestamp after task start should be accepted.
-                prepare_init_generator
+                verify_init_generator
                     .next_with_metadata(
                         ReportMetadata::new(
                             random(),
@@ -1411,7 +1398,7 @@ mod tests {
                     )
                     .0,
                 // Report with timestamp before task start should be rejected.
-                prepare_init_generator
+                verify_init_generator
                     .next_with_metadata(
                         ReportMetadata::new(
                             random(),
@@ -1434,21 +1421,18 @@ mod tests {
         assert_eq!(response.status(), StatusCode::CREATED);
 
         let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut response).await;
-        let prepare_resps = assert_matches!(
+        let verify_resps = assert_matches!(
             aggregation_job_resp,
-            AggregationJobResp { prepare_resps } => prepare_resps
+            AggregationJobResp { verify_resps } => verify_resps
         );
         assert_eq!(
-            prepare_resps.len(),
-            aggregation_job_init_req.prepare_inits().len(),
+            verify_resps.len(),
+            aggregation_job_init_req.verify_inits().len(),
         );
+        assert_matches!(verify_resps[0].result(), &VerifyStepResult::Continue { .. });
         assert_matches!(
-            prepare_resps[0].result(),
-            &PrepareStepResult::Continue { .. }
-        );
-        assert_matches!(
-            prepare_resps[1].result(),
-            &PrepareStepResult::Reject(ReportError::TaskNotStarted)
+            verify_resps[1].result(),
+            &VerifyStepResult::Reject(ReportError::TaskNotStarted)
         );
     }
 
@@ -1461,7 +1445,7 @@ mod tests {
         let wrong_query = AggregationJobInitializeReq::new(
             test_case.aggregation_param.get_encoded().unwrap(),
             PartialBatchSelector::new_leader_selected(random()),
-            test_case.aggregation_job_init_req.prepare_inits().to_vec(),
+            test_case.aggregation_job_init_req.verify_inits().to_vec(),
         );
 
         let req = Request::builder()

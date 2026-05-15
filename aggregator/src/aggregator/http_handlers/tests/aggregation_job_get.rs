@@ -18,8 +18,8 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    AggregationJobId, AggregationJobResp, AggregationJobStep, Interval, MediaType, PrepareInit,
-    PrepareResp, PrepareStepResult, ReportMetadata, batch_mode::TimeInterval,
+    AggregationJobId, AggregationJobResp, AggregationJobStep, Interval, MediaType, ReportMetadata,
+    VerifyInit, VerifyResp, VerifyStepResult, batch_mode::TimeInterval,
 };
 use prio::vdaf::dummy;
 use rand::random;
@@ -32,7 +32,7 @@ use crate::aggregator::{
 
 #[tokio::test]
 async fn aggregation_job_get_ready() {
-    // Prepare state.
+    // Set up state.
     let HttpHandlerTest {
         clock,
         ephemeral_datastore: _ephemeral_datastore,
@@ -68,7 +68,7 @@ async fn aggregation_job_get_ready() {
         report_metadata.id(),
         &measurement,
     );
-    let helper_message = transcript.helper_prepare_transitions[0].message().unwrap();
+    let helper_message = transcript.helper_verify_transitions[0].message().unwrap();
 
     datastore
         .run_unnamed_tx(|tx| {
@@ -105,9 +105,9 @@ async fn aggregation_job_get_ready() {
                     *report_metadata.id(),
                     *report_metadata.time(),
                     0,
-                    Some(PrepareResp::new(
+                    Some(VerifyResp::new(
                         *report_metadata.id(),
-                        PrepareStepResult::Continue {
+                        VerifyStepResult::Continue {
                             message: helper_message,
                         },
                     )),
@@ -135,9 +135,9 @@ async fn aggregation_job_get_ready() {
     assert_eq!(
         aggregate_resp,
         AggregationJobResp {
-            prepare_resps: Vec::from([PrepareResp::new(
+            verify_resps: Vec::from([VerifyResp::new(
                 *report_metadata.id(),
-                PrepareStepResult::Continue {
+                VerifyStepResult::Continue {
                     message: helper_message.clone(),
                 }
             )])
@@ -147,7 +147,7 @@ async fn aggregation_job_get_ready() {
 
 #[tokio::test]
 async fn aggregation_job_get_unready() {
-    // Prepare state.
+    // Set up state.
     let HttpHandlerTest {
         clock,
         ephemeral_datastore: _ephemeral_datastore,
@@ -183,7 +183,7 @@ async fn aggregation_job_get_unready() {
         report_metadata.id(),
         &measurement,
     );
-    let leader_message = transcript.leader_prepare_transitions[0].message().unwrap();
+    let leader_message = transcript.leader_verify_transitions[0].message().unwrap();
     let report_share = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
         report_metadata.clone(),
@@ -231,7 +231,7 @@ async fn aggregation_job_get_unready() {
                     0,
                     None,
                     ReportAggregationState::HelperInitProcessing {
-                        prepare_init: PrepareInit::new(report_share, leader_message),
+                        verify_init: VerifyInit::new(report_share, leader_message),
                         require_taskbind_extension: false,
                     },
                 ))
@@ -260,7 +260,7 @@ async fn aggregation_job_get_unready() {
 
 #[tokio::test]
 async fn aggregation_job_get_wrong_step() {
-    // Prepare state.
+    // Set up state.
     let HttpHandlerTest {
         clock,
         ephemeral_datastore: _ephemeral_datastore,
@@ -296,7 +296,7 @@ async fn aggregation_job_get_wrong_step() {
         report_metadata.id(),
         &measurement,
     );
-    let helper_message = transcript.helper_prepare_transitions[0].message().unwrap();
+    let helper_message = transcript.helper_verify_transitions[0].message().unwrap();
 
     datastore
         .run_unnamed_tx(|tx| {
@@ -333,9 +333,9 @@ async fn aggregation_job_get_wrong_step() {
                     *report_metadata.id(),
                     *report_metadata.time(),
                     0,
-                    Some(PrepareResp::new(
+                    Some(VerifyResp::new(
                         *report_metadata.id(),
-                        PrepareStepResult::Continue {
+                        VerifyStepResult::Continue {
                             message: helper_message,
                         },
                     )),
@@ -365,7 +365,7 @@ async fn aggregation_job_get_wrong_step() {
 
 #[tokio::test]
 async fn aggregation_job_get_missing_step() {
-    // Prepare state.
+    // Set up state.
     let HttpHandlerTest {
         clock,
         ephemeral_datastore: _ephemeral_datastore,
@@ -401,7 +401,7 @@ async fn aggregation_job_get_missing_step() {
         report_metadata.id(),
         &measurement,
     );
-    let helper_message = transcript.helper_prepare_transitions[0].message().unwrap();
+    let helper_message = transcript.helper_verify_transitions[0].message().unwrap();
 
     datastore
         .run_unnamed_tx(|tx| {
@@ -438,9 +438,9 @@ async fn aggregation_job_get_missing_step() {
                     *report_metadata.id(),
                     *report_metadata.time(),
                     0,
-                    Some(PrepareResp::new(
+                    Some(VerifyResp::new(
                         *report_metadata.id(),
-                        PrepareStepResult::Continue {
+                        VerifyStepResult::Continue {
                             message: helper_message,
                         },
                     )),
@@ -464,7 +464,7 @@ async fn aggregation_job_get_missing_step() {
 
 #[tokio::test]
 async fn aggregation_job_get_sync() {
-    // Prepare state.
+    // Set up state.
     let HttpHandlerTest {
         clock,
         ephemeral_datastore: _ephemeral_datastore,
@@ -500,7 +500,7 @@ async fn aggregation_job_get_sync() {
         report_metadata.id(),
         &measurement,
     );
-    let helper_message = transcript.helper_prepare_transitions[0].message().unwrap();
+    let helper_message = transcript.helper_verify_transitions[0].message().unwrap();
 
     datastore
         .run_unnamed_tx(|tx| {
@@ -537,9 +537,9 @@ async fn aggregation_job_get_sync() {
                     *report_metadata.id(),
                     *report_metadata.time(),
                     0,
-                    Some(PrepareResp::new(
+                    Some(VerifyResp::new(
                         *report_metadata.id(),
-                        PrepareStepResult::Continue {
+                        VerifyStepResult::Continue {
                             message: helper_message,
                         },
                     )),

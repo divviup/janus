@@ -27,8 +27,8 @@ use janus_core::{
 };
 use janus_messages::{
     AggregateShareId, AggregationJobId, BatchId, CollectionJobId, Duration, Extension,
-    HpkeCiphertext, HpkeConfig, HpkeConfigId, Interval, PrepareContinue, PrepareInit, PrepareResp,
-    Query, ReportId, ReportIdChecksum, ReportMetadata, Role, TaskId, Time, TimePrecision,
+    HpkeCiphertext, HpkeConfig, HpkeConfigId, Interval, Query, ReportId, ReportIdChecksum,
+    ReportMetadata, Role, TaskId, Time, TimePrecision, VerifyContinue, VerifyInit, VerifyResp,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
 };
 use leases::{acquired_aggregation_job_from_row, acquired_collection_job_from_row};
@@ -1288,7 +1288,7 @@ RETURNING report_id, client_timestamp",
     /// This should only be used with VDAFs with a non-unit type aggregation parameter. If a VDAF
     /// has the unit type as its aggregation parameter, then
     /// `get_unaggregated_client_report_ids_for_task` should be used instead. In such cases, it is
-    /// not necessary to wait for a collection job to arrive before preparing reports.
+    /// not necessary to wait for a collection job to arrive before verifying reports.
     ///
     /// This function deliberately ignores the `client_reports.aggregation_started` column, which
     /// only has meaning for VDAFs without aggregation parameters.
@@ -2201,12 +2201,12 @@ WHERE aggregation_jobs.task_id = $6
             .prepare_cached(
                 "-- get_report_aggregations_for_aggregation_job()
 SELECT
-    ord, client_report_id, client_timestamp, last_prep_resp,
+    ord, client_report_id, client_timestamp, last_verify_resp,
     report_aggregations.state, public_extensions, public_share,
     leader_private_extensions, leader_input_share,
-    helper_encrypted_input_share, leader_prep_transition, leader_prep_state,
-    prepare_init, require_taskbind_extension,
-    helper_prep_state, prepare_continue, error_code
+    helper_encrypted_input_share, leader_verify_transition, leader_verify_state,
+    verify_init, require_taskbind_extension,
+    helper_verify_state, verify_continue, error_code
 FROM report_aggregations
 JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
 WHERE report_aggregations.task_id = $1
@@ -2263,11 +2263,11 @@ ORDER BY ord ASC",
             .prepare_cached(
                 "-- get_report_aggregation_by_report_id()
 SELECT
-    ord, client_timestamp, last_prep_resp, report_aggregations.state,
+    ord, client_timestamp, last_verify_resp, report_aggregations.state,
     public_extensions, public_share, leader_private_extensions,
-    leader_input_share, helper_encrypted_input_share, leader_prep_transition,
-    leader_prep_state, prepare_init,
-    require_taskbind_extension, helper_prep_state, prepare_continue, error_code
+    leader_input_share, helper_encrypted_input_share, leader_verify_transition,
+    leader_verify_state, verify_init,
+    require_taskbind_extension, helper_verify_state, verify_continue, error_code
 FROM report_aggregations
 JOIN aggregation_jobs
     ON aggregation_jobs.id = report_aggregations.aggregation_job_id
@@ -2325,11 +2325,11 @@ WHERE report_aggregations.task_id = $1
                 "-- get_report_aggregations_for_task()
 SELECT
     aggregation_jobs.aggregation_job_id, ord, client_report_id,
-    client_timestamp, last_prep_resp, report_aggregations.state,
+    client_timestamp, last_verify_resp, report_aggregations.state,
     public_extensions, public_share, leader_private_extensions,
-    leader_input_share, helper_encrypted_input_share, leader_prep_transition,
-    leader_prep_state, prepare_init,
-    require_taskbind_extension, helper_prep_state, prepare_continue, error_code
+    leader_input_share, helper_encrypted_input_share, leader_verify_transition,
+    leader_verify_state, verify_init,
+    require_taskbind_extension, helper_verify_state, verify_continue, error_code
 FROM report_aggregations
 JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
 WHERE report_aggregations.task_id = $1
@@ -2374,10 +2374,10 @@ WHERE report_aggregations.task_id = $1
         let time = Time::from_date_time(row.get("client_timestamp"), time_precision);
         let state: ReportAggregationStateCode = row.get("state");
         let error_code: Option<i16> = row.get("error_code");
-        let last_prep_resp_bytes: Option<Vec<u8>> = row.get("last_prep_resp");
+        let last_verify_resp_bytes: Option<Vec<u8>> = row.get("last_verify_resp");
 
-        let last_prep_resp = last_prep_resp_bytes
-            .map(|bytes| PrepareResp::get_decoded(&bytes))
+        let last_verify_resp = last_verify_resp_bytes
+            .map(|bytes| VerifyResp::get_decoded(&bytes))
             .transpose()?;
 
         let agg_state = match state {
@@ -2446,11 +2446,11 @@ WHERE report_aggregations.task_id = $1
             }
 
             ReportAggregationStateCode::InitProcessing => {
-                let prepare_init_bytes =
-                    row.get::<_, Option<Vec<u8>>>("prepare_init")
+                let verify_init_bytes =
+                    row.get::<_, Option<Vec<u8>>>("verify_init")
                         .ok_or_else(|| {
                             Error::DbState(
-                            "report aggregation in state INIT_PROCESSING but prepare_init is NULL"
+                            "report aggregation in state INIT_PROCESSING but verify_init is NULL"
                                 .to_string(),
                         )
                         })?;
@@ -2462,10 +2462,10 @@ WHERE report_aggregations.task_id = $1
                             )
                         })?;
 
-                let prepare_init = PrepareInit::get_decoded(&prepare_init_bytes)?;
+                let verify_init = VerifyInit::get_decoded(&verify_init_bytes)?;
 
                 ReportAggregationState::HelperInitProcessing {
-                    prepare_init,
+                    verify_init,
                     require_taskbind_extension,
                 }
             }
@@ -2473,17 +2473,17 @@ WHERE report_aggregations.task_id = $1
             ReportAggregationStateCode::Continue => {
                 match role {
                     Role::Leader => {
-                        let leader_prep_transition_bytes = row
-                            .get::<_, Option<Vec<u8>>>("leader_prep_transition")
+                        let leader_verify_transition_bytes = row
+                            .get::<_, Option<Vec<u8>>>("leader_verify_transition")
                             .ok_or_else(|| {
                                 Error::DbState(
-                                    "report aggregation in state CONTINUE but leader_prep_transition is NULL"
+                                    "report aggregation in state CONTINUE but leader_verify_transition is NULL"
                                         .to_string(),
                                 )
                             })?;
                         let ping_pong_transition = PingPongContinuation::get_decoded_with_param(
                             &(vdaf, 0 /* leader */),
-                            &leader_prep_transition_bytes,
+                            &leader_verify_transition_bytes,
                         )?;
 
                         ReportAggregationState::LeaderContinue {
@@ -2491,36 +2491,36 @@ WHERE report_aggregations.task_id = $1
                         }
                     }
                     Role::Helper => {
-                        let helper_prep_state_bytes = row
-                            .get::<_, Option<Vec<u8>>>("helper_prep_state")
+                        let helper_verify_state_bytes = row
+                            .get::<_, Option<Vec<u8>>>("helper_verify_state")
                             .ok_or_else(|| {
                                 Error::DbState(
-                                    "report aggregation in state CONTINUE but helper_prep_state is NULL"
+                                    "report aggregation in state CONTINUE but helper_verify_state is NULL"
                                         .to_string(),
                                 )
                             })?;
-                        let prepare_state = A::VerifyState::get_decoded_with_param(
+                        let verify_state = A::VerifyState::get_decoded_with_param(
                             &(vdaf, 1 /* helper */),
-                            &helper_prep_state_bytes,
+                            &helper_verify_state_bytes,
                         )?;
 
-                        ReportAggregationState::HelperContinue { prepare_state }
+                        ReportAggregationState::HelperContinue { verify_state }
                     }
                     _ => panic!("unexpected role"),
                 }
             }
 
             ReportAggregationStateCode::ContinueProcessing => {
-                let helper_prep_state_bytes = row
-                    .get::<_, Option<Vec<u8>>>("helper_prep_state")
+                let helper_verify_state_bytes = row
+                    .get::<_, Option<Vec<u8>>>("helper_verify_state")
                     .ok_or_else(|| {
                         Error::DbState(
-                            "report aggregation in state CONTINUE_PROCESSING but helper_prep_state is NULL"
+                            "report aggregation in state CONTINUE_PROCESSING but helper_verify_state is NULL"
                                 .to_string(),
                         )
                     })?;
-                let prepare_continue_bytes = row
-                    .get::<_, Option<Vec<u8>>>("prepare_continue")
+                let verify_continue_bytes = row
+                    .get::<_, Option<Vec<u8>>>("verify_continue")
                     .ok_or_else(|| {
                         Error::DbState(
                             "report aggregation in state CONTINUE_PROCESSING but message is NULL"
@@ -2528,29 +2528,29 @@ WHERE report_aggregations.task_id = $1
                         )
                     })?;
 
-                let prepare_state = A::VerifyState::get_decoded_with_param(
+                let verify_state = A::VerifyState::get_decoded_with_param(
                     &(vdaf, 1 /* helper */),
-                    &helper_prep_state_bytes,
+                    &helper_verify_state_bytes,
                 )?;
-                let prepare_continue = PrepareContinue::get_decoded(&prepare_continue_bytes)?;
+                let verify_continue = VerifyContinue::get_decoded(&verify_continue_bytes)?;
 
                 ReportAggregationState::HelperContinueProcessing {
-                    prepare_state,
-                    prepare_continue,
+                    verify_state,
+                    verify_continue,
                 }
             }
 
             ReportAggregationStateCode::PollInit => {
-                row.get::<_, Option<Vec<u8>>>("leader_prep_state")
+                row.get::<_, Option<Vec<u8>>>("leader_verify_state")
                     .ok_or_else(|| {
                         Error::DbState(
-                            "report aggregation in state POLL_INIT but leader_prep_state is NULL"
+                            "report aggregation in state POLL_INIT but leader_verify_state is NULL"
                                 .to_string(),
                         )
                     })
                     .and_then(|encoded| {
                         Ok(ReportAggregationState::LeaderPollInit {
-                            prepare_state: A::VerifyState::get_decoded_with_param(
+                            verify_state: A::VerifyState::get_decoded_with_param(
                                 &(vdaf, 0 /* leader */),
                                 &encoded,
                             )?,
@@ -2559,10 +2559,10 @@ WHERE report_aggregations.task_id = $1
             }
 
             ReportAggregationStateCode::PollContinue => {
-                row.get::<_, Option<Vec<u8>>>("leader_prep_transition")
+                row.get::<_, Option<Vec<u8>>>("leader_verify_transition")
                     .ok_or_else(|| {
                         Error::DbState(
-                            "report aggregation in state POLL_CONTINUE but leader_prep_transition is NULL"
+                            "report aggregation in state POLL_CONTINUE but leader_verify_transition is NULL"
                                 .to_string(),
                         )
                     })
@@ -2606,7 +2606,7 @@ WHERE report_aggregations.task_id = $1
             *report_id,
             time,
             ord,
-            last_prep_resp,
+            last_verify_resp,
             agg_state,
         ))
     }
@@ -2624,9 +2624,9 @@ WHERE report_aggregations.task_id = $1
         let now = self.clock.now();
 
         let encoded_state_values = report_aggregation.state().encoded_values_from_state()?;
-        let encoded_last_prep_resp: Option<Vec<u8>> = report_aggregation
-            .last_prep_resp()
-            .map(PrepareResp::get_encoded)
+        let encoded_last_verify_resp: Option<Vec<u8>> = report_aggregation
+            .last_verify_resp()
+            .map(VerifyResp::get_encoded)
             .transpose()?;
 
         // If there is a conflict, the we upsert the incoming report agggregation (excluded) if the
@@ -2638,11 +2638,11 @@ WHERE report_aggregations.task_id = $1
                 "-- put_report_aggregation()
 INSERT INTO report_aggregations
     (task_id, aggregation_job_id, ord, client_report_id, client_timestamp,
-    last_prep_resp, state, public_extensions, public_share,
+    last_verify_resp, state, public_extensions, public_share,
     leader_private_extensions, leader_input_share,
-    helper_encrypted_input_share, leader_prep_transition, leader_prep_state,
-    prepare_init, require_taskbind_extension,
-    helper_prep_state, prepare_continue, error_code, created_at, updated_at,
+    helper_encrypted_input_share, leader_verify_transition, leader_verify_state,
+    verify_init, require_taskbind_extension,
+    helper_verify_state, verify_continue, error_code, created_at, updated_at,
     updated_by)
 SELECT
     $1, aggregation_jobs.id, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
@@ -2652,21 +2652,21 @@ WHERE task_id = $1
   AND aggregation_job_id = $2
 ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
     SET (
-        client_report_id, client_timestamp, last_prep_resp, state,
+        client_report_id, client_timestamp, last_verify_resp, state,
         public_extensions, public_share, leader_private_extensions,
         leader_input_share, helper_encrypted_input_share,
-        leader_prep_transition, leader_prep_state,
-        prepare_init, require_taskbind_extension, helper_prep_state,
-        prepare_continue, error_code, created_at, updated_at, updated_by
+        leader_verify_transition, leader_verify_state,
+        verify_init, require_taskbind_extension, helper_verify_state,
+        verify_continue, error_code, created_at, updated_at, updated_by
     ) = (
         excluded.client_report_id, excluded.client_timestamp,
-        excluded.last_prep_resp, excluded.state, excluded.public_extensions,
+        excluded.last_verify_resp, excluded.state, excluded.public_extensions,
         excluded.public_share, excluded.leader_private_extensions,
         excluded.leader_input_share, excluded.helper_encrypted_input_share,
-        excluded.leader_prep_transition, excluded.leader_prep_state,
-        excluded.prepare_init,
-        excluded.require_taskbind_extension, excluded.helper_prep_state,
-        excluded.prepare_continue, excluded.error_code, excluded.created_at,
+        excluded.leader_verify_transition, excluded.leader_verify_state,
+        excluded.verify_init,
+        excluded.require_taskbind_extension, excluded.helper_verify_state,
+        excluded.verify_continue, excluded.error_code, excluded.created_at,
         excluded.updated_at, excluded.updated_by
     )
     WHERE (SELECT UPPER(client_timestamp_interval)
@@ -2687,7 +2687,7 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
                     &report_aggregation
                         .time()
                         .as_date_time(task_info.time_precision)?,
-                    /* last_prep_resp */ &encoded_last_prep_resp,
+                    /* last_verify_resp */ &encoded_last_verify_resp,
                     /* state */ &report_aggregation.state().state_code(),
                     /* public_extensions */ &encoded_state_values.public_extensions,
                     /* public_share */ &encoded_state_values.public_share,
@@ -2696,14 +2696,14 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
                     /* leader_input_share */ &encoded_state_values.leader_input_share,
                     /* helper_encrypted_input_share */
                     &encoded_state_values.helper_encrypted_input_share,
-                    /* leader_prep_transition */
-                    &encoded_state_values.leader_prep_continuation,
-                    /* leader_prep_state */ &encoded_state_values.leader_prep_state,
-                    /* prepare_init */ &encoded_state_values.prepare_init,
+                    /* leader_verify_transition */
+                    &encoded_state_values.leader_verify_continuation,
+                    /* leader_verify_state */ &encoded_state_values.leader_verify_state,
+                    /* verify_init */ &encoded_state_values.verify_init,
                     /* require_taskbind_extension */
                     &encoded_state_values.require_taskbind_extension,
-                    /* helper_prep_state */ &encoded_state_values.helper_prep_state,
-                    /* prepare_continue */ &encoded_state_values.prepare_continue,
+                    /* helper_verify_state */ &encoded_state_values.helper_verify_state,
+                    /* verify_continue */ &encoded_state_values.verify_continue,
                     /* error_code */ &encoded_state_values.report_error,
                     /* created_at */ &now,
                     /* updated_at */ &now,
@@ -2758,20 +2758,20 @@ WHERE aggregation_jobs.task_id = $1
 AND aggregation_job_id = $2
 ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
     SET (
-        client_report_id, client_timestamp, last_prep_resp, state,
+        client_report_id, client_timestamp, last_verify_resp, state,
         public_extensions, public_share, leader_private_extensions,
         leader_input_share, helper_encrypted_input_share,
-        leader_prep_transition, leader_prep_state,
-        prepare_init, helper_prep_state, prepare_continue, error_code,
+        leader_verify_transition, leader_verify_state,
+        verify_init, helper_verify_state, verify_continue, error_code,
         created_at, updated_at, updated_by
     ) = (
         excluded.client_report_id, excluded.client_timestamp,
-        excluded.last_prep_resp, excluded.state, excluded.public_extensions,
+        excluded.last_verify_resp, excluded.state, excluded.public_extensions,
         excluded.public_share, excluded.leader_private_extensions,
         excluded.leader_input_share, excluded.helper_encrypted_input_share,
-        excluded.leader_prep_transition, excluded.leader_prep_state,
-        excluded.prepare_init,
-        excluded.helper_prep_state, excluded.prepare_continue,
+        excluded.leader_verify_transition, excluded.leader_verify_state,
+        excluded.verify_init,
+        excluded.helper_verify_state, excluded.verify_continue,
         excluded.error_code, excluded.created_at, excluded.updated_at,
         excluded.updated_by
     )
@@ -2823,20 +2823,20 @@ WHERE aggregation_jobs.task_id = $1
 AND aggregation_job_id = $2
 ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
     SET (
-        client_report_id, client_timestamp, last_prep_resp, state,
+        client_report_id, client_timestamp, last_verify_resp, state,
         public_extensions, public_share, leader_private_extensions,
         leader_input_share, helper_encrypted_input_share,
-        leader_prep_transition, leader_prep_state,
-        prepare_init, helper_prep_state, prepare_continue, error_code,
+        leader_verify_transition, leader_verify_state,
+        verify_init, helper_verify_state, verify_continue, error_code,
         created_at, updated_at, updated_by
     ) = (
         excluded.client_report_id, excluded.client_timestamp,
-        excluded.last_prep_resp, excluded.state, excluded.public_extensions,
+        excluded.last_verify_resp, excluded.state, excluded.public_extensions,
         excluded.public_share, excluded.leader_private_extensions,
         excluded.leader_input_share, excluded.helper_encrypted_input_share,
-        excluded.leader_prep_transition, excluded.leader_prep_state,
-        excluded.prepare_init,
-        excluded.helper_prep_state, excluded.prepare_continue,
+        excluded.leader_verify_transition, excluded.leader_verify_state,
+        excluded.verify_init,
+        excluded.helper_verify_state, excluded.verify_continue,
         excluded.error_code, excluded.created_at, excluded.updated_at,
         excluded.updated_by
     )
@@ -2889,9 +2889,9 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
         let now = self.clock.now();
 
         let encoded_state_values = report_aggregation.state().encoded_values_from_state()?;
-        let encoded_last_prep_resp: Option<Vec<u8>> = report_aggregation
-            .last_prep_resp()
-            .map(PrepareResp::get_encoded)
+        let encoded_last_verify_resp: Option<Vec<u8>> = report_aggregation
+            .last_verify_resp()
+            .map(VerifyResp::get_encoded)
             .transpose()?;
 
         let stmt = self
@@ -2899,12 +2899,12 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
                 "-- update_report_aggregation()
 UPDATE report_aggregations
 SET
-    last_prep_resp = $1, state = $2, public_extensions = $3, public_share = $4,
+    last_verify_resp = $1, state = $2, public_extensions = $3, public_share = $4,
     leader_private_extensions = $5, leader_input_share = $6,
-    helper_encrypted_input_share = $7, leader_prep_transition = $8,
-    leader_prep_state = $9, prepare_init = $10,
-    require_taskbind_extension = $11, helper_prep_state = $12,
-    prepare_continue = $13, error_code = $14, updated_at = $15,
+    helper_encrypted_input_share = $7, leader_verify_transition = $8,
+    leader_verify_state = $9, verify_init = $10,
+    require_taskbind_extension = $11, helper_verify_state = $12,
+    verify_continue = $13, error_code = $14, updated_at = $15,
     updated_by = $16
 FROM aggregation_jobs
 WHERE report_aggregations.aggregation_job_id = aggregation_jobs.id
@@ -2921,7 +2921,7 @@ WHERE report_aggregations.aggregation_job_id = aggregation_jobs.id
             self.execute(
                 &stmt,
                 &[
-                    /* last_prep_resp */ &encoded_last_prep_resp,
+                    /* last_verify_resp */ &encoded_last_verify_resp,
                     /* state */ &report_aggregation.state().state_code(),
                     /* public_extensions */ &encoded_state_values.public_extensions,
                     /* public_share */ &encoded_state_values.public_share,
@@ -2930,14 +2930,14 @@ WHERE report_aggregations.aggregation_job_id = aggregation_jobs.id
                     /* leader_input_share */ &encoded_state_values.leader_input_share,
                     /* helper_encrypted_input_share */
                     &encoded_state_values.helper_encrypted_input_share,
-                    /* leader_prep_transition */
-                    &encoded_state_values.leader_prep_continuation,
-                    /* leader_prep_state */ &encoded_state_values.leader_prep_state,
-                    /* prepare_init */ &encoded_state_values.prepare_init,
+                    /* leader_verify_transition */
+                    &encoded_state_values.leader_verify_continuation,
+                    /* leader_verify_state */ &encoded_state_values.leader_verify_state,
+                    /* verify_init */ &encoded_state_values.verify_init,
                     /* require_taskbind_extension */
                     &encoded_state_values.require_taskbind_extension,
-                    /* helper_prep_state */ &encoded_state_values.helper_prep_state,
-                    /* prepare_continue */ &encoded_state_values.prepare_continue,
+                    /* helper_verify_state */ &encoded_state_values.helper_verify_state,
+                    /* verify_continue */ &encoded_state_values.verify_continue,
                     /* error_code */ &encoded_state_values.report_error,
                     /* updated_at */ &now,
                     /* updated_by */ &self.name,

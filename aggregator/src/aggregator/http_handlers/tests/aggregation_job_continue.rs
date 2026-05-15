@@ -22,8 +22,8 @@ use janus_core::{
 };
 use janus_messages::{
     AggregationJobContinueReq, AggregationJobResp, AggregationJobStep, Duration, Interval,
-    PrepareContinue, PrepareResp, PrepareStepResult, ReportError, ReportId, ReportIdChecksum,
-    ReportMetadata, Role, Time, TimePrecision, batch_mode::TimeInterval,
+    ReportError, ReportId, ReportIdChecksum, ReportMetadata, Role, Time, TimePrecision,
+    VerifyContinue, VerifyResp, VerifyStepResult, batch_mode::TimeInterval,
 };
 use prio::{
     topology::ping_pong::PingPongMessage,
@@ -84,10 +84,8 @@ async fn aggregate_continue_sync() {
         report_metadata_0.id(),
         &measurement,
     );
-    let helper_prep_state_0 = transcript_0.helper_prepare_transitions[0].prepare_state();
-    let leader_prep_message_0 = transcript_0.leader_prepare_transitions[1]
-        .message()
-        .unwrap();
+    let helper_verify_state_0 = transcript_0.helper_verify_transitions[0].verify_state();
+    let leader_verify_message_0 = transcript_0.leader_verify_transitions[1].message().unwrap();
     let report_share_0 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
         report_metadata_0.clone(),
@@ -112,7 +110,7 @@ async fn aggregate_continue_sync() {
         &measurement,
     );
 
-    let helper_prep_state_1 = transcript_1.helper_prepare_transitions[0].prepare_state();
+    let helper_verify_state_1 = transcript_1.helper_verify_transitions[0].verify_state();
     let report_share_1 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
         report_metadata_1.clone(),
@@ -137,10 +135,8 @@ async fn aggregate_continue_sync() {
         report_metadata_2.id(),
         &measurement,
     );
-    let helper_prep_state_2 = transcript_2.helper_prepare_transitions[0].prepare_state();
-    let leader_prep_message_2 = transcript_2.leader_prepare_transitions[1]
-        .message()
-        .unwrap();
+    let helper_verify_state_2 = transcript_2.helper_verify_transitions[0].verify_state();
+    let leader_verify_message_2 = transcript_2.leader_verify_transitions[1].message().unwrap();
     let report_share_2 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
         report_metadata_2.clone(),
@@ -156,9 +152,9 @@ async fn aggregate_continue_sync() {
             let report_share_0 = report_share_0.clone();
             let report_share_1 = report_share_1.clone();
             let report_share_2 = report_share_2.clone();
-            let helper_prep_state_0 = *helper_prep_state_0;
-            let helper_prep_state_1 = *helper_prep_state_1;
-            let helper_prep_state_2 = *helper_prep_state_2;
+            let helper_verify_state_0 = *helper_verify_state_0;
+            let helper_verify_state_1 = *helper_verify_state_1;
+            let helper_verify_state_2 = *helper_verify_state_2;
             let report_metadata_0 = report_metadata_0.clone();
             let report_metadata_1 = report_metadata_1.clone();
             let report_metadata_2 = report_metadata_2.clone();
@@ -208,7 +204,7 @@ async fn aggregate_continue_sync() {
                     0,
                     None,
                     ReportAggregationState::HelperContinue {
-                        prepare_state: helper_prep_state_0,
+                        verify_state: helper_verify_state_0,
                     },
                 ))
                 .await
@@ -221,7 +217,7 @@ async fn aggregate_continue_sync() {
                     1,
                     None,
                     ReportAggregationState::HelperContinue {
-                        prepare_state: helper_prep_state_1,
+                        verify_state: helper_verify_state_1,
                     },
                 ))
                 .await
@@ -234,7 +230,7 @@ async fn aggregate_continue_sync() {
                     2,
                     None,
                     ReportAggregationState::HelperContinue {
-                        prepare_state: helper_prep_state_2,
+                        verify_state: helper_verify_state_2,
                     },
                 ))
                 .await
@@ -270,8 +266,8 @@ async fn aggregate_continue_sync() {
     let request = AggregationJobContinueReq::new(
         AggregationJobStep::from(1),
         Vec::from([
-            PrepareContinue::new(*report_metadata_0.id(), leader_prep_message_0.clone()),
-            PrepareContinue::new(*report_metadata_2.id(), leader_prep_message_2.clone()),
+            VerifyContinue::new(*report_metadata_0.id(), leader_verify_message_0.clone()),
+            VerifyContinue::new(*report_metadata_2.id(), leader_verify_message_2.clone()),
         ]),
     );
 
@@ -283,11 +279,11 @@ async fn aggregate_continue_sync() {
     assert_eq!(
         aggregate_resp,
         Some(AggregationJobResp {
-            prepare_resps: Vec::from([
-                PrepareResp::new(*report_metadata_0.id(), PrepareStepResult::Finished),
-                PrepareResp::new(
+            verify_resps: Vec::from([
+                VerifyResp::new(*report_metadata_0.id(), VerifyStepResult::Finished),
+                VerifyResp::new(
                     *report_metadata_2.id(),
-                    PrepareStepResult::Reject(ReportError::BatchCollected),
+                    VerifyStepResult::Reject(ReportError::BatchCollected),
                 )
             ])
         })
@@ -343,9 +339,9 @@ async fn aggregate_continue_sync() {
                 *report_metadata_0.id(),
                 *report_metadata_0.time(),
                 0,
-                Some(PrepareResp::new(
+                Some(VerifyResp::new(
                     *report_metadata_0.id(),
-                    PrepareStepResult::Finished
+                    VerifyStepResult::Finished
                 )),
                 ReportAggregationState::Finished,
             ),
@@ -366,9 +362,9 @@ async fn aggregate_continue_sync() {
                 *report_metadata_2.id(),
                 *report_metadata_2.time(),
                 2,
-                Some(PrepareResp::new(
+                Some(VerifyResp::new(
                     *report_metadata_2.id(),
-                    PrepareStepResult::Reject(ReportError::BatchCollected)
+                    VerifyStepResult::Reject(ReportError::BatchCollected)
                 )),
                 ReportAggregationState::Failed {
                     report_error: ReportError::BatchCollected
@@ -426,10 +422,8 @@ async fn aggregate_continue_async() {
         report_metadata_0.id(),
         &measurement,
     );
-    let helper_prep_state_0 = transcript_0.helper_prepare_transitions[0].prepare_state();
-    let leader_prep_message_0 = transcript_0.leader_prepare_transitions[1]
-        .message()
-        .unwrap();
+    let helper_verify_state_0 = transcript_0.helper_verify_transitions[0].verify_state();
+    let leader_verify_message_0 = transcript_0.leader_verify_transitions[1].message().unwrap();
     let report_share_0 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
         report_metadata_0.clone(),
@@ -454,7 +448,7 @@ async fn aggregate_continue_async() {
         &measurement,
     );
 
-    let helper_prep_state_1 = transcript_1.helper_prepare_transitions[0].prepare_state();
+    let helper_verify_state_1 = transcript_1.helper_verify_transitions[0].verify_state();
     let report_share_1 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
         report_metadata_1.clone(),
@@ -469,8 +463,8 @@ async fn aggregate_continue_async() {
             let helper_task = helper_task.clone();
             let report_share_0 = report_share_0.clone();
             let report_share_1 = report_share_1.clone();
-            let helper_prep_state_0 = *helper_prep_state_0;
-            let helper_prep_state_1 = *helper_prep_state_1;
+            let helper_verify_state_0 = *helper_verify_state_0;
+            let helper_verify_state_1 = *helper_verify_state_1;
             let report_metadata_0 = report_metadata_0.clone();
             let report_metadata_1 = report_metadata_1.clone();
 
@@ -512,7 +506,7 @@ async fn aggregate_continue_async() {
                     0,
                     None,
                     ReportAggregationState::HelperContinue {
-                        prepare_state: helper_prep_state_0,
+                        verify_state: helper_verify_state_0,
                     },
                 ))
                 .await
@@ -525,7 +519,7 @@ async fn aggregate_continue_async() {
                     1,
                     None,
                     ReportAggregationState::HelperContinue {
-                        prepare_state: helper_prep_state_1,
+                        verify_state: helper_verify_state_1,
                     },
                 ))
                 .await
@@ -539,9 +533,9 @@ async fn aggregate_continue_async() {
 
     let request = AggregationJobContinueReq::new(
         AggregationJobStep::from(1),
-        Vec::from([PrepareContinue::new(
+        Vec::from([VerifyContinue::new(
             *report_metadata_0.id(),
-            leader_prep_message_0.clone(),
+            leader_verify_message_0.clone(),
         )]),
     );
 
@@ -604,10 +598,10 @@ async fn aggregate_continue_async() {
                 0,
                 None,
                 ReportAggregationState::HelperContinueProcessing {
-                    prepare_state: *helper_prep_state_0,
-                    prepare_continue: PrepareContinue::new(
+                    verify_state: *helper_verify_state_0,
+                    verify_continue: VerifyContinue::new(
                         *report_metadata_0.id(),
-                        leader_prep_message_0.clone()
+                        leader_verify_message_0.clone()
                     ),
                 },
             ),
@@ -678,10 +672,8 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         report_metadata_0.id(),
         &measurement,
     );
-    let helper_prep_state_0 = transcript_0.helper_prepare_transitions[0].prepare_state();
-    let ping_pong_leader_message_0 = transcript_0.leader_prepare_transitions[1]
-        .message()
-        .unwrap();
+    let helper_verify_state_0 = transcript_0.helper_verify_transitions[0].verify_state();
+    let ping_pong_leader_message_0 = transcript_0.leader_verify_transitions[1].message().unwrap();
     let report_share_0 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
         report_metadata_0.clone(),
@@ -705,10 +697,8 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         report_metadata_1.id(),
         &measurement,
     );
-    let helper_prep_state_1 = transcript_1.helper_prepare_transitions[0].prepare_state();
-    let ping_pong_leader_message_1 = transcript_1.leader_prepare_transitions[1]
-        .message()
-        .unwrap();
+    let helper_verify_state_1 = transcript_1.helper_verify_transitions[0].verify_state();
+    let ping_pong_leader_message_1 = transcript_1.leader_verify_transitions[1].message().unwrap();
     let report_share_1 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
         report_metadata_1.clone(),
@@ -735,10 +725,8 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         report_metadata_2.id(),
         &measurement,
     );
-    let helper_prep_state_2 = transcript_2.helper_prepare_transitions[0].prepare_state();
-    let ping_pong_leader_message_2 = transcript_2.leader_prepare_transitions[1]
-        .message()
-        .unwrap();
+    let helper_verify_state_2 = transcript_2.helper_verify_transitions[0].verify_state();
+    let ping_pong_leader_message_2 = transcript_2.leader_verify_transitions[1].message().unwrap();
     let report_share_2 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
         report_metadata_2.clone(),
@@ -784,9 +772,9 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
             let report_share_0 = report_share_0.clone();
             let report_share_1 = report_share_1.clone();
             let report_share_2 = report_share_2.clone();
-            let helper_prep_state_0 = *helper_prep_state_0;
-            let helper_prep_state_1 = *helper_prep_state_1;
-            let helper_prep_state_2 = *helper_prep_state_2;
+            let helper_verify_state_0 = *helper_verify_state_0;
+            let helper_verify_state_1 = *helper_verify_state_1;
+            let helper_verify_state_2 = *helper_verify_state_2;
             let report_metadata_0 = report_metadata_0.clone();
             let report_metadata_1 = report_metadata_1.clone();
             let report_metadata_2 = report_metadata_2.clone();
@@ -837,7 +825,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
                     0,
                     None,
                     ReportAggregationState::HelperContinue {
-                        prepare_state: helper_prep_state_0,
+                        verify_state: helper_verify_state_0,
                     },
                 ))
                 .await
@@ -850,7 +838,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
                     1,
                     None,
                     ReportAggregationState::HelperContinue {
-                        prepare_state: helper_prep_state_1,
+                        verify_state: helper_verify_state_1,
                     },
                 ))
                 .await
@@ -863,7 +851,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
                     2,
                     None,
                     ReportAggregationState::HelperContinue {
-                        prepare_state: helper_prep_state_2,
+                        verify_state: helper_verify_state_2,
                     },
                 ))
                 .await
@@ -903,9 +891,9 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     let request = AggregationJobContinueReq::new(
         AggregationJobStep::from(1),
         Vec::from([
-            PrepareContinue::new(*report_metadata_0.id(), ping_pong_leader_message_0.clone()),
-            PrepareContinue::new(*report_metadata_1.id(), ping_pong_leader_message_1.clone()),
-            PrepareContinue::new(*report_metadata_2.id(), ping_pong_leader_message_2.clone()),
+            VerifyContinue::new(*report_metadata_0.id(), ping_pong_leader_message_0.clone()),
+            VerifyContinue::new(*report_metadata_1.id(), ping_pong_leader_message_1.clone()),
+            VerifyContinue::new(*report_metadata_2.id(), ping_pong_leader_message_2.clone()),
         ]),
     );
 
@@ -1024,10 +1012,8 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         report_metadata_3.id(),
         &measurement,
     );
-    let helper_prep_state_3 = transcript_3.helper_prepare_transitions[0].prepare_state();
-    let ping_pong_leader_message_3 = transcript_3.leader_prepare_transitions[1]
-        .message()
-        .unwrap();
+    let helper_verify_state_3 = transcript_3.helper_verify_transitions[0].verify_state();
+    let ping_pong_leader_message_3 = transcript_3.leader_verify_transitions[1].message().unwrap();
     let report_share_3 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
         report_metadata_3.clone(),
@@ -1054,10 +1040,8 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         report_metadata_4.id(),
         &measurement,
     );
-    let helper_prep_state_4 = transcript_4.helper_prepare_transitions[0].prepare_state();
-    let ping_pong_leader_message_4 = transcript_4.leader_prepare_transitions[1]
-        .message()
-        .unwrap();
+    let helper_verify_state_4 = transcript_4.helper_verify_transitions[0].verify_state();
+    let ping_pong_leader_message_4 = transcript_4.leader_verify_transitions[1].message().unwrap();
     let report_share_4 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
         report_metadata_4.clone(),
@@ -1084,10 +1068,8 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         report_metadata_5.id(),
         &measurement,
     );
-    let helper_prep_state_5 = transcript_5.helper_prepare_transitions[0].prepare_state();
-    let ping_pong_leader_message_5 = transcript_5.leader_prepare_transitions[1]
-        .message()
-        .unwrap();
+    let helper_verify_state_5 = transcript_5.helper_verify_transitions[0].verify_state();
+    let ping_pong_leader_message_5 = transcript_5.leader_verify_transitions[1].message().unwrap();
     let report_share_5 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
         report_metadata_5.clone(),
@@ -1103,9 +1085,9 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
             let report_share_3 = report_share_3.clone();
             let report_share_4 = report_share_4.clone();
             let report_share_5 = report_share_5.clone();
-            let helper_prep_state_3 = *helper_prep_state_3;
-            let helper_prep_state_4 = *helper_prep_state_4;
-            let helper_prep_state_5 = *helper_prep_state_5;
+            let helper_verify_state_3 = *helper_verify_state_3;
+            let helper_verify_state_4 = *helper_verify_state_4;
+            let helper_verify_state_5 = *helper_verify_state_5;
             let report_metadata_3 = report_metadata_3.clone();
             let report_metadata_4 = report_metadata_4.clone();
             let report_metadata_5 = report_metadata_5.clone();
@@ -1153,7 +1135,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
                     3,
                     None,
                     ReportAggregationState::HelperContinue {
-                        prepare_state: helper_prep_state_3,
+                        verify_state: helper_verify_state_3,
                     },
                 ))
                 .await
@@ -1166,7 +1148,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
                     4,
                     None,
                     ReportAggregationState::HelperContinue {
-                        prepare_state: helper_prep_state_4,
+                        verify_state: helper_verify_state_4,
                     },
                 ))
                 .await
@@ -1179,7 +1161,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
                     5,
                     None,
                     ReportAggregationState::HelperContinue {
-                        prepare_state: helper_prep_state_5,
+                        verify_state: helper_verify_state_5,
                     },
                 ))
                 .await
@@ -1194,9 +1176,9 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     let request = AggregationJobContinueReq::new(
         AggregationJobStep::from(1),
         Vec::from([
-            PrepareContinue::new(*report_metadata_3.id(), ping_pong_leader_message_3.clone()),
-            PrepareContinue::new(*report_metadata_4.id(), ping_pong_leader_message_4.clone()),
-            PrepareContinue::new(*report_metadata_5.id(), ping_pong_leader_message_5.clone()),
+            VerifyContinue::new(*report_metadata_3.id(), ping_pong_leader_message_3.clone()),
+            VerifyContinue::new(*report_metadata_4.id(), ping_pong_leader_message_4.clone()),
+            VerifyContinue::new(*report_metadata_5.id(), ping_pong_leader_message_5.clone()),
         ]),
     );
 
@@ -1316,7 +1298,7 @@ async fn aggregate_continue_leader_sends_non_continue_or_finish_transition() {
         ..
     } = HttpHandlerTest::new().await;
 
-    // Prepare parameters.
+    // Set up parameters.
     let time_precision = TimePrecision::from_seconds(10);
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
@@ -1379,7 +1361,7 @@ async fn aggregate_continue_leader_sends_non_continue_or_finish_transition() {
                     0,
                     None,
                     ReportAggregationState::HelperContinue {
-                        prepare_state: *transcript.helper_prepare_transitions[0].prepare_state(),
+                        verify_state: *transcript.helper_verify_transitions[0].verify_state(),
                     },
                 ))
                 .await
@@ -1391,7 +1373,7 @@ async fn aggregate_continue_leader_sends_non_continue_or_finish_transition() {
     // Make request.
     let request = AggregationJobContinueReq::new(
         AggregationJobStep::from(1),
-        Vec::from([PrepareContinue::new(
+        Vec::from([VerifyContinue::new(
             *report_metadata.id(),
             // An AggregationJobContinueReq should only ever contain Continue or Finished
             PingPongMessage::Initialize {
@@ -1401,27 +1383,27 @@ async fn aggregate_continue_leader_sends_non_continue_or_finish_transition() {
     );
 
     let resp = post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &router).await;
-    let prepare_resps =
-        assert_matches!(resp, Some(AggregationJobResp{prepare_resps}) => prepare_resps);
-    assert_eq!(prepare_resps.len(), 1);
+    let verify_resps =
+        assert_matches!(resp, Some(AggregationJobResp{verify_resps}) => verify_resps);
+    assert_eq!(verify_resps.len(), 1);
     assert_eq!(
-        prepare_resps[0],
-        PrepareResp::new(
+        verify_resps[0],
+        VerifyResp::new(
             *report_metadata.id(),
-            PrepareStepResult::Reject(ReportError::VdafPrepError),
+            VerifyStepResult::Reject(ReportError::VdafVerifyError),
         )
     );
 
     assert_task_aggregation_counter(
         &datastore,
         *task.id(),
-        TaskAggregationCounter::default().with_vdaf_prep_error(1),
+        TaskAggregationCounter::default().with_vdaf_verify_error(1),
     )
     .await;
 }
 
 #[tokio::test]
-async fn aggregate_continue_prep_step_fails() {
+async fn aggregate_continue_verify_step_fails() {
     let HttpHandlerTest {
         ephemeral_datastore: _ephemeral_datastore,
         datastore,
@@ -1430,7 +1412,7 @@ async fn aggregate_continue_prep_step_fails() {
         ..
     } = HttpHandlerTest::new().await;
 
-    // Prepare parameters.
+    // Set up parameters.
     let time_precision = TimePrecision::from_seconds(10);
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
@@ -1502,7 +1484,7 @@ async fn aggregate_continue_prep_step_fails() {
                     0,
                     None,
                     ReportAggregationState::HelperContinue {
-                        prepare_state: *transcript.helper_prepare_transitions[0].prepare_state(),
+                        verify_state: *transcript.helper_verify_transitions[0].verify_state(),
                     },
                 ))
                 .await
@@ -1514,7 +1496,7 @@ async fn aggregate_continue_prep_step_fails() {
     // Make request.
     let request = AggregationJobContinueReq::new(
         AggregationJobStep::from(1),
-        Vec::from([PrepareContinue::new(
+        Vec::from([VerifyContinue::new(
             *report_metadata.id(),
             PingPongMessage::Continue {
                 verifier_message: Vec::new(),
@@ -1528,9 +1510,9 @@ async fn aggregate_continue_prep_step_fails() {
     assert_eq!(
         aggregate_resp,
         Some(AggregationJobResp {
-            prepare_resps: Vec::from([PrepareResp::new(
+            verify_resps: Vec::from([VerifyResp::new(
                 *report_metadata.id(),
-                PrepareStepResult::Reject(ReportError::VdafPrepError),
+                VerifyStepResult::Reject(ReportError::VdafVerifyError),
             )])
         })
     );
@@ -1587,12 +1569,12 @@ async fn aggregate_continue_prep_step_fails() {
             *report_metadata.id(),
             *report_metadata.time(),
             0,
-            Some(PrepareResp::new(
+            Some(VerifyResp::new(
                 *report_metadata.id(),
-                PrepareStepResult::Reject(ReportError::VdafPrepError)
+                VerifyStepResult::Reject(ReportError::VdafVerifyError)
             )),
             ReportAggregationState::Failed {
-                report_error: ReportError::VdafPrepError
+                report_error: ReportError::VdafVerifyError
             },
         )
     );
@@ -1600,7 +1582,7 @@ async fn aggregate_continue_prep_step_fails() {
     assert_task_aggregation_counter(
         &datastore,
         *task.id(),
-        TaskAggregationCounter::default().with_vdaf_prep_error(1),
+        TaskAggregationCounter::default().with_vdaf_verify_error(1),
     )
     .await;
 }
@@ -1614,7 +1596,7 @@ async fn aggregate_continue_unexpected_transition() {
         ..
     } = HttpHandlerTest::new().await;
 
-    // Prepare parameters.
+    // Set up parameters.
     let time_precision = TimePrecision::from_seconds(10);
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
@@ -1676,7 +1658,7 @@ async fn aggregate_continue_unexpected_transition() {
                     0,
                     None,
                     ReportAggregationState::HelperContinue {
-                        prepare_state: *transcript.helper_prepare_transitions[0].prepare_state(),
+                        verify_state: *transcript.helper_verify_transitions[0].verify_state(),
                     },
                 ))
                 .await
@@ -1688,7 +1670,7 @@ async fn aggregate_continue_unexpected_transition() {
     // Make request.
     let request = AggregationJobContinueReq::new(
         AggregationJobStep::from(1),
-        Vec::from([PrepareContinue::new(
+        Vec::from([VerifyContinue::new(
             ReportId::from(
                 [16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1], // not the same as above
             ),
@@ -1707,7 +1689,7 @@ async fn aggregate_continue_unexpected_transition() {
         StatusCode::BAD_REQUEST,
         "urn:ietf:params:ppm:dap:error:invalidMessage",
         "The message type for a response was incorrect or the payload was malformed.",
-        Some("leader sent unexpected, duplicate, or out-of-order prepare steps"),
+        Some("leader sent unexpected, duplicate, or out-of-order verify steps"),
         None,
     )
     .await;
@@ -1725,7 +1707,7 @@ async fn aggregate_continue_out_of_order_transition() {
         ..
     } = HttpHandlerTest::new().await;
 
-    // Prepare parameters.
+    // Set up parameters.
     let time_precision = TimePrecision::from_seconds(10);
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
@@ -1813,7 +1795,7 @@ async fn aggregate_continue_out_of_order_transition() {
                     0,
                     None,
                     ReportAggregationState::HelperContinue {
-                        prepare_state: *transcript_0.helper_prepare_transitions[0].prepare_state(),
+                        verify_state: *transcript_0.helper_verify_transitions[0].verify_state(),
                     },
                 ))
                 .await
@@ -1826,7 +1808,7 @@ async fn aggregate_continue_out_of_order_transition() {
                     1,
                     None,
                     ReportAggregationState::HelperContinue {
-                        prepare_state: *transcript_1.helper_prepare_transitions[0].prepare_state(),
+                        verify_state: *transcript_1.helper_verify_transitions[0].verify_state(),
                     },
                 ))
                 .await
@@ -1840,14 +1822,14 @@ async fn aggregate_continue_out_of_order_transition() {
         AggregationJobStep::from(1),
         Vec::from([
             // Report IDs are in opposite order to what was stored in the datastore.
-            PrepareContinue::new(
+            VerifyContinue::new(
                 *report_metadata_1.id(),
                 PingPongMessage::Continue {
                     verifier_message: Vec::new(),
                     verifier_share: Vec::new(),
                 },
             ),
-            PrepareContinue::new(
+            VerifyContinue::new(
                 *report_metadata_0.id(),
                 PingPongMessage::Continue {
                     verifier_message: Vec::new(),
@@ -1864,7 +1846,7 @@ async fn aggregate_continue_out_of_order_transition() {
         StatusCode::BAD_REQUEST,
         "urn:ietf:params:ppm:dap:error:invalidMessage",
         "The message type for a response was incorrect or the payload was malformed.",
-        Some("leader sent unexpected, duplicate, or out-of-order prepare steps"),
+        Some("leader sent unexpected, duplicate, or out-of-order verify steps"),
         None,
     )
     .await;
@@ -1882,7 +1864,7 @@ async fn aggregate_continue_for_non_waiting_aggregation() {
         ..
     } = HttpHandlerTest::new().await;
 
-    // Prepare parameters.
+    // Set up parameters.
     let time_precision = TimePrecision::from_seconds(10);
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
@@ -1933,7 +1915,7 @@ async fn aggregate_continue_for_non_waiting_aggregation() {
                     0,
                     None,
                     ReportAggregationState::Failed {
-                        report_error: ReportError::VdafPrepError,
+                        report_error: ReportError::VdafVerifyError,
                     },
                 ))
                 .await
@@ -1945,7 +1927,7 @@ async fn aggregate_continue_for_non_waiting_aggregation() {
     // Make request.
     let request = AggregationJobContinueReq::new(
         AggregationJobStep::from(1),
-        Vec::from([PrepareContinue::new(
+        Vec::from([VerifyContinue::new(
             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
             PingPongMessage::Continue {
                 verifier_message: Vec::new(),
@@ -1961,7 +1943,7 @@ async fn aggregate_continue_for_non_waiting_aggregation() {
         StatusCode::BAD_REQUEST,
         "urn:ietf:params:ppm:dap:error:invalidMessage",
         "The message type for a response was incorrect or the payload was malformed.",
-        Some("leader sent prepare step for non-CONTINUE report aggregation"),
+        Some("leader sent verify step for non-CONTINUE report aggregation"),
         None,
     )
     .await;

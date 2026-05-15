@@ -314,8 +314,8 @@ pub struct TaskAggregationCounterInner {
     hpke_unknown_config_id: u64,
     /// The number of reports rejected due to HPKE decryption failure.
     hpke_decrypt_failure: u64,
-    /// The number of reports rejected due to VDAF preparation error.
-    vdaf_prep_error: u64,
+    /// The number of reports rejected due to VDAF verification error.
+    vdaf_verify_error: u64,
     /// The number of reports rejected due to the task not having started yet.
     task_not_started: u64,
     /// The number of reports rejected due to task expiration.
@@ -335,8 +335,8 @@ pub struct TaskAggregationCounterInner {
     helper_hpke_unknown_config_id: u64,
     /// The number of reports rejected by the helper due to HPKE decryption failure.
     helper_hpke_decrypt_failure: u64,
-    /// The number of reports rejected by the helper due to VDAF preparation error.
-    helper_vdaf_prep_error: u64,
+    /// The number of reports rejected by the helper due to VDAF verification error.
+    helper_vdaf_verify_error: u64,
     /// The number of reports rejected by the helper due to the task not having started yet.
     helper_task_not_started: u64,
     /// The number of reports rejected by the helper due to task expiration.
@@ -389,8 +389,8 @@ impl TaskAggregationCounter {
     }
 
     #[cfg(feature = "test-util")]
-    pub fn with_vdaf_prep_error(self, value: u64) -> Self {
-        self.inner.lock().unwrap().vdaf_prep_error = value;
+    pub fn with_vdaf_verify_error(self, value: u64) -> Self {
+        self.inner.lock().unwrap().vdaf_verify_error = value;
         self
     }
 
@@ -405,7 +405,7 @@ impl TaskAggregationCounter {
         report_dropped: u64,
         hpke_unknown_config_id: u64,
         hpke_decrypt_failure: u64,
-        vdaf_prep_error: u64,
+        vdaf_verify_error: u64,
         task_not_started: u64,
         task_expired: u64,
         invalid_message: u64,
@@ -415,7 +415,7 @@ impl TaskAggregationCounter {
         helper_report_dropped: u64,
         helper_hpke_unknown_config_id: u64,
         helper_hpke_decrypt_failure: u64,
-        helper_vdaf_prep_error: u64,
+        helper_vdaf_verify_error: u64,
         helper_task_not_started: u64,
         helper_task_expired: u64,
         helper_invalid_message: u64,
@@ -431,7 +431,7 @@ impl TaskAggregationCounter {
                 report_dropped,
                 hpke_unknown_config_id,
                 hpke_decrypt_failure,
-                vdaf_prep_error,
+                vdaf_verify_error,
                 task_not_started,
                 task_expired,
                 invalid_message,
@@ -441,7 +441,7 @@ impl TaskAggregationCounter {
                 helper_report_dropped,
                 helper_hpke_unknown_config_id,
                 helper_hpke_decrypt_failure,
-                helper_vdaf_prep_error,
+                helper_vdaf_verify_error,
                 helper_task_not_started,
                 helper_task_expired,
                 helper_invalid_message,
@@ -475,7 +475,7 @@ SELECT
     COALESCE(SUM(report_dropped)::BIGINT, 0) AS report_dropped,
     COALESCE(SUM(hpke_unknown_config_id)::BIGINT, 0) AS hpke_unknown_config_id,
     COALESCE(SUM(hpke_decrypt_failure)::BIGINT, 0) AS hpke_decrypt_failure,
-    COALESCE(SUM(vdaf_prep_error)::BIGINT, 0) AS vdaf_prep_error,
+    COALESCE(SUM(vdaf_verify_error)::BIGINT, 0) AS vdaf_verify_error,
     COALESCE(SUM(task_not_started)::BIGINT, 0) AS task_not_started,
     COALESCE(SUM(task_expired)::BIGINT, 0) AS task_expired,
     COALESCE(SUM(invalid_message)::BIGINT, 0) AS invalid_message,
@@ -485,7 +485,7 @@ SELECT
     COALESCE(SUM(helper_report_dropped)::BIGINT, 0) AS helper_report_dropped,
     COALESCE(SUM(helper_hpke_unknown_config_id)::BIGINT, 0) AS helper_hpke_unknown_config_id,
     COALESCE(SUM(helper_hpke_decrypt_failure)::BIGINT, 0) AS helper_hpke_decrypt_failure,
-    COALESCE(SUM(helper_vdaf_prep_error)::BIGINT, 0) AS helper_vdaf_prep_error,
+    COALESCE(SUM(helper_vdaf_verify_error)::BIGINT, 0) AS helper_vdaf_verify_error,
     COALESCE(SUM(helper_task_not_started)::BIGINT, 0) AS helper_task_not_started,
     COALESCE(SUM(helper_task_expired)::BIGINT, 0) AS helper_task_expired,
     COALESCE(SUM(helper_invalid_message)::BIGINT, 0) AS helper_invalid_message,
@@ -507,7 +507,7 @@ WHERE task_id = $1",
                     row.get_bigint_and_convert("report_dropped")?,
                     row.get_bigint_and_convert("hpke_unknown_config_id")?,
                     row.get_bigint_and_convert("hpke_decrypt_failure")?,
-                    row.get_bigint_and_convert("vdaf_prep_error")?,
+                    row.get_bigint_and_convert("vdaf_verify_error")?,
                     row.get_bigint_and_convert("task_not_started")?,
                     row.get_bigint_and_convert("task_expired")?,
                     row.get_bigint_and_convert("invalid_message")?,
@@ -517,7 +517,7 @@ WHERE task_id = $1",
                     row.get_bigint_and_convert("helper_report_dropped")?,
                     row.get_bigint_and_convert("helper_hpke_unknown_config_id")?,
                     row.get_bigint_and_convert("helper_hpke_decrypt_failure")?,
-                    row.get_bigint_and_convert("helper_vdaf_prep_error")?,
+                    row.get_bigint_and_convert("helper_vdaf_verify_error")?,
                     row.get_bigint_and_convert("helper_task_not_started")?,
                     row.get_bigint_and_convert("helper_task_expired")?,
                     row.get_bigint_and_convert("helper_invalid_message")?,
@@ -550,10 +550,10 @@ WHERE task_id = $1",
                 "-- increment_task_aggregation_counter()
 INSERT INTO task_aggregation_counters (task_id, ord, success, duplicate_extension,
 public_share_encode_failure, batch_collected, report_replayed, report_dropped,
-hpke_unknown_config_id, hpke_decrypt_failure, vdaf_prep_error, task_not_started, task_expired,
+hpke_unknown_config_id, hpke_decrypt_failure, vdaf_verify_error, task_not_started, task_expired,
 invalid_message, report_too_early, helper_batch_collected, helper_report_replayed,
 helper_report_dropped, helper_hpke_unknown_config_id, helper_hpke_decrypt_failure,
-helper_vdaf_prep_error, helper_task_not_started, helper_task_expired, helper_invalid_message,
+helper_vdaf_verify_error, helper_task_not_started, helper_task_expired, helper_invalid_message,
 helper_report_too_early)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
     $21, $22, $23, $24, $25)
@@ -566,7 +566,7 @@ ON CONFLICT (task_id, ord) DO UPDATE SET
     report_dropped = task_aggregation_counters.report_dropped + $8,
     hpke_unknown_config_id = task_aggregation_counters.hpke_unknown_config_id + $9,
     hpke_decrypt_failure = task_aggregation_counters.hpke_decrypt_failure + $10,
-    vdaf_prep_error = task_aggregation_counters.vdaf_prep_error + $11,
+    vdaf_verify_error = task_aggregation_counters.vdaf_verify_error + $11,
     task_not_started = task_aggregation_counters.task_not_started + $12,
     task_expired = task_aggregation_counters.task_expired + $13,
     invalid_message = task_aggregation_counters.invalid_message + $14,
@@ -576,7 +576,7 @@ ON CONFLICT (task_id, ord) DO UPDATE SET
     helper_report_dropped = task_aggregation_counters.helper_report_dropped + $18,
     helper_hpke_unknown_config_id = task_aggregation_counters.helper_hpke_unknown_config_id + $19,
     helper_hpke_decrypt_failure = task_aggregation_counters.helper_hpke_decrypt_failure + $20,
-    helper_vdaf_prep_error = task_aggregation_counters.helper_vdaf_prep_error + $21,
+    helper_vdaf_verify_error = task_aggregation_counters.helper_vdaf_verify_error + $21,
     helper_task_not_started = task_aggregation_counters.helper_task_not_started + $22,
     helper_task_expired = task_aggregation_counters.helper_task_expired + $23,
     helper_invalid_message = task_aggregation_counters.helper_invalid_message + $24,
@@ -600,7 +600,7 @@ ON CONFLICT (task_id, ord) DO UPDATE SET
                     /* hpke_unknown_config_id */
                     &i64::try_from(inner.hpke_unknown_config_id)?,
                     /* hpke_decrypt_failure */ &i64::try_from(inner.hpke_decrypt_failure)?,
-                    /* vdaf_prep_error */ &i64::try_from(inner.vdaf_prep_error)?,
+                    /* vdaf_verify_error */ &i64::try_from(inner.vdaf_verify_error)?,
                     /* task_not_started */ &i64::try_from(inner.task_not_started)?,
                     /* task_expired */ &i64::try_from(inner.task_expired)?,
                     /* invalid_message */ &i64::try_from(inner.invalid_message)?,
@@ -615,8 +615,8 @@ ON CONFLICT (task_id, ord) DO UPDATE SET
                     &i64::try_from(inner.helper_hpke_unknown_config_id)?,
                     /* helper_hpke_decrypt_failure */
                     &i64::try_from(inner.helper_hpke_decrypt_failure)?,
-                    /* helper_vdaf_prep_error */
-                    &i64::try_from(inner.helper_vdaf_prep_error)?,
+                    /* helper_vdaf_verify_error */
+                    &i64::try_from(inner.helper_vdaf_verify_error)?,
                     /* helper_task_not_started */
                     &i64::try_from(inner.helper_task_not_started)?,
                     /* helper_task_expired */ &i64::try_from(inner.helper_task_expired)?,
@@ -641,7 +641,7 @@ ON CONFLICT (task_id, ord) DO UPDATE SET
         self.inner.lock().unwrap().success += 1
     }
 
-    /// Increments the appropriate counter based on the prepare failure.
+    /// Increments the appropriate counter based on the verify failure.
     pub fn increment_with_report_error(&self, error: ReportError) {
         match error {
             ReportError::BatchCollected => self.inner.lock().unwrap().batch_collected += 1,
@@ -651,16 +651,16 @@ ON CONFLICT (task_id, ord) DO UPDATE SET
                 self.inner.lock().unwrap().hpke_unknown_config_id += 1
             }
             ReportError::HpkeDecryptError => self.inner.lock().unwrap().hpke_decrypt_failure += 1,
-            ReportError::VdafPrepError => self.inner.lock().unwrap().vdaf_prep_error += 1,
+            ReportError::VdafVerifyError => self.inner.lock().unwrap().vdaf_verify_error += 1,
             ReportError::TaskNotStarted => self.inner.lock().unwrap().task_not_started += 1,
             ReportError::TaskExpired => self.inner.lock().unwrap().task_expired += 1,
             ReportError::InvalidMessage => self.inner.lock().unwrap().invalid_message += 1,
             ReportError::ReportTooEarly => self.inner.lock().unwrap().report_too_early += 1,
-            _ => tracing::debug!(?error, "unexpected prepare error"),
+            _ => tracing::debug!(?error, "unexpected verify error"),
         }
     }
 
-    /// Increments the appropriate counter based on the helper prepare failure.
+    /// Increments the appropriate counter based on the helper verify failure.
     pub fn increment_with_helper_report_error(&self, helper_error: ReportError) {
         match helper_error {
             ReportError::BatchCollected => self.inner.lock().unwrap().helper_batch_collected += 1,
@@ -672,12 +672,14 @@ ON CONFLICT (task_id, ord) DO UPDATE SET
             ReportError::HpkeDecryptError => {
                 self.inner.lock().unwrap().helper_hpke_decrypt_failure += 1
             }
-            ReportError::VdafPrepError => self.inner.lock().unwrap().helper_vdaf_prep_error += 1,
+            ReportError::VdafVerifyError => {
+                self.inner.lock().unwrap().helper_vdaf_verify_error += 1
+            }
             ReportError::TaskNotStarted => self.inner.lock().unwrap().helper_task_not_started += 1,
             ReportError::TaskExpired => self.inner.lock().unwrap().helper_task_expired += 1,
             ReportError::InvalidMessage => self.inner.lock().unwrap().helper_invalid_message += 1,
             ReportError::ReportTooEarly => self.inner.lock().unwrap().helper_report_too_early += 1,
-            _ => tracing::debug!(?helper_error, "unexpected prepare error from helper"),
+            _ => tracing::debug!(?helper_error, "unexpected verify error from helper"),
         }
     }
 }

@@ -53,7 +53,7 @@ pub struct CommonConfig {
     #[serde(default = "default_max_transaction_retries")]
     pub max_transaction_retries: u64,
 
-    /// Stack size, in bytes, for threads used for VDAF preparation.
+    /// Stack size, in bytes, for threads used for VDAF verification.
     ///
     /// Optional. If not set, the default stack size will be used. This is currently 2 MiB on most
     /// platforms. See <https://doc.rust-lang.org/std/thread/index.html#stack-size>.

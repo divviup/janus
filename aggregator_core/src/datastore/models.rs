@@ -20,9 +20,9 @@ use janus_core::{
 };
 use janus_messages::{
     AggregateShareId, AggregationJobId, AggregationJobStep, BatchId, CollectionJobId, Duration,
-    Extension, HpkeCiphertext, HpkeConfigId, Interval, PrepareContinue, PrepareInit, PrepareResp,
-    Query, ReportError, ReportId, ReportIdChecksum, ReportMetadata, Role, TaskId, Time,
-    TimePrecision,
+    Extension, HpkeCiphertext, HpkeConfigId, Interval, Query, ReportError, ReportId,
+    ReportIdChecksum, ReportMetadata, Role, TaskId, Time, TimePrecision, VerifyContinue,
+    VerifyInit, VerifyResp,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
 };
 use postgres_protocol::types::{
@@ -374,7 +374,7 @@ pub struct AggregationJob<const SEED_SIZE: usize, B: BatchMode, A: AsyncAggregat
     client_timestamp_interval: Interval,
     /// The overall state of this aggregation job.
     state: AggregationJobState,
-    /// The step of VDAF preparation that this aggregation job is currently on.
+    /// The step of VDAF verification that this aggregation job is currently on.
     step: AggregationJobStep,
     /// The SHA-256 hash of the most recent [`janus_messages::AggregationJobContinueReq`]
     /// received for this aggregation job. Will only be set for helpers, and only after the
@@ -497,8 +497,8 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>>
 /// corresponds to the AGGREGATION_JOB_STATE enum in the schema.
 ///
 /// These are implementation-specific states used for Janus's internal state management.
-/// DAP §4.6 [dap-16] defines aggregation job completion in terms of individual report
-/// preparation states (Continued, FinishedWithOutbound, Finished, Rejected), not job-level
+/// DAP §4.6 [dap-16] defines aggregation job completion in terms of individual
+/// report verification states (Continued, FinishedWithOutbound, Finished, Rejected), not job-level
 /// states. This enum provides operational states for managing the lifecycle of aggregation
 /// jobs within Janus.
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, ToSql, FromSql)]
@@ -798,9 +798,9 @@ impl AcquiredCollectionJob {
 
 /// ReportAggregation represents a the state of a single client report's ongoing aggregation.
 #[derive(Clone, Debug)]
-// PartialEq and Eq are gated on the `test-util` feature  as we do not wish to compare preparation
+// PartialEq and Eq are gated on the `test-util` feature  as we do not wish to compare verification
 // states in non-test code, since doing so would require a constant-time comparison to avoid risking
-// leaking information about the preparation state.
+// leaking information about the verification state.
 #[cfg_attr(feature = "test-util", derive(Educe))]
 #[cfg_attr(feature = "test-util", educe(PartialEq, Eq))]
 pub struct ReportAggregation<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> {
@@ -809,7 +809,7 @@ pub struct ReportAggregation<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZ
     report_id: ReportId,
     time: Time,
     ord: u64,
-    last_prep_resp: Option<PrepareResp>,
+    last_verify_resp: Option<VerifyResp>,
     state: ReportAggregationState<SEED_SIZE, A>,
 }
 
@@ -821,7 +821,7 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> ReportAggregation<SE
         report_id: ReportId,
         time: Time,
         ord: u64,
-        last_prep_resp: Option<PrepareResp>,
+        last_verify_resp: Option<VerifyResp>,
         state: ReportAggregationState<SEED_SIZE, A>,
     ) -> Self {
         Self {
@@ -830,7 +830,7 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> ReportAggregation<SE
             report_id,
             time,
             ord,
-            last_prep_resp,
+            last_verify_resp,
             state,
         }
     }
@@ -866,16 +866,16 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> ReportAggregation<SE
         self.ord
     }
 
-    /// Returns the last preparation response returned by the Helper, if any.
-    pub fn last_prep_resp(&self) -> Option<&PrepareResp> {
-        self.last_prep_resp.as_ref()
+    /// Returns the last verification response returned by the Helper, if any.
+    pub fn last_verify_resp(&self) -> Option<&VerifyResp> {
+        self.last_verify_resp.as_ref()
     }
 
     /// Returns a new [`ReportAggregation`] corresponding to this report aggregation updated to
-    /// have the given last preparation response.
-    pub fn with_last_prep_resp(self, last_prep_resp: Option<PrepareResp>) -> Self {
+    /// have the given last verification response.
+    pub fn with_last_verify_resp(self, last_verify_resp: Option<VerifyResp>) -> Self {
         Self {
-            last_prep_resp,
+            last_verify_resp,
             ..self
         }
     }
@@ -928,7 +928,7 @@ pub enum ReportAggregationState<const SEED_SIZE: usize, A: AsyncAggregator<SEED_
     LeaderPollInit {
         /// Leader's current aggregation state.
         #[educe(Debug(ignore))]
-        prepare_state: A::VerifyState,
+        verify_state: A::VerifyState,
     },
 
     /// The Leader received a "processing" response from a previous aggregation continue
@@ -945,25 +945,25 @@ pub enum ReportAggregationState<const SEED_SIZE: usize, A: AsyncAggregator<SEED_
     /// processing it asynchronously.
     HelperInitProcessing {
         /// The initialization message received for this report aggregation.
-        prepare_init: PrepareInit,
+        verify_init: VerifyInit,
         /// Does this report aggregation require the taskprov extension?
         require_taskbind_extension: bool,
     },
     /// The Helper is ready to receive an aggregation continuation request from the Leader.
     HelperContinue {
-        /// Helper's current preparation state
+        /// Helper's current verification state
         #[educe(Debug(ignore))]
-        prepare_state: A::VerifyState,
+        verify_state: A::VerifyState,
     },
     /// The Helper has received an aggregation continuation request from the Leader, and is
     /// processing it asynchronously.
     HelperContinueProcessing {
-        /// Helper's current preparation state.
+        /// Helper's current verification state.
         #[educe(Debug(ignore))]
-        prepare_state: A::VerifyState,
+        verify_state: A::VerifyState,
         /// The message from the Leader for this report aggregation.
         #[educe(Debug(ignore))]
-        prepare_continue: PrepareContinue,
+        verify_continue: VerifyContinue,
     },
 
     //
@@ -1012,7 +1012,7 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> ReportAggregationSta
     }
 
     /// Returns the encoded values for the various messages which might be included in a
-    /// ReportAggregationState. The order of returned values is preparation state, preparation
+    /// ReportAggregationState. The order of returned values is verification state, verification
     /// message, output share, transition error.
     pub(super) fn encoded_values_from_state(
         &self,
@@ -1048,40 +1048,40 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> ReportAggregationSta
             ReportAggregationState::LeaderContinue { continuation }
             | ReportAggregationState::LeaderPollContinue { continuation } => {
                 EncodedReportAggregationStateValues {
-                    leader_prep_continuation: Some(continuation.get_encoded()?),
+                    leader_verify_continuation: Some(continuation.get_encoded()?),
                     ..Default::default()
                 }
             }
 
-            ReportAggregationState::LeaderPollInit { prepare_state } => {
+            ReportAggregationState::LeaderPollInit { verify_state } => {
                 EncodedReportAggregationStateValues {
-                    leader_prep_state: Some(prepare_state.get_encoded()?),
+                    leader_verify_state: Some(verify_state.get_encoded()?),
                     ..Default::default()
                 }
             }
 
             ReportAggregationState::HelperInitProcessing {
-                prepare_init,
+                verify_init,
                 require_taskbind_extension,
             } => EncodedReportAggregationStateValues {
-                prepare_init: Some(prepare_init.get_encoded()?),
+                verify_init: Some(verify_init.get_encoded()?),
                 require_taskbind_extension: Some(*require_taskbind_extension),
                 ..Default::default()
             },
 
-            ReportAggregationState::HelperContinue { prepare_state } => {
+            ReportAggregationState::HelperContinue { verify_state } => {
                 EncodedReportAggregationStateValues {
-                    helper_prep_state: Some(prepare_state.get_encoded()?),
+                    helper_verify_state: Some(verify_state.get_encoded()?),
                     ..Default::default()
                 }
             }
 
             ReportAggregationState::HelperContinueProcessing {
-                prepare_state,
-                prepare_continue,
+                verify_state,
+                verify_continue,
             } => EncodedReportAggregationStateValues {
-                helper_prep_state: Some(prepare_state.get_encoded()?),
-                prepare_continue: Some(prepare_continue.get_encoded()?),
+                helper_verify_state: Some(verify_state.get_encoded()?),
+                verify_continue: Some(verify_continue.get_encoded()?),
                 ..Default::default()
             },
 
@@ -1107,20 +1107,20 @@ pub(super) struct EncodedReportAggregationStateValues {
     pub(super) helper_encrypted_input_share: Option<Vec<u8>>,
 
     // State for LeaderContinue or LeaderPollContinue.
-    pub(super) leader_prep_continuation: Option<Vec<u8>>,
+    pub(super) leader_verify_continuation: Option<Vec<u8>>,
 
     // State for LeaderPollInit.
-    pub(super) leader_prep_state: Option<Vec<u8>>,
+    pub(super) leader_verify_state: Option<Vec<u8>>,
 
     // State for HelperInitProcessing.
-    pub(super) prepare_init: Option<Vec<u8>>,
+    pub(super) verify_init: Option<Vec<u8>>,
     pub(super) require_taskbind_extension: Option<bool>,
 
     // State for HelperContinue & HelperContinueProcessing.
-    pub(super) helper_prep_state: Option<Vec<u8>>,
+    pub(super) helper_verify_state: Option<Vec<u8>>,
 
     // State for HelperContinueProcessing.
-    pub(super) prepare_continue: Option<Vec<u8>>,
+    pub(super) verify_continue: Option<Vec<u8>>,
 
     // State for Failed.
     pub(super) report_error: Option<i16>,
@@ -1151,8 +1151,8 @@ pub(super) enum ReportAggregationStateCode {
 }
 
 // This trait implementation is gated on the `test-util` feature as we do not wish to compare
-// preparation states in non-test code, since doing so would require a constant-time comparison to
-// avoid risking leaking information about the preparation state.
+// verification states in non-test code, since doing so would require a constant-time comparison to
+// avoid risking leaking information about the verification state.
 #[cfg(feature = "test-util")]
 impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> PartialEq
     for ReportAggregationState<SEED_SIZE, A>
@@ -1193,10 +1193,10 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> PartialEq
 
             (
                 Self::LeaderPollInit {
-                    prepare_state: lhs_leader_state,
+                    verify_state: lhs_leader_state,
                 },
                 Self::LeaderPollInit {
-                    prepare_state: rhs_leader_state,
+                    verify_state: rhs_leader_state,
                 },
             ) => lhs_leader_state == rhs_leader_state,
 
@@ -1211,37 +1211,37 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> PartialEq
 
             (
                 Self::HelperInitProcessing {
-                    prepare_init: lhs_prepare_init,
+                    verify_init: lhs_verify_init,
                     require_taskbind_extension: lhs_require_taskbind_extension,
                 },
                 Self::HelperInitProcessing {
-                    prepare_init: rhs_prepare_init,
+                    verify_init: rhs_verify_init,
                     require_taskbind_extension: rhs_require_taskbind_extension,
                 },
             ) => {
-                lhs_prepare_init == rhs_prepare_init
+                lhs_verify_init == rhs_verify_init
                     && lhs_require_taskbind_extension == rhs_require_taskbind_extension
             }
 
             (
                 Self::HelperContinue {
-                    prepare_state: lhs_state,
+                    verify_state: lhs_state,
                 },
                 Self::HelperContinue {
-                    prepare_state: rhs_state,
+                    verify_state: rhs_state,
                 },
             ) => lhs_state == rhs_state,
 
             (
                 Self::HelperContinueProcessing {
-                    prepare_state: lhs_state,
-                    prepare_continue: lhs_prepare_continue,
+                    verify_state: lhs_state,
+                    verify_continue: lhs_verify_continue,
                 },
                 Self::HelperContinueProcessing {
-                    prepare_state: rhs_state,
-                    prepare_continue: rhs_prepare_continue,
+                    verify_state: rhs_state,
+                    verify_continue: rhs_verify_continue,
                 },
-            ) => lhs_state == rhs_state && lhs_prepare_continue == rhs_prepare_continue,
+            ) => lhs_state == rhs_state && lhs_verify_continue == rhs_verify_continue,
 
             (
                 Self::Failed {
@@ -1258,8 +1258,8 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> PartialEq
 }
 
 // This trait implementation is gated on the `test-util` feature as we do not wish to compare
-// preparation states in non-test code, since doing so would require a constant-time comparison to
-// avoid risking leaking information about the preparation state.
+// verification states in non-test code, since doing so would require a constant-time comparison to
+// avoid risking leaking information about the verification state.
 #[cfg(feature = "test-util")]
 impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> Eq
     for ReportAggregationState<SEED_SIZE, A>
@@ -1367,7 +1367,7 @@ pub struct BatchAggregation<const SEED_SIZE: usize, B: BatchMode, A: AsyncAggreg
     task_id: TaskId,
     /// The identifier of the batch being aggregated over.
     batch_identifier: B::BatchIdentifier,
-    /// The VDAF aggregation parameter used to prepare and accumulate input shares.
+    /// The VDAF aggregation parameter used to verify and accumulate input shares.
     #[educe(Debug(ignore))]
     aggregation_parameter: A::AggregationParam,
     /// The index of this batch aggregation among all batch aggregations for
@@ -1561,7 +1561,7 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>>
 #[educe(Debug)]
 pub enum BatchAggregationState<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> {
     Aggregating {
-        /// The aggregate over all the input shares that have been prepared so far by this
+        /// The aggregate over all the input shares that have been verified so far by this
         /// aggregator. Will only be None if there are no reports.
         #[educe(Debug(ignore))]
         aggregate_share: Option<A::AggregateShare>,
@@ -1577,7 +1577,7 @@ pub enum BatchAggregationState<const SEED_SIZE: usize, A: AsyncAggregator<SEED_S
     },
 
     Collected {
-        /// The aggregate over all the input shares that have been prepared so far by this
+        /// The aggregate over all the input shares that have been verified so far by this
         /// aggregator. Will only be None if there are no reports.
         #[educe(Debug(ignore))]
         aggregate_share: Option<A::AggregateShare>,
@@ -1793,7 +1793,7 @@ pub struct CollectionJob<const SEED_SIZE: usize, B: BatchMode, A: AsyncAggregato
     aggregate_share_id: AggregateShareId,
     /// The Query that was sent to create this collection job.
     query: Query<B>,
-    /// The VDAF aggregation parameter used to prepare and aggregate input shares.
+    /// The VDAF aggregation parameter used to verify and aggregate input shares.
     #[educe(Debug(ignore))]
     aggregation_parameter: A::AggregationParam,
     /// The batch interval covered by the collection job.
@@ -2004,7 +2004,7 @@ pub struct AggregateShareJob<const SEED_SIZE: usize, B: BatchMode, A: AsyncAggre
     task_id: TaskId,
     /// The batch identifier for the batch covered by the aggregate share.
     batch_identifier: B::BatchIdentifier,
-    /// The VDAF aggregation parameter used to prepare and aggregate input shares.
+    /// The VDAF aggregation parameter used to verify and aggregate input shares.
     #[educe(Debug(ignore))]
     aggregation_parameter: A::AggregationParam,
     /// The aggregate share over the input shares in the interval.

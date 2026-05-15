@@ -198,7 +198,7 @@ impl CommonTaskParameters {
         })
     }
 
-    /// Returns the [`VerifyKey`] used by this aggregator to prepare report shares with other
+    /// Returns the [`VerifyKey`] used by this aggregator to verify report shares with other
     /// aggregators.
     ///
     /// # Errors
@@ -360,7 +360,7 @@ impl AggregatorTask {
         batch_size >= self.common_parameters.min_batch_size
     }
 
-    /// Returns the [`VerifyKey`] used by this aggregator to prepare report shares with other
+    /// Returns the [`VerifyKey`] used by this aggregator to verify report shares with other
     /// aggregators.
     ///
     /// # Errors
@@ -974,7 +974,7 @@ pub mod test_util {
             &self.collector_auth_token
         }
 
-        /// Returns the [`VerifyKey`] used by this aggregator to prepare report shares with other
+        /// Returns the [`VerifyKey`] used by this aggregator to verify report shares with other
         /// aggregators.
         ///
         /// # Errors

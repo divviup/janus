@@ -159,7 +159,7 @@ async fn collection_job_put_request_invalid_batch_size() {
         ..
     } = HttpHandlerTest::new().await;
 
-    // Prepare parameters.
+    // Set up parameters.
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,
