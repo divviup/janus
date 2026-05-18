@@ -327,9 +327,6 @@ pub(crate) fn aggregate_step_failure_counter(meter: &Meter) -> Counter<u64> {
     // Initialize counters with desired status labels. This causes Prometheus to see the first
     // non-zero value we record.
     for failure_type in [
-        "missing_verify_message",
-        "missing_leader_input_share",
-        "missing_helper_input_share",
         "verify_init_failure",
         "verify_next_failure",
         "verify_message_failure",
@@ -343,13 +340,14 @@ pub(crate) fn aggregate_step_failure_counter(meter: &Meter) -> Counter<u64> {
         "helper_verify_message_decode_failure",
         "leader_verify_share_decode_failure",
         "helper_verify_share_decode_failure",
+        "leader_ping_pong_message_mismatch",
+        "helper_ping_pong_message_mismatch",
         "continue_mismatch",
         "accumulate_failure",
         "finish_mismatch",
         "helper_step_failure",
         "plaintext_input_share_decode_failure",
         "duplicate_extension",
-        "missing_client_report",
         "missing_or_malformed_taskbind_extension",
         "unexpected_taskbind_extension",
         "unrecognized_extension",
