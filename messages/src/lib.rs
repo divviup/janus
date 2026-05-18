@@ -2047,16 +2047,16 @@ impl Decode for ReportShare {
     }
 }
 
-/// DAP protocol message representing information required to initialize preparation of a report for
-/// aggregation.
+/// DAP protocol message representing information required to initialize verification of a report
+/// for aggregation.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PrepareInit {
+pub struct VerifyInit {
     report_share: ReportShare,
     message: PingPongMessage,
 }
 
-impl PrepareInit {
-    /// Constructs a new preparation initialization message from its components.
+impl VerifyInit {
+    /// Constructs a new verification initialization message from its components.
     pub fn new(report_share: ReportShare, message: PingPongMessage) -> Self {
         Self {
             report_share,
@@ -2064,18 +2064,18 @@ impl PrepareInit {
         }
     }
 
-    /// Gets the report share associated with this prep init.
+    /// Gets the report share associated with this verify init.
     pub fn report_share(&self) -> &ReportShare {
         &self.report_share
     }
 
-    /// Gets the message associated with this prep init.
+    /// Gets the message associated with this verify init.
     pub fn message(&self) -> &PingPongMessage {
         &self.message
     }
 }
 
-impl Encode for PrepareInit {
+impl Encode for VerifyInit {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         self.report_share.encode(bytes)?;
         let encoded_message = self.message.get_encoded()?;
@@ -2087,7 +2087,7 @@ impl Encode for PrepareInit {
     }
 }
 
-impl Decode for PrepareInit {
+impl Decode for VerifyInit {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let report_share = ReportShare::decode(bytes)?;
         let message_bytes = decode_u32_items(&(), bytes)?;
@@ -2100,31 +2100,31 @@ impl Decode for PrepareInit {
     }
 }
 
-/// DAP protocol message representing the response to a preparation step in a VDAF evaluation.
+/// DAP protocol message representing the response to a verification step in a VDAF evaluation.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PrepareResp {
+pub struct VerifyResp {
     report_id: ReportId,
-    result: PrepareStepResult,
+    result: VerifyStepResult,
 }
 
-impl PrepareResp {
-    /// Constructs a new prepare step from its components.
-    pub fn new(report_id: ReportId, result: PrepareStepResult) -> Self {
+impl VerifyResp {
+    /// Constructs a new verify step from its components.
+    pub fn new(report_id: ReportId, result: VerifyStepResult) -> Self {
         Self { report_id, result }
     }
 
-    /// Gets the report ID associated with this prepare step.
+    /// Gets the report ID associated with this verify step.
     pub fn report_id(&self) -> &ReportId {
         &self.report_id
     }
 
-    /// Gets the result associated with this prepare step.
-    pub fn result(&self) -> &PrepareStepResult {
+    /// Gets the result associated with this verify step.
+    pub fn result(&self) -> &VerifyStepResult {
         &self.result
     }
 }
 
-impl Encode for PrepareResp {
+impl Encode for VerifyResp {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         self.report_id.encode(bytes)?;
         self.result.encode(bytes)
@@ -2135,20 +2135,20 @@ impl Encode for PrepareResp {
     }
 }
 
-impl Decode for PrepareResp {
+impl Decode for VerifyResp {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let report_id = ReportId::decode(bytes)?;
-        let result = PrepareStepResult::decode(bytes)?;
+        let result = VerifyStepResult::decode(bytes)?;
 
         Ok(Self { report_id, result })
     }
 }
 
-/// DAP protocol message representing result-type-specific data associated with a preparation step
-/// in a VDAF evaluation. Included in a PrepareResp message.
+/// DAP protocol message representing result-type-specific data associated with a verification step
+/// in a VDAF evaluation. Included in a VerifyResp message.
 #[derive(Clone, Educe, PartialEq, Eq)]
 #[educe(Debug)]
-pub enum PrepareStepResult {
+pub enum VerifyStepResult {
     Continue {
         #[educe(Debug(ignore))]
         message: PingPongMessage,
@@ -2157,9 +2157,9 @@ pub enum PrepareStepResult {
     Reject(ReportError),
 }
 
-impl Encode for PrepareStepResult {
+impl Encode for VerifyStepResult {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
-        // The encoding includes an implicit discriminator byte, called PrepareStepResult in the
+        // The encoding includes an implicit discriminator byte, called VerifyStepResult in the
         // DAP spec.
         match self {
             Self::Continue { message } => {
@@ -2183,13 +2183,13 @@ impl Encode for PrepareStepResult {
     }
 }
 
-impl Decode for PrepareStepResult {
+impl Decode for VerifyStepResult {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let val = u8::decode(bytes)?;
         Ok(match val {
             0 => {
-                let prep_msg_bytes = decode_u32_items(&(), bytes)?;
-                let message = PingPongMessage::get_decoded(&prep_msg_bytes)?;
+                let verify_msg_bytes = decode_u32_items(&(), bytes)?;
+                let message = PingPongMessage::get_decoded(&verify_msg_bytes)?;
                 Self::Continue { message }
             }
             1 => Self::Finished,
@@ -2199,7 +2199,7 @@ impl Decode for PrepareStepResult {
     }
 }
 
-/// DAP protocol message representing an error while preparing a report share for aggregation.
+/// DAP protocol message representing an error while verifying a report share for aggregation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, TryFromPrimitive)]
 #[repr(u8)]
 pub enum ReportError {
@@ -2209,7 +2209,7 @@ pub enum ReportError {
     ReportDropped = 3,
     HpkeUnknownConfigId = 4,
     HpkeDecryptError = 5,
-    VdafPrepError = 6,
+    VdafVerifyError = 6,
     TaskExpired = 7,
     InvalidMessage = 8,
     ReportTooEarly = 9,
@@ -2235,32 +2235,32 @@ impl Decode for ReportError {
     }
 }
 
-/// DAP protocol message representing a request to continue preparation of a report share for
+/// DAP protocol message representing a request to continue verification of a report share for
 /// aggregation.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PrepareContinue {
+pub struct VerifyContinue {
     report_id: ReportId,
     message: PingPongMessage,
 }
 
-impl PrepareContinue {
-    /// Constructs a new prepare continue from its components.
+impl VerifyContinue {
+    /// Constructs a new verify continue from its components.
     pub fn new(report_id: ReportId, message: PingPongMessage) -> Self {
         Self { report_id, message }
     }
 
-    /// Gets the report ID associated with this prepare continue.
+    /// Gets the report ID associated with this verify continue.
     pub fn report_id(&self) -> &ReportId {
         &self.report_id
     }
 
-    /// Gets the message associated with this prepare continue.
+    /// Gets the message associated with this verify continue.
     pub fn message(&self) -> &PingPongMessage {
         &self.message
     }
 }
 
-impl Encode for PrepareContinue {
+impl Encode for VerifyContinue {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         self.report_id.encode(bytes)?;
         let encoded_message = self.message.get_encoded()?;
@@ -2272,7 +2272,7 @@ impl Encode for PrepareContinue {
     }
 }
 
-impl Decode for PrepareContinue {
+impl Decode for VerifyContinue {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let report_id = ReportId::decode(bytes)?;
         let message_bytes = decode_u32_items(&(), bytes)?;
@@ -2351,7 +2351,7 @@ pub struct AggregationJobInitializeReq<B: BatchMode> {
     #[educe(Debug(ignore))]
     aggregation_parameter: Vec<u8>,
     partial_batch_selector: PartialBatchSelector<B>,
-    prepare_inits: Vec<PrepareInit>,
+    verify_inits: Vec<VerifyInit>,
 }
 
 impl<B: BatchMode> AggregationJobInitializeReq<B> {
@@ -2359,12 +2359,12 @@ impl<B: BatchMode> AggregationJobInitializeReq<B> {
     pub fn new(
         aggregation_parameter: Vec<u8>,
         partial_batch_selector: PartialBatchSelector<B>,
-        prepare_inits: Vec<PrepareInit>,
+        verify_inits: Vec<VerifyInit>,
     ) -> Self {
         Self {
             aggregation_parameter,
             partial_batch_selector,
-            prepare_inits,
+            verify_inits,
         }
     }
 
@@ -2378,10 +2378,10 @@ impl<B: BatchMode> AggregationJobInitializeReq<B> {
         &self.partial_batch_selector
     }
 
-    /// Gets the preparation initialization messages associated with this aggregate initialization
+    /// Gets the verification initialization messages associated with this aggregate initialization
     /// request.
-    pub fn prepare_inits(&self) -> &[PrepareInit] {
-        &self.prepare_inits
+    pub fn verify_inits(&self) -> &[VerifyInit] {
+        &self.verify_inits
     }
 }
 
@@ -2393,15 +2393,15 @@ impl<B: BatchMode> Encode for AggregationJobInitializeReq<B> {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         encode_u32_items(bytes, &(), &self.aggregation_parameter)?;
         self.partial_batch_selector.encode(bytes)?;
-        encode_u32_items(bytes, &(), &self.prepare_inits)
+        encode_u32_items(bytes, &(), &self.verify_inits)
     }
 
     fn encoded_len(&self) -> Option<usize> {
         let mut length = 4 + self.aggregation_parameter.len();
         length += self.partial_batch_selector.encoded_len()?;
         length += 4;
-        for prepare_init in &self.prepare_inits {
-            length += prepare_init.encoded_len()?;
+        for verify_init in &self.verify_inits {
+            length += verify_init.encoded_len()?;
         }
         Some(length)
     }
@@ -2411,12 +2411,12 @@ impl<B: BatchMode> Decode for AggregationJobInitializeReq<B> {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let aggregation_parameter = decode_u32_items(&(), bytes)?;
         let partial_batch_selector = PartialBatchSelector::decode(bytes)?;
-        let prepare_inits = decode_u32_items(&(), bytes)?;
+        let verify_inits = decode_u32_items(&(), bytes)?;
 
         Ok(Self {
             aggregation_parameter,
             partial_batch_selector,
-            prepare_inits,
+            verify_inits,
         })
     }
 }
@@ -2482,15 +2482,15 @@ impl TryFrom<i32> for AggregationJobStep {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AggregationJobContinueReq {
     step: AggregationJobStep,
-    prepare_continues: Vec<PrepareContinue>,
+    verify_continues: Vec<VerifyContinue>,
 }
 
 impl AggregationJobContinueReq {
     /// Constructs a new aggregate continuation response from its components.
-    pub fn new(step: AggregationJobStep, prepare_continues: Vec<PrepareContinue>) -> Self {
+    pub fn new(step: AggregationJobStep, verify_continues: Vec<VerifyContinue>) -> Self {
         Self {
             step,
-            prepare_continues,
+            verify_continues,
         }
     }
 
@@ -2499,10 +2499,10 @@ impl AggregationJobContinueReq {
         self.step
     }
 
-    /// Gets the preparation continuation messages associated with this aggregate continuation
+    /// Gets the verification continuation messages associated with this aggregate continuation
     /// request.
-    pub fn prepare_continues(&self) -> &[PrepareContinue] {
-        &self.prepare_continues
+    pub fn verify_continues(&self) -> &[VerifyContinue] {
+        &self.verify_continues
     }
 }
 
@@ -2513,14 +2513,14 @@ impl MediaType for AggregationJobContinueReq {
 impl Encode for AggregationJobContinueReq {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         self.step.encode(bytes)?;
-        encode_u32_items(bytes, &(), &self.prepare_continues)
+        encode_u32_items(bytes, &(), &self.verify_continues)
     }
 
     fn encoded_len(&self) -> Option<usize> {
         let mut length = self.step.encoded_len()?;
         length += 4;
-        for prepare_continue in self.prepare_continues.iter() {
-            length += prepare_continue.encoded_len()?;
+        for verify_continue in self.verify_continues.iter() {
+            length += verify_continue.encoded_len()?;
         }
         Some(length)
     }
@@ -2529,8 +2529,8 @@ impl Encode for AggregationJobContinueReq {
 impl Decode for AggregationJobContinueReq {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let step = AggregationJobStep::decode(bytes)?;
-        let prepare_continues = decode_u32_items(&(), bytes)?;
-        Ok(Self::new(step, prepare_continues))
+        let verify_continues = decode_u32_items(&(), bytes)?;
+        Ok(Self::new(step, verify_continues))
     }
 }
 
@@ -2538,7 +2538,7 @@ impl Decode for AggregationJobContinueReq {
 /// continuation request.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AggregationJobResp {
-    pub prepare_resps: Vec<PrepareResp>,
+    pub verify_resps: Vec<VerifyResp>,
 }
 
 impl MediaType for AggregationJobResp {
@@ -2548,13 +2548,13 @@ impl MediaType for AggregationJobResp {
 
 impl Encode for AggregationJobResp {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
-        encode_u32_items(bytes, &(), &self.prepare_resps)
+        encode_u32_items(bytes, &(), &self.verify_resps)
     }
 
     fn encoded_len(&self) -> Option<usize> {
         let mut len = 4;
-        for prepare_resp in &self.prepare_resps {
-            len += prepare_resp.encoded_len()?;
+        for verify_resp in &self.verify_resps {
+            len += verify_resp.encoded_len()?;
         }
         Some(len)
     }
@@ -2563,7 +2563,7 @@ impl Encode for AggregationJobResp {
 impl Decode for AggregationJobResp {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         Ok(Self {
-            prepare_resps: decode_u32_items(&(), bytes)?,
+            verify_resps: decode_u32_items(&(), bytes)?,
         })
     }
 }

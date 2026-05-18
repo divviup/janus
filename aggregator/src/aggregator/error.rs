@@ -406,23 +406,23 @@ pub(crate) fn handle_ping_pong_error(
     let (error_desc, value) = match ping_pong_error {
         PingPongError::VdafVerifyInit(_) => (
             "Couldn't helper_initialize report share".to_string(),
-            "prepare_init_failure".to_string(),
+            "verify_init_failure".to_string(),
         ),
         PingPongError::VdafVerifierSharesToMessage(_) => (
-            "Couldn't compute prepare message".to_string(),
-            "prepare_message_failure".to_string(),
+            "Couldn't compute verify message".to_string(),
+            "verify_message_failure".to_string(),
         ),
         PingPongError::VdafVerifyNext(_) => (
-            "Prepare next failed".to_string(),
-            "prepare_next_failure".to_string(),
+            "Verify next failed".to_string(),
+            "verify_next_failure".to_string(),
         ),
         PingPongError::CodecVerifierShare(_) => (
-            format!("Couldn't decode {peer_role} prepare share"),
-            format!("{peer_role}_prep_share_decode_failure"),
+            format!("Couldn't decode {peer_role} verify share"),
+            format!("{peer_role}_verify_share_decode_failure"),
         ),
         PingPongError::CodecVerifierMessage(_) => (
-            format!("Couldn't decode {peer_role} prepare message"),
-            format!("{peer_role}_prep_message_decode_failure"),
+            format!("Couldn't decode {peer_role} verify message"),
+            format!("{peer_role}_verify_message_decode_failure"),
         ),
         ref error @ PingPongError::PeerMessageMismatch { .. } => (
             format!("{error}"),
@@ -442,6 +442,6 @@ pub(crate) fn handle_ping_pong_error(
     aggregate_step_failure_counter.add(1, &[KeyValue::new("type", value)]);
 
     // Per DAP, any occurrence of state Rejected() from a ping-pong routime is translated to
-    // VdafPrepError
-    ReportError::VdafPrepError
+    // VdafVerifyError
+    ReportError::VdafVerifyError
 }

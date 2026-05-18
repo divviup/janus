@@ -25,8 +25,8 @@ use janus_core::{
 use janus_messages::{
     AggregateShareAad, AggregationJobId, AggregationJobStep, BatchId, BatchSelector,
     CollectionJobId, Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, Interval,
-    PrepareContinue, PrepareInit, PrepareResp, PrepareStepResult, Query, ReportError, ReportId,
-    ReportIdChecksum, ReportMetadata, ReportShare, Role, TaskId, Time, TimePrecision,
+    Query, ReportError, ReportId, ReportIdChecksum, ReportMetadata, ReportShare, Role, TaskId,
+    Time, TimePrecision, VerifyContinue, VerifyInit, VerifyResp, VerifyStepResult,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
 };
 use postgres_types::Timestamp;
@@ -2668,7 +2668,7 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
         (
             Role::Leader,
             ReportAggregationState::LeaderContinue {
-                continuation: vdaf_transcript.leader_prepare_transitions[1]
+                continuation: vdaf_transcript.leader_verify_transitions[1]
                     .continuation
                     .clone()
                     .unwrap(),
@@ -2677,13 +2677,13 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
         (
             Role::Leader,
             ReportAggregationState::LeaderPollInit {
-                prepare_state: *vdaf_transcript.leader_prepare_transitions[0].prepare_state(),
+                verify_state: *vdaf_transcript.leader_verify_transitions[0].verify_state(),
             },
         ),
         (
             Role::Leader,
             ReportAggregationState::LeaderPollContinue {
-                continuation: vdaf_transcript.leader_prepare_transitions[1]
+                continuation: vdaf_transcript.leader_verify_transitions[1]
                     .continuation
                     .clone()
                     .unwrap(),
@@ -2692,7 +2692,7 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
         (
             Role::Helper,
             ReportAggregationState::HelperInitProcessing {
-                prepare_init: PrepareInit::new(
+                verify_init: VerifyInit::new(
                     ReportShare::new(
                         ReportMetadata::new(
                             report_id,
@@ -2706,7 +2706,7 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
                             Vec::from("payload"),
                         ),
                     ),
-                    vdaf_transcript.leader_prepare_transitions[0]
+                    vdaf_transcript.leader_verify_transitions[0]
                         .message()
                         .unwrap()
                         .clone(),
@@ -2717,16 +2717,16 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
         (
             Role::Helper,
             ReportAggregationState::HelperContinue {
-                prepare_state: *vdaf_transcript.helper_prepare_transitions[0].prepare_state(),
+                verify_state: *vdaf_transcript.helper_verify_transitions[0].verify_state(),
             },
         ),
         (
             Role::Helper,
             ReportAggregationState::HelperContinueProcessing {
-                prepare_state: *vdaf_transcript.helper_prepare_transitions[0].prepare_state(),
-                prepare_continue: PrepareContinue::new(
+                verify_state: *vdaf_transcript.helper_verify_transitions[0].verify_state(),
+                verify_continue: VerifyContinue::new(
                     report_id,
-                    vdaf_transcript.leader_prepare_transitions[1]
+                    vdaf_transcript.leader_verify_transitions[1]
                         .message()
                         .unwrap()
                         .clone(),
@@ -2738,13 +2738,13 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
         (
             Role::Leader,
             ReportAggregationState::Failed {
-                report_error: ReportError::VdafPrepError,
+                report_error: ReportError::VdafVerifyError,
             },
         ),
         (
             Role::Helper,
             ReportAggregationState::Failed {
-                report_error: ReportError::VdafPrepError,
+                report_error: ReportError::VdafVerifyError,
             },
         ),
     ]
@@ -2777,9 +2777,9 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
             report_id,
             START_TIME,
             ord.try_into().unwrap(),
-            Some(PrepareResp::new(
+            Some(VerifyResp::new(
                 report_id,
-                PrepareStepResult::Continue {
+                VerifyStepResult::Continue {
                     message: PingPongMessage::Continue {
                         verifier_message: format!("verifier_message_{ord}").into(),
                         verifier_share: format!("verifier_share_{ord}").into(),
@@ -2867,9 +2867,9 @@ WHERE client_report_id = $1",
             *want_report_aggregation.report_id(),
             *want_report_aggregation.time(),
             want_report_aggregation.ord(),
-            Some(PrepareResp::new(
+            Some(VerifyResp::new(
                 report_id,
-                PrepareStepResult::Continue {
+                VerifyStepResult::Continue {
                     message: PingPongMessage::Continue {
                         verifier_message: format!("updated_verifier_message_{ord}").into(),
                         verifier_share: format!("updated_verifier_share_{ord}").into(),
@@ -3018,7 +3018,7 @@ async fn report_aggregation_not_found(ephemeral_datastore: EphemeralDatastore) {
                     0,
                     None,
                     ReportAggregationState::Failed {
-                        report_error: ReportError::VdafPrepError,
+                        report_error: ReportError::VdafVerifyError,
                     },
                 ))
                 .await
@@ -3095,12 +3095,11 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
                         ),
                     },
                     ReportAggregationState::HelperContinue {
-                        prepare_state: *vdaf_transcript.helper_prepare_transitions[0]
-                            .prepare_state(),
+                        verify_state: *vdaf_transcript.helper_verify_transitions[0].verify_state(),
                     },
                     ReportAggregationState::Finished,
                     ReportAggregationState::Failed {
-                        report_error: ReportError::VdafPrepError,
+                        report_error: ReportError::VdafVerifyError,
                     },
                 ]
                 .iter()
@@ -3117,7 +3116,7 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
                         report_id,
                         START_TIME,
                         ord.try_into().unwrap(),
-                        Some(PrepareResp::new(report_id, PrepareStepResult::Finished)),
+                        Some(VerifyResp::new(report_id, VerifyStepResult::Finished)),
                         state.clone(),
                     );
                     tx.put_report_aggregation(&report_aggregation)
@@ -6515,7 +6514,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     None,
                     // Counted among max_size.
                     ReportAggregationState::LeaderContinue {
-                        continuation: transcript.helper_prepare_transitions[0]
+                        continuation: transcript.helper_verify_transitions[0]
                             .continuation
                             .clone()
                             .unwrap(),
@@ -6529,7 +6528,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     2,
                     None,
                     ReportAggregationState::Failed {
-                        report_error: ReportError::VdafPrepError,
+                        report_error: ReportError::VdafVerifyError,
                     }, // Not counted among min_size or max_size.
                 );
 
@@ -6568,7 +6567,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     2,
                     None,
                     ReportAggregationState::Failed {
-                        report_error: ReportError::VdafPrepError,
+                        report_error: ReportError::VdafVerifyError,
                     }, // Not counted among min_size or max_size.
                 );
 

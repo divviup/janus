@@ -4,7 +4,7 @@ use janus_aggregator_core::task::{AggregationMode, BatchMode, test_util::TaskBui
 use janus_core::{report_id::ReportIdChecksumExt, vdaf::VdafInstance};
 use janus_messages::{
     AggregateShareId, AggregateShareReq, AggregationJobInitializeReq, AggregationJobResp,
-    BatchSelector, PartialBatchSelector, PrepareStepResult, ReportError, ReportIdChecksum,
+    BatchSelector, PartialBatchSelector, ReportError, ReportIdChecksum, VerifyStepResult,
     batch_mode::LeaderSelected,
 };
 use prio::{
@@ -14,7 +14,7 @@ use prio::{
 use rand::random;
 
 use crate::aggregator::{
-    aggregation_job_init::test_util::{PrepareInitGenerator, put_aggregation_job},
+    aggregation_job_init::test_util::{VerifyInitGenerator, put_aggregation_job},
     http_handlers::{
         test_util::{HttpHandlerTest, take_response_body},
         tests::aggregate_share::put_aggregate_share_request,
@@ -49,16 +49,16 @@ async fn helper_aggregation_report_share_replay() {
     let helper_task = task.helper_view().unwrap();
     datastore.put_aggregator_task(&helper_task).await.unwrap();
 
-    let prep_init_generator = PrepareInitGenerator::new(
+    let verify_init_generator = VerifyInitGenerator::new(
         clock.clone(),
         helper_task.clone(),
         hpke_keypair.config().clone(),
         vdaf.clone(),
         agg_param,
     );
-    let (replayed_report, _replayed_report_transcript) = prep_init_generator.next(&7);
-    let (other_report_1, _other_report_1_transcript) = prep_init_generator.next(&11);
-    let (other_report_2, _other_report_2_transcript) = prep_init_generator.next(&23);
+    let (replayed_report, _replayed_report_transcript) = verify_init_generator.next(&7);
+    let (other_report_1, _other_report_1_transcript) = verify_init_generator.next(&11);
+    let (other_report_2, _other_report_2_transcript) = verify_init_generator.next(&23);
 
     let batch_id_1 = random();
     let batch_id_2 = random();
@@ -93,23 +93,23 @@ async fn helper_aggregation_report_share_replay() {
         checksum_2,
     );
 
-    // Make aggregation job initialization requests, and check the prepare step results.
+    // Make aggregation job initialization requests, and check the verify step results.
     let mut response =
         put_aggregation_job(&task, &aggregation_job_id_1, &agg_init_req_1, &router).await;
     assert_eq!(response.status(), StatusCode::CREATED);
     let agg_init_resp_1 =
         AggregationJobResp::get_decoded(take_response_body(&mut response).await.as_ref()).unwrap();
-    let prepare_resps_1 = assert_matches!(
+    let verify_resps_1 = assert_matches!(
         agg_init_resp_1,
-        AggregationJobResp { prepare_resps } => prepare_resps
+        AggregationJobResp { verify_resps } => verify_resps
     );
     assert_matches!(
-        prepare_resps_1[0].result(),
-        PrepareStepResult::Continue { .. }
+        verify_resps_1[0].result(),
+        VerifyStepResult::Continue { .. }
     );
     assert_matches!(
-        prepare_resps_1[1].result(),
-        PrepareStepResult::Continue { .. }
+        verify_resps_1[1].result(),
+        VerifyStepResult::Continue { .. }
     );
 
     let mut response =
@@ -117,17 +117,17 @@ async fn helper_aggregation_report_share_replay() {
     assert_eq!(response.status(), StatusCode::CREATED);
     let agg_init_resp_2 =
         AggregationJobResp::get_decoded(take_response_body(&mut response).await.as_ref()).unwrap();
-    let prepare_resps_2 = assert_matches!(
+    let verify_resps_2 = assert_matches!(
         agg_init_resp_2,
-        AggregationJobResp { prepare_resps } => prepare_resps
+        AggregationJobResp { verify_resps } => verify_resps
     );
     assert_matches!(
-        prepare_resps_2[0].result(),
-        PrepareStepResult::Reject(ReportError::ReportReplayed)
+        verify_resps_2[0].result(),
+        VerifyStepResult::Reject(ReportError::ReportReplayed)
     );
     assert_matches!(
-        prepare_resps_2[1].result(),
-        PrepareStepResult::Continue { .. }
+        verify_resps_2[1].result(),
+        VerifyStepResult::Continue { .. }
     );
 
     // Make aggregate share requests. If these succeed, then the helper's report_count and checksum

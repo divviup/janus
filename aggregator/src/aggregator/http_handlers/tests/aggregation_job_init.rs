@@ -25,8 +25,8 @@ use janus_core::{
 use janus_messages::{
     AggregateShareReq, AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, BatchId,
     BatchSelector, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, InputShareAad, Interval,
-    MediaType, PartialBatchSelector, PrepareInit, PrepareStepResult, ReportError, ReportIdChecksum,
-    ReportMetadata, ReportShare, Role, Time,
+    MediaType, PartialBatchSelector, ReportError, ReportIdChecksum, ReportMetadata, ReportShare,
+    Role, Time, VerifyInit, VerifyStepResult,
     batch_mode::{LeaderSelected, TimeInterval},
 };
 use prio::{codec::Encode, vdaf::dummy};
@@ -36,7 +36,7 @@ use tower::ServiceExt;
 
 use crate::aggregator::{
     BatchAggregationsIterator,
-    aggregation_job_init::test_util::{PrepareInitGenerator, put_aggregation_job},
+    aggregation_job_init::test_util::{VerifyInitGenerator, put_aggregation_job},
     http_handlers::{
         test_util::{
             HttpHandlerTest, decode_response_body, take_problem_details, take_response_body,
@@ -229,7 +229,7 @@ async fn aggregate_init_sync() {
     let vdaf = dummy::Vdaf::new(1);
     let verify_key: VerifyKey<0> = task.vdaf_verify_key().unwrap();
     let measurement = 0;
-    let prep_init_generator = PrepareInitGenerator::new(
+    let verify_init_generator = VerifyInitGenerator::new(
         clock.clone(),
         helper_task.clone(),
         hpke_keypair.config().clone(),
@@ -237,13 +237,13 @@ async fn aggregate_init_sync() {
         dummy::AggregationParam(0),
     );
 
-    // prepare_init_0 is a "happy path" report.
-    let (prepare_init_0, transcript_0) = prep_init_generator.next(&measurement);
+    // verify_init_0 is a "happy path" report.
+    let (verify_init_0, transcript_0) = verify_init_generator.next(&measurement);
 
     // report_share_1 fails decryption.
-    let (prepare_init_1, transcript_1) = prep_init_generator.next(&measurement);
+    let (verify_init_1, transcript_1) = verify_init_generator.next(&measurement);
 
-    let encrypted_input_share = prepare_init_1.report_share().encrypted_input_share();
+    let encrypted_input_share = verify_init_1.report_share().encrypted_input_share();
     let mut corrupted_payload = encrypted_input_share.payload().to_vec();
     corrupted_payload[0] ^= 0xFF;
     let corrupted_input_share = HpkeCiphertext::new(
@@ -252,38 +252,38 @@ async fn aggregate_init_sync() {
         corrupted_payload,
     );
 
-    let prepare_init_1 = PrepareInit::new(
+    let verify_init_1 = VerifyInit::new(
         ReportShare::new(
-            prepare_init_1.report_share().metadata().clone(),
+            verify_init_1.report_share().metadata().clone(),
             transcript_1.public_share.get_encoded().unwrap(),
             corrupted_input_share,
         ),
-        prepare_init_1.message().clone(),
+        verify_init_1.message().clone(),
     );
 
-    // prepare_init_2 fails decoding due to an issue with the input share.
-    let (prepare_init_2, transcript_2) = prep_init_generator.next(&measurement);
+    // verify_init_2 fails decoding due to an issue with the input share.
+    let (verify_init_2, transcript_2) = verify_init_generator.next(&measurement);
 
     let mut input_share_bytes = transcript_2.helper_input_share.get_encoded().unwrap();
     input_share_bytes.push(0); // can no longer be decoded.
     let report_share_2 = generate_helper_report_share_for_plaintext(
-        prepare_init_2.report_share().metadata().clone(),
+        verify_init_2.report_share().metadata().clone(),
         hpke_keypair.config(),
         transcript_2.public_share.get_encoded().unwrap(),
         &input_share_bytes,
         &InputShareAad::new(
             *task.id(),
-            prepare_init_2.report_share().metadata().clone(),
+            verify_init_2.report_share().metadata().clone(),
             transcript_2.public_share.get_encoded().unwrap(),
         )
         .get_encoded()
         .unwrap(),
     );
 
-    let prepare_init_2 = PrepareInit::new(report_share_2, prepare_init_2.message().clone());
+    let verify_init_2 = VerifyInit::new(report_share_2, verify_init_2.message().clone());
 
-    // prepare_init_3 has an unknown HPKE config ID.
-    let (prepare_init_3, transcript_3) = prep_init_generator.next(&measurement);
+    // verify_init_3 has an unknown HPKE config ID.
+    let (verify_init_3, transcript_3) = verify_init_generator.next(&measurement);
 
     let unused_hpke_config_id =
         HpkeConfigId::from(u8::from(*hpke_keypair.config().id()).wrapping_add(1));
@@ -293,20 +293,20 @@ async fn aggregate_init_sync() {
 
     let report_share_3 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
-        prepare_init_3.report_share().metadata().clone(),
+        verify_init_3.report_share().metadata().clone(),
         &wrong_hpke_config,
         &transcript_3.public_share,
         Vec::new(),
         &transcript_3.helper_input_share,
     );
 
-    let prepare_init_3 = PrepareInit::new(report_share_3, prepare_init_3.message().clone());
+    let verify_init_3 = VerifyInit::new(report_share_3, verify_init_3.message().clone());
 
-    // prepare_init_4 has already been aggregated in another aggregation job, with the same
+    // verify_init_4 has already been aggregated in another aggregation job, with the same
     // aggregation parameter.
-    let (prepare_init_4, _) = prep_init_generator.next(&measurement);
+    let (verify_init_4, _) = verify_init_generator.next(&measurement);
 
-    // prepare_init_5 falls into a batch that has already been collected.
+    // verify_init_5 falls into a batch that has already been collected.
     let past_clock = MockClock::new(task.time_precision().as_seconds() / 2);
     let report_metadata_5 = ReportMetadata::new(
         random(),
@@ -330,15 +330,15 @@ async fn aggregate_init_sync() {
         &transcript_5.helper_input_share,
     );
 
-    let prepare_init_5 = PrepareInit::new(
+    let verify_init_5 = VerifyInit::new(
         report_share_5,
-        transcript_5.leader_prepare_transitions[0]
+        transcript_5.leader_verify_transitions[0]
             .message()
             .unwrap()
             .clone(),
     );
 
-    // prepare_init_6 fails decoding due to an issue with the public share.
+    // verify_init_6 fails decoding due to an issue with the public share.
     let public_share_6 = Vec::from([0]);
     let report_metadata_6 = ReportMetadata::new(
         random(),
@@ -363,15 +363,15 @@ async fn aggregate_init_sync() {
             .unwrap(),
     );
 
-    let prepare_init_6 = PrepareInit::new(
+    let verify_init_6 = VerifyInit::new(
         report_share_6,
-        transcript_6.leader_prepare_transitions[0]
+        transcript_6.leader_verify_transitions[0]
             .message()
             .unwrap()
             .clone(),
     );
 
-    // prepare_init_7 fails due to having repeated public extensions.
+    // verify_init_7 fails due to having repeated public extensions.
     let report_metadata_7 = ReportMetadata::new(
         random(),
         clock.now().to_time(task.time_precision()),
@@ -397,15 +397,15 @@ async fn aggregate_init_sync() {
         &transcript_7.helper_input_share,
     );
 
-    let prepare_init_7 = PrepareInit::new(
+    let verify_init_7 = VerifyInit::new(
         report_share_7,
-        transcript_7.leader_prepare_transitions[0]
+        transcript_7.leader_verify_transitions[0]
             .message()
             .unwrap()
             .clone(),
     );
 
-    // prepare_init_8 fails due to having repeated private extensions.
+    // verify_init_8 fails due to having repeated private extensions.
     let report_metadata_8 = ReportMetadata::new(
         random(),
         clock.now().to_time(task.time_precision()),
@@ -431,15 +431,15 @@ async fn aggregate_init_sync() {
         &transcript_8.helper_input_share,
     );
 
-    let prepare_init_8 = PrepareInit::new(
+    let verify_init_8 = VerifyInit::new(
         report_share_8,
-        transcript_8.leader_prepare_transitions[0]
+        transcript_8.leader_verify_transitions[0]
             .message()
             .unwrap()
             .clone(),
     );
 
-    // prepare_init_9 fails due to having repeated extensions between the public & private
+    // verify_init_9 fails due to having repeated extensions between the public & private
     // extensions.
     let report_metadata_9 = ReportMetadata::new(
         random(),
@@ -463,15 +463,15 @@ async fn aggregate_init_sync() {
         &transcript_9.helper_input_share,
     );
 
-    let prepare_init_9 = PrepareInit::new(
+    let verify_init_9 = VerifyInit::new(
         report_share_9,
-        transcript_9.leader_prepare_transitions[0]
+        transcript_9.leader_verify_transitions[0]
             .message()
             .unwrap()
             .clone(),
     );
 
-    // prepare_init_10 fails due to having unrecognized extension type in public extensions.
+    // verify_init_10 fails due to having unrecognized extension type in public extensions.
     let report_metadata_10 = ReportMetadata::new(
         random(),
         clock.now().to_time(task.time_precision()),
@@ -494,15 +494,15 @@ async fn aggregate_init_sync() {
         &transcript_10.helper_input_share,
     );
 
-    let prepare_init_10 = PrepareInit::new(
+    let verify_init_10 = VerifyInit::new(
         report_share_10,
-        transcript_10.leader_prepare_transitions[0]
+        transcript_10.leader_verify_transitions[0]
             .message()
             .unwrap()
             .clone(),
     );
 
-    // prepare_init_11 fails due to having unrecognized extension type in private extensions.
+    // verify_init_11 fails due to having unrecognized extension type in private extensions.
     let report_metadata_11 = ReportMetadata::new(
         random(),
         clock.now().to_time(task.time_precision()),
@@ -525,9 +525,9 @@ async fn aggregate_init_sync() {
         &transcript_11.helper_input_share,
     );
 
-    let prepare_init_11 = PrepareInit::new(
+    let verify_init_11 = VerifyInit::new(
         report_share_11,
-        transcript_11.leader_prepare_transitions[0]
+        transcript_11.leader_verify_transitions[0]
             .message()
             .unwrap()
             .clone(),
@@ -538,7 +538,7 @@ async fn aggregate_init_sync() {
     datastore
         .run_unnamed_tx(|tx| {
             let helper_task = helper_task.clone();
-            let report_share_4 = prepare_init_4.report_share().clone();
+            let report_share_4 = verify_init_4.report_share().clone();
 
             Box::pin(async move {
                 tx.put_aggregator_task(&helper_task).await.unwrap();
@@ -585,18 +585,18 @@ async fn aggregate_init_sync() {
         aggregation_param.get_encoded().unwrap(),
         PartialBatchSelector::new_time_interval(),
         Vec::from([
-            prepare_init_0.clone(),
-            prepare_init_1.clone(),
-            prepare_init_2.clone(),
-            prepare_init_3.clone(),
-            prepare_init_4.clone(),
-            prepare_init_5.clone(),
-            prepare_init_6.clone(),
-            prepare_init_7.clone(),
-            prepare_init_8.clone(),
-            prepare_init_9.clone(),
-            prepare_init_10.clone(),
-            prepare_init_11.clone(),
+            verify_init_0.clone(),
+            verify_init_1.clone(),
+            verify_init_2.clone(),
+            verify_init_3.clone(),
+            verify_init_4.clone(),
+            verify_init_5.clone(),
+            verify_init_6.clone(),
+            verify_init_7.clone(),
+            verify_init_8.clone(),
+            verify_init_9.clone(),
+            verify_init_10.clone(),
+            verify_init_11.clone(),
         ]),
     );
 
@@ -610,131 +610,131 @@ async fn aggregate_init_sync() {
             AggregationJobResp::MEDIA_TYPE
         );
         let aggregate_resp: AggregationJobResp = decode_response_body(&mut response).await;
-        let prepare_resps = assert_matches!(
+        let verify_resps = assert_matches!(
             aggregate_resp,
-            AggregationJobResp { prepare_resps } => prepare_resps
+            AggregationJobResp { verify_resps } => verify_resps
         );
 
         // Validate response.
-        assert_eq!(prepare_resps.len(), 12);
+        assert_eq!(verify_resps.len(), 12);
 
-        let prepare_step_0 = prepare_resps.first().unwrap();
+        let verify_step_0 = verify_resps.first().unwrap();
         assert_eq!(
-            prepare_step_0.report_id(),
-            prepare_init_0.report_share().metadata().id()
+            verify_step_0.report_id(),
+            verify_init_0.report_share().metadata().id()
         );
-        assert_matches!(prepare_step_0.result(), PrepareStepResult::Continue { message } => {
-            assert_eq!(message, transcript_0.helper_prepare_transitions[0].message().unwrap());
+        assert_matches!(verify_step_0.result(), VerifyStepResult::Continue { message } => {
+            assert_eq!(message, transcript_0.helper_verify_transitions[0].message().unwrap());
         });
 
-        let prepare_step_1 = prepare_resps.get(1).unwrap();
+        let verify_step_1 = verify_resps.get(1).unwrap();
         assert_eq!(
-            prepare_step_1.report_id(),
-            prepare_init_1.report_share().metadata().id()
+            verify_step_1.report_id(),
+            verify_init_1.report_share().metadata().id()
         );
         assert_matches!(
-            prepare_step_1.result(),
-            &PrepareStepResult::Reject(ReportError::HpkeDecryptError)
+            verify_step_1.result(),
+            &VerifyStepResult::Reject(ReportError::HpkeDecryptError)
         );
 
-        let prepare_step_2 = prepare_resps.get(2).unwrap();
+        let verify_step_2 = verify_resps.get(2).unwrap();
         assert_eq!(
-            prepare_step_2.report_id(),
-            prepare_init_2.report_share().metadata().id()
+            verify_step_2.report_id(),
+            verify_init_2.report_share().metadata().id()
         );
         assert_matches!(
-            prepare_step_2.result(),
-            &PrepareStepResult::Reject(ReportError::InvalidMessage)
+            verify_step_2.result(),
+            &VerifyStepResult::Reject(ReportError::InvalidMessage)
         );
 
-        let prepare_step_3 = prepare_resps.get(3).unwrap();
+        let verify_step_3 = verify_resps.get(3).unwrap();
         assert_eq!(
-            prepare_step_3.report_id(),
-            prepare_init_3.report_share().metadata().id()
+            verify_step_3.report_id(),
+            verify_init_3.report_share().metadata().id()
         );
         assert_matches!(
-            prepare_step_3.result(),
-            &PrepareStepResult::Reject(ReportError::HpkeUnknownConfigId)
+            verify_step_3.result(),
+            &VerifyStepResult::Reject(ReportError::HpkeUnknownConfigId)
         );
 
-        let prepare_step_4 = prepare_resps.get(4).unwrap();
+        let verify_step_4 = verify_resps.get(4).unwrap();
         assert_eq!(
-            prepare_step_4.report_id(),
-            prepare_init_4.report_share().metadata().id()
+            verify_step_4.report_id(),
+            verify_init_4.report_share().metadata().id()
         );
         assert_eq!(
-            prepare_step_4.result(),
-            &PrepareStepResult::Reject(ReportError::ReportReplayed)
-        );
-
-        let prepare_step_5 = prepare_resps.get(5).unwrap();
-        assert_eq!(
-            prepare_step_5.report_id(),
-            prepare_init_5.report_share().metadata().id()
-        );
-        assert_eq!(
-            prepare_step_5.result(),
-            &PrepareStepResult::Reject(ReportError::BatchCollected)
+            verify_step_4.result(),
+            &VerifyStepResult::Reject(ReportError::ReportReplayed)
         );
 
-        let prepare_step_6 = prepare_resps.get(6).unwrap();
+        let verify_step_5 = verify_resps.get(5).unwrap();
         assert_eq!(
-            prepare_step_6.report_id(),
-            prepare_init_6.report_share().metadata().id()
+            verify_step_5.report_id(),
+            verify_init_5.report_share().metadata().id()
         );
         assert_eq!(
-            prepare_step_6.result(),
-            &PrepareStepResult::Reject(ReportError::InvalidMessage),
-        );
-
-        let prepare_step_7 = prepare_resps.get(7).unwrap();
-        assert_eq!(
-            prepare_step_7.report_id(),
-            prepare_init_7.report_share().metadata().id()
-        );
-        assert_eq!(
-            prepare_step_7.result(),
-            &PrepareStepResult::Reject(ReportError::InvalidMessage),
+            verify_step_5.result(),
+            &VerifyStepResult::Reject(ReportError::BatchCollected)
         );
 
-        let prepare_step_8 = prepare_resps.get(8).unwrap();
+        let verify_step_6 = verify_resps.get(6).unwrap();
         assert_eq!(
-            prepare_step_8.report_id(),
-            prepare_init_8.report_share().metadata().id()
+            verify_step_6.report_id(),
+            verify_init_6.report_share().metadata().id()
         );
         assert_eq!(
-            prepare_step_8.result(),
-            &PrepareStepResult::Reject(ReportError::InvalidMessage),
-        );
-
-        let prepare_step_9 = prepare_resps.get(9).unwrap();
-        assert_eq!(
-            prepare_step_9.report_id(),
-            prepare_init_9.report_share().metadata().id()
-        );
-        assert_eq!(
-            prepare_step_9.result(),
-            &PrepareStepResult::Reject(ReportError::InvalidMessage),
+            verify_step_6.result(),
+            &VerifyStepResult::Reject(ReportError::InvalidMessage),
         );
 
-        let prepare_step_10 = prepare_resps.get(10).unwrap();
+        let verify_step_7 = verify_resps.get(7).unwrap();
         assert_eq!(
-            prepare_step_10.report_id(),
-            prepare_init_10.report_share().metadata().id()
+            verify_step_7.report_id(),
+            verify_init_7.report_share().metadata().id()
         );
         assert_eq!(
-            prepare_step_10.result(),
-            &PrepareStepResult::Reject(ReportError::InvalidMessage),
+            verify_step_7.result(),
+            &VerifyStepResult::Reject(ReportError::InvalidMessage),
         );
 
-        let prepare_step_11 = prepare_resps.get(11).unwrap();
+        let verify_step_8 = verify_resps.get(8).unwrap();
         assert_eq!(
-            prepare_step_11.report_id(),
-            prepare_init_11.report_share().metadata().id()
+            verify_step_8.report_id(),
+            verify_init_8.report_share().metadata().id()
         );
         assert_eq!(
-            prepare_step_11.result(),
-            &PrepareStepResult::Reject(ReportError::InvalidMessage),
+            verify_step_8.result(),
+            &VerifyStepResult::Reject(ReportError::InvalidMessage),
+        );
+
+        let verify_step_9 = verify_resps.get(9).unwrap();
+        assert_eq!(
+            verify_step_9.report_id(),
+            verify_init_9.report_share().metadata().id()
+        );
+        assert_eq!(
+            verify_step_9.result(),
+            &VerifyStepResult::Reject(ReportError::InvalidMessage),
+        );
+
+        let verify_step_10 = verify_resps.get(10).unwrap();
+        assert_eq!(
+            verify_step_10.report_id(),
+            verify_init_10.report_share().metadata().id()
+        );
+        assert_eq!(
+            verify_step_10.result(),
+            &VerifyStepResult::Reject(ReportError::InvalidMessage),
+        );
+
+        let verify_step_11 = verify_resps.get(11).unwrap();
+        assert_eq!(
+            verify_step_11.report_id(),
+            verify_init_11.report_share().metadata().id()
+        );
+        assert_eq!(
+            verify_step_11.result(),
+            &VerifyStepResult::Reject(ReportError::InvalidMessage),
         );
 
         // Check aggregation job in datastore.
@@ -807,7 +807,7 @@ async fn aggregate_init_async() {
 
     let vdaf = dummy::Vdaf::new(1);
     let measurement = 0;
-    let prep_init_generator = PrepareInitGenerator::new(
+    let verify_init_generator = VerifyInitGenerator::new(
         clock.clone(),
         helper_task.clone(),
         hpke_keypair.config().clone(),
@@ -815,17 +815,17 @@ async fn aggregate_init_async() {
         dummy::AggregationParam(0),
     );
 
-    // prepare_init_0 is a "happy path" report.
-    let (prepare_init_0, _) = prep_init_generator.next(&measurement);
+    // verify_init_0 is a "happy path" report.
+    let (verify_init_0, _) = verify_init_generator.next(&measurement);
 
-    // prepare_init_1 has already been aggregated in another aggregation job, with the same
+    // verify_init_1 has already been aggregated in another aggregation job, with the same
     // aggregation parameter.
-    let (prepare_init_1, _) = prep_init_generator.next(&measurement);
+    let (verify_init_1, _) = verify_init_generator.next(&measurement);
 
     datastore
         .run_unnamed_tx(|tx| {
             let helper_task = helper_task.clone();
-            let report_share_1 = prepare_init_1.report_share().clone();
+            let report_share_1 = verify_init_1.report_share().clone();
 
             Box::pin(async move {
                 tx.put_aggregator_task(&helper_task).await.unwrap();
@@ -850,7 +850,7 @@ async fn aggregate_init_async() {
     let request = AggregationJobInitializeReq::new(
         aggregation_param.get_encoded().unwrap(),
         PartialBatchSelector::new_time_interval(),
-        Vec::from([prepare_init_0.clone(), prepare_init_1.clone()]),
+        Vec::from([verify_init_0.clone(), verify_init_1.clone()]),
     );
 
     // Send request, parse response. Do this twice to prove that the request is idempotent.
@@ -909,19 +909,19 @@ async fn aggregate_init_async() {
 
         assert_eq!(
             report_aggregations[0].report_id(),
-            prepare_init_0.report_share().metadata().id()
+            verify_init_0.report_share().metadata().id()
         );
         assert_eq!(
             report_aggregations[0].state(),
             &ReportAggregationState::HelperInitProcessing {
-                prepare_init: prepare_init_0.clone(),
+                verify_init: verify_init_0.clone(),
                 require_taskbind_extension: false
             }
         );
 
         assert_eq!(
             report_aggregations[1].report_id(),
-            prepare_init_1.report_share().metadata().id()
+            verify_init_1.report_share().metadata().id()
         );
         assert_eq!(
             report_aggregations[1].state(),
@@ -967,7 +967,7 @@ async fn aggregate_init_batch_already_collected() {
     datastore.put_aggregator_task(&helper_task).await.unwrap();
 
     let vdaf = dummy::Vdaf::new(1);
-    let prep_init_generator = PrepareInitGenerator::new(
+    let verify_init_generator = VerifyInitGenerator::new(
         clock.clone(),
         helper_task.clone(),
         hpke_keypair.config().clone(),
@@ -975,14 +975,14 @@ async fn aggregate_init_batch_already_collected() {
         dummy::AggregationParam(0),
     );
 
-    let (prepare_init, _) = prep_init_generator.next(&0);
+    let (verify_init, _) = verify_init_generator.next(&0);
 
     let aggregation_param = dummy::AggregationParam(0);
     let batch_id = random();
     let request = AggregationJobInitializeReq::new(
         aggregation_param.get_encoded().unwrap(),
         PartialBatchSelector::new_leader_selected(batch_id),
-        Vec::from([prepare_init.clone()]),
+        Vec::from([verify_init.clone()]),
     );
 
     // Pretend that we're another concurrently running process: insert some aggregations to the
@@ -990,7 +990,7 @@ async fn aggregate_init_batch_already_collected() {
     datastore
         .run_unnamed_tx(|tx| {
             let task = task.clone();
-            let timestamp = *prepare_init.report_share().metadata().time();
+            let timestamp = *verify_init.report_share().metadata().time();
             Box::pin(async move {
                 let interval = Interval::minimal(timestamp).unwrap();
 
@@ -1039,19 +1039,19 @@ async fn aggregate_init_batch_already_collected() {
 
     assert_eq!(response.status(), StatusCode::CREATED);
     let aggregate_resp: AggregationJobResp = decode_response_body(&mut response).await;
-    let prepare_resps = assert_matches!(
+    let verify_resps = assert_matches!(
         aggregate_resp,
-        AggregationJobResp { prepare_resps } => prepare_resps
+        AggregationJobResp { verify_resps } => verify_resps
     );
 
-    let prepare_step = prepare_resps.first().unwrap();
+    let verify_step = verify_resps.first().unwrap();
     assert_eq!(
-        prepare_step.report_id(),
-        prepare_init.report_share().metadata().id()
+        verify_step.report_id(),
+        verify_init.report_share().metadata().id()
     );
     assert_eq!(
-        prepare_step.result(),
-        &PrepareStepResult::Reject(ReportError::BatchCollected)
+        verify_step.result(),
+        &VerifyStepResult::Reject(ReportError::BatchCollected)
     );
 
     assert_task_aggregation_counter(&datastore, *task.id(), TaskAggregationCounter::default())
@@ -1059,7 +1059,7 @@ async fn aggregate_init_batch_already_collected() {
 }
 
 #[tokio::test]
-async fn aggregate_init_prep_init_failed() {
+async fn aggregate_init_verify_init_failed() {
     let HttpHandlerTest {
         clock,
         ephemeral_datastore: _ephemeral_datastore,
@@ -1072,11 +1072,11 @@ async fn aggregate_init_prep_init_failed() {
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,
-        VdafInstance::FakeFailsPrepInit,
+        VdafInstance::FakeFailsVerifyInit,
     )
     .build();
     let helper_task = task.helper_view().unwrap();
-    let prep_init_generator = PrepareInitGenerator::new(
+    let verify_init_generator = VerifyInitGenerator::new(
         clock.clone(),
         helper_task.clone(),
         hpke_keypair.config().clone(),
@@ -1086,11 +1086,11 @@ async fn aggregate_init_prep_init_failed() {
 
     datastore.put_aggregator_task(&helper_task).await.unwrap();
 
-    let (prepare_init, _) = prep_init_generator.next(&0);
+    let (verify_init, _) = verify_init_generator.next(&0);
     let request = AggregationJobInitializeReq::new(
         dummy::AggregationParam(0).get_encoded().unwrap(),
         PartialBatchSelector::new_time_interval(),
-        Vec::from([prepare_init.clone()]),
+        Vec::from([verify_init.clone()]),
     );
 
     // Send request, and parse response.
@@ -1102,22 +1102,22 @@ async fn aggregate_init_prep_init_failed() {
         AggregationJobResp::MEDIA_TYPE
     );
     let aggregate_resp: AggregationJobResp = decode_response_body(&mut response).await;
-    let prepare_resps = assert_matches!(
+    let verify_resps = assert_matches!(
         aggregate_resp,
-        AggregationJobResp { prepare_resps } => prepare_resps
+        AggregationJobResp { verify_resps } => verify_resps
     );
 
     // Validate response.
-    assert_eq!(prepare_resps.len(), 1);
+    assert_eq!(verify_resps.len(), 1);
 
-    let prepare_step = prepare_resps.first().unwrap();
+    let verify_step = verify_resps.first().unwrap();
     assert_eq!(
-        prepare_step.report_id(),
-        prepare_init.report_share().metadata().id()
+        verify_step.report_id(),
+        verify_init.report_share().metadata().id()
     );
     assert_matches!(
-        prepare_step.result(),
-        &PrepareStepResult::Reject(ReportError::VdafPrepError)
+        verify_step.result(),
+        &VerifyStepResult::Reject(ReportError::VdafVerifyError)
     );
 
     assert_task_aggregation_counter(&datastore, *task.id(), TaskAggregationCounter::default())
@@ -1125,7 +1125,7 @@ async fn aggregate_init_prep_init_failed() {
 }
 
 #[tokio::test]
-async fn aggregate_init_prep_step_failed() {
+async fn aggregate_init_verify_step_failed() {
     let HttpHandlerTest {
         clock,
         ephemeral_datastore: _ephemeral_datastore,
@@ -1138,11 +1138,11 @@ async fn aggregate_init_prep_step_failed() {
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,
-        VdafInstance::FakeFailsPrepStep,
+        VdafInstance::FakeFailsVerifyStep,
     )
     .build();
     let helper_task = task.helper_view().unwrap();
-    let prep_init_generator = PrepareInitGenerator::new(
+    let verify_init_generator = VerifyInitGenerator::new(
         clock.clone(),
         helper_task.clone(),
         hpke_keypair.config().clone(),
@@ -1152,11 +1152,11 @@ async fn aggregate_init_prep_step_failed() {
 
     datastore.put_aggregator_task(&helper_task).await.unwrap();
 
-    let (prepare_init, _) = prep_init_generator.next(&0);
+    let (verify_init, _) = verify_init_generator.next(&0);
     let request = AggregationJobInitializeReq::new(
         dummy::AggregationParam(0).get_encoded().unwrap(),
         PartialBatchSelector::new_time_interval(),
-        Vec::from([prepare_init.clone()]),
+        Vec::from([verify_init.clone()]),
     );
 
     let aggregation_job_id: AggregationJobId = random();
@@ -1167,22 +1167,22 @@ async fn aggregate_init_prep_step_failed() {
         AggregationJobResp::MEDIA_TYPE
     );
     let aggregate_resp: AggregationJobResp = decode_response_body(&mut response).await;
-    let prepare_resps = assert_matches!(
+    let verify_resps = assert_matches!(
         aggregate_resp,
-        AggregationJobResp { prepare_resps } => prepare_resps
+        AggregationJobResp { verify_resps } => verify_resps
     );
 
     // Validate response.
-    assert_eq!(prepare_resps.len(), 1);
+    assert_eq!(verify_resps.len(), 1);
 
-    let prepare_step = prepare_resps.first().unwrap();
+    let verify_step = verify_resps.first().unwrap();
     assert_eq!(
-        prepare_step.report_id(),
-        prepare_init.report_share().metadata().id()
+        verify_step.report_id(),
+        verify_init.report_share().metadata().id()
     );
     assert_matches!(
-        prepare_step.result(),
-        &PrepareStepResult::Reject(ReportError::VdafPrepError)
+        verify_step.result(),
+        &VerifyStepResult::Reject(ReportError::VdafVerifyError)
     );
 
     assert_task_aggregation_counter(&datastore, *task.id(), TaskAggregationCounter::default())
@@ -1208,7 +1208,7 @@ async fn aggregate_init_duplicated_report_id() {
     .build();
 
     let helper_task = task.helper_view().unwrap();
-    let prep_init_generator = PrepareInitGenerator::new(
+    let verify_init_generator = VerifyInitGenerator::new(
         clock.clone(),
         helper_task.clone(),
         hpke_keypair.config().clone(),
@@ -1218,12 +1218,12 @@ async fn aggregate_init_duplicated_report_id() {
 
     datastore.put_aggregator_task(&helper_task).await.unwrap();
 
-    let (prepare_init, _) = prep_init_generator.next(&0);
+    let (verify_init, _) = verify_init_generator.next(&0);
 
     let request = AggregationJobInitializeReq::new(
         dummy::AggregationParam(0).get_encoded().unwrap(),
         PartialBatchSelector::new_time_interval(),
-        Vec::from([prepare_init.clone(), prepare_init]),
+        Vec::from([verify_init.clone(), verify_init]),
     );
     let aggregation_job_id: AggregationJobId = random();
 
@@ -1251,8 +1251,8 @@ async fn aggregate_init_partially_replayed_aggregation_init() {
     // Create 5 reports, 1-5. Send one aggregation job init request containing reports 1 and 2. It
     // should succeed normally. Then send another init request containing reports 1-5. We expect:
     //   - the request overall succeeds (i.e. HTTP 200)
-    //   - the PrepareResps for reports 1 and 2 indicate rejection
-    //   - the PrepareResps for reports 3-5 indicate success
+    //   - the VerifyResps for reports 1 and 2 indicate rejection
+    //   - the VerifyResps for reports 3-5 indicate success
     // We then send an aggregate share request for the batch ID. It should succeed and all five
     // reports should be included.
     let HttpHandlerTest {
@@ -1279,7 +1279,7 @@ async fn aggregate_init_partially_replayed_aggregation_init() {
     let partial_batch_selector = PartialBatchSelector::new_leader_selected(batch_id);
 
     let helper_task = task.helper_view().unwrap();
-    let prep_init_generator = PrepareInitGenerator::new(
+    let verify_init_generator = VerifyInitGenerator::new(
         clock.clone(),
         helper_task.clone(),
         hpke_keypair.config().clone(),
@@ -1289,17 +1289,17 @@ async fn aggregate_init_partially_replayed_aggregation_init() {
 
     datastore.put_aggregator_task(&helper_task).await.unwrap();
 
-    let (prepare_init_1, _) = prep_init_generator.next(&1);
-    let (prepare_init_2, _) = prep_init_generator.next(&2);
-    let (prepare_init_3, _) = prep_init_generator.next(&3);
-    let (prepare_init_4, _) = prep_init_generator.next(&4);
-    let (prepare_init_5, _) = prep_init_generator.next(&5);
+    let (verify_init_1, _) = verify_init_generator.next(&1);
+    let (verify_init_2, _) = verify_init_generator.next(&2);
+    let (verify_init_3, _) = verify_init_generator.next(&3);
+    let (verify_init_4, _) = verify_init_generator.next(&4);
+    let (verify_init_5, _) = verify_init_generator.next(&5);
     let report_ids: Vec<_> = [
-        &prepare_init_1,
-        &prepare_init_2,
-        &prepare_init_3,
-        &prepare_init_4,
-        &prepare_init_5,
+        &verify_init_1,
+        &verify_init_2,
+        &verify_init_3,
+        &verify_init_4,
+        &verify_init_5,
     ]
     .iter()
     .map(|pi| *pi.report_share().metadata().id())
@@ -1308,7 +1308,7 @@ async fn aggregate_init_partially_replayed_aggregation_init() {
     let request = AggregationJobInitializeReq::new(
         agg_param.clone(),
         partial_batch_selector.clone(),
-        Vec::from([prepare_init_1.clone(), prepare_init_2.clone()]),
+        Vec::from([verify_init_1.clone(), verify_init_2.clone()]),
     );
 
     let mut response = put_aggregation_job(&task, &random(), &request, &router).await;
@@ -1319,25 +1319,25 @@ async fn aggregate_init_partially_replayed_aggregation_init() {
     assert_eq!(
         &report_ids[0..2],
         request
-            .prepare_inits()
+            .verify_inits()
             .iter()
             .map(|init| *init.report_share().metadata().id())
             .collect::<Vec<_>>()
             .as_slice(),
     );
-    for resp in &aggregate_resp.prepare_resps {
-        assert_matches!(resp.result(), &PrepareStepResult::Continue { .. });
+    for resp in &aggregate_resp.verify_resps {
+        assert_matches!(resp.result(), &VerifyStepResult::Continue { .. });
     }
 
     let request = AggregationJobInitializeReq::new(
         agg_param.clone(),
         partial_batch_selector,
         Vec::from([
-            prepare_init_1.clone(),
-            prepare_init_2.clone(),
-            prepare_init_3.clone(),
-            prepare_init_4.clone(),
-            prepare_init_5.clone(),
+            verify_init_1.clone(),
+            verify_init_2.clone(),
+            verify_init_3.clone(),
+            verify_init_4.clone(),
+            verify_init_5.clone(),
         ]),
     );
 
@@ -1349,23 +1349,23 @@ async fn aggregate_init_partially_replayed_aggregation_init() {
     assert_eq!(
         report_ids,
         request
-            .prepare_inits()
+            .verify_inits()
             .iter()
             .map(|init| *init.report_share().metadata().id())
             .collect::<Vec<_>>(),
     );
-    for resp in &aggregate_resp.prepare_resps {
+    for resp in &aggregate_resp.verify_resps {
         if report_ids[0..2].contains(resp.report_id()) {
             assert_matches!(
                 resp.result(),
-                &PrepareStepResult::Reject(ReportError::ReportReplayed),
+                &VerifyStepResult::Reject(ReportError::ReportReplayed),
                 "first two reports must be rejected as replays",
             )
         }
         if report_ids[2..5].contains(resp.report_id()) {
             assert_matches!(
                 resp.result(),
-                &PrepareStepResult::Continue { .. },
+                &VerifyStepResult::Continue { .. },
                 "last three reports must be accepted",
             );
         }

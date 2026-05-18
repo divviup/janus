@@ -35,9 +35,8 @@ use janus_messages::{
     AggregateShare as AggregateShareMessage, AggregateShareAad, AggregateShareId,
     AggregateShareReq, AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq,
     AggregationJobResp, AggregationJobStep, BatchSelector, Duration, Extension, ExtensionType,
-    Interval, MediaType, PartialBatchSelector, PrepareContinue, PrepareInit, PrepareResp,
-    PrepareStepResult, ReportError, ReportIdChecksum, ReportShare, Role, TaskId, Time,
-    TimePrecision,
+    Interval, MediaType, PartialBatchSelector, ReportError, ReportIdChecksum, ReportShare, Role,
+    TaskId, Time, TimePrecision, VerifyContinue, VerifyInit, VerifyResp, VerifyStepResult,
     batch_mode::{self, LeaderSelected},
     codec::{Decode, Encode},
     taskprov::{TaskConfig, VdafConfig},
@@ -55,7 +54,7 @@ use super::http_handlers::AggregatorHandlerBuilder;
 use crate::{
     aggregator::{
         Config,
-        aggregation_job_init::test_util::PrepareInitGenerator,
+        aggregation_job_init::test_util::VerifyInitGenerator,
         http_handlers::test_util::{decode_response_body, take_problem_details},
     },
     config::TaskprovConfig,
@@ -235,7 +234,7 @@ where
         ReportShare,
         V::AggregationParam,
     ) {
-        let (report_share, transcript) = PrepareInitGenerator::new(
+        let (report_share, transcript) = VerifyInitGenerator::new(
             self.clock.clone(),
             self.task.helper_view().unwrap(),
             self.hpke_key.config().clone(),
@@ -259,9 +258,9 @@ async fn taskprov_aggregate_init() {
     let request_1 = AggregationJobInitializeReq::new(
         aggregation_param_1.get_encoded().unwrap(),
         PartialBatchSelector::new_leader_selected(batch_id_1),
-        Vec::from([PrepareInit::new(
+        Vec::from([VerifyInit::new(
             report_share_1.clone(),
-            transcript_1.leader_prepare_transitions[0]
+            transcript_1.leader_verify_transitions[0]
                 .message()
                 .unwrap()
                 .clone(),
@@ -274,9 +273,9 @@ async fn taskprov_aggregate_init() {
     let request_2 = AggregationJobInitializeReq::new(
         aggregation_param_2.get_encoded().unwrap(),
         PartialBatchSelector::new_leader_selected(batch_id_2),
-        Vec::from([PrepareInit::new(
+        Vec::from([VerifyInit::new(
             report_share_2.clone(),
-            transcript_2.leader_prepare_transitions[0]
+            transcript_2.leader_verify_transitions[0]
                 .message()
                 .unwrap()
                 .clone(),
@@ -349,21 +348,21 @@ async fn taskprov_aggregate_init() {
             AggregationJobResp::MEDIA_TYPE,
         );
         let aggregate_resp: AggregationJobResp = decode_response_body(&mut response).await;
-        let prepare_resps = assert_matches!(
+        let verify_resps = assert_matches!(
             aggregate_resp,
-            AggregationJobResp { prepare_resps } => prepare_resps
+            AggregationJobResp { verify_resps } => verify_resps
         );
 
-        assert_eq!(prepare_resps.len(), 1, "{name}");
-        let prepare_step = prepare_resps.first().unwrap();
+        assert_eq!(verify_resps.len(), 1, "{name}");
+        let verify_step = verify_resps.first().unwrap();
         assert_eq!(
-            prepare_step.report_id(),
+            verify_step.report_id(),
             report_share.metadata().id(),
             "{name}",
         );
         assert_matches!(
-            prepare_step.result(),
-            &PrepareStepResult::Continue { .. },
+            verify_step.result(),
+            &VerifyStepResult::Continue { .. },
             "{name}",
         );
     }
@@ -420,9 +419,9 @@ async fn taskprov_aggregate_init_missing_extension() {
     let request = AggregationJobInitializeReq::new(
         aggregation_param.get_encoded().unwrap(),
         PartialBatchSelector::new_leader_selected(batch_id),
-        Vec::from([PrepareInit::new(
+        Vec::from([VerifyInit::new(
             report_share.clone(),
-            transcript.leader_prepare_transitions[0]
+            transcript.leader_verify_transitions[0]
                 .message()
                 .unwrap()
                 .clone(),
@@ -463,17 +462,17 @@ async fn taskprov_aggregate_init_missing_extension() {
         AggregationJobResp::MEDIA_TYPE,
     );
     let aggregate_resp: AggregationJobResp = decode_response_body(&mut response).await;
-    let prepare_resps = assert_matches!(
+    let verify_resps = assert_matches!(
         aggregate_resp,
-        AggregationJobResp { prepare_resps } => prepare_resps
+        AggregationJobResp { verify_resps } => verify_resps
     );
 
-    assert_eq!(prepare_resps.len(), 1);
-    let prepare_step = prepare_resps.first().unwrap();
-    assert_eq!(prepare_step.report_id(), report_share.metadata().id(),);
+    assert_eq!(verify_resps.len(), 1);
+    let verify_step = verify_resps.first().unwrap();
+    assert_eq!(verify_step.report_id(), report_share.metadata().id(),);
     assert_eq!(
-        prepare_step.result(),
-        &PrepareStepResult::Reject(ReportError::InvalidMessage),
+        verify_step.result(),
+        &VerifyStepResult::Reject(ReportError::InvalidMessage),
     );
 
     let (aggregation_jobs, got_task) = test
@@ -514,9 +513,9 @@ async fn taskprov_aggregate_init_malformed_extension() {
     let request = AggregationJobInitializeReq::new(
         aggregation_param.get_encoded().unwrap(),
         PartialBatchSelector::new_leader_selected(batch_id),
-        Vec::from([PrepareInit::new(
+        Vec::from([VerifyInit::new(
             report_share.clone(),
-            transcript.leader_prepare_transitions[0]
+            transcript.leader_verify_transitions[0]
                 .message()
                 .unwrap()
                 .clone(),
@@ -557,17 +556,17 @@ async fn taskprov_aggregate_init_malformed_extension() {
         AggregationJobResp::MEDIA_TYPE,
     );
     let aggregate_resp: AggregationJobResp = decode_response_body(&mut response).await;
-    let prepare_resps = assert_matches!(
+    let verify_resps = assert_matches!(
         aggregate_resp,
-        AggregationJobResp { prepare_resps } => prepare_resps
+        AggregationJobResp { verify_resps } => verify_resps
     );
 
-    assert_eq!(prepare_resps.len(), 1);
-    let prepare_step = prepare_resps.first().unwrap();
-    assert_eq!(prepare_step.report_id(), report_share.metadata().id(),);
+    assert_eq!(verify_resps.len(), 1);
+    let verify_step = verify_resps.first().unwrap();
+    assert_eq!(verify_step.report_id(), report_share.metadata().id(),);
     assert_eq!(
-        prepare_step.result(),
-        &PrepareStepResult::Reject(ReportError::InvalidMessage),
+        verify_step.result(),
+        &VerifyStepResult::Reject(ReportError::InvalidMessage),
     );
 
     let (aggregation_jobs, got_task) = test
@@ -609,9 +608,9 @@ async fn taskprov_opt_out_task_ended_regression() {
     let request = AggregationJobInitializeReq::new(
         aggregation_param.get_encoded().unwrap(),
         PartialBatchSelector::new_leader_selected(batch_id),
-        Vec::from([PrepareInit::new(
+        Vec::from([VerifyInit::new(
             report_share.clone(),
-            transcript.leader_prepare_transitions[0]
+            transcript.leader_verify_transitions[0]
                 .message()
                 .unwrap()
                 .clone(),
@@ -661,9 +660,9 @@ async fn taskprov_opt_out_mismatched_task_id() {
     let request = AggregationJobInitializeReq::new(
         ().get_encoded().unwrap(),
         PartialBatchSelector::new_leader_selected(batch_id),
-        Vec::from([PrepareInit::new(
+        Vec::from([VerifyInit::new(
             report_share.clone(),
-            transcript.leader_prepare_transitions[0]
+            transcript.leader_verify_transitions[0]
                 .message()
                 .unwrap()
                 .clone(),
@@ -736,9 +735,9 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
     let request = AggregationJobInitializeReq::new(
         ().get_encoded().unwrap(),
         PartialBatchSelector::new_leader_selected(batch_id),
-        Vec::from([PrepareInit::new(
+        Vec::from([VerifyInit::new(
             report_share.clone(),
-            transcript.leader_prepare_transitions[0]
+            transcript.leader_verify_transitions[0]
                 .message()
                 .unwrap()
                 .clone(),
@@ -809,9 +808,9 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
     let request = AggregationJobInitializeReq::new(
         ().get_encoded().unwrap(),
         PartialBatchSelector::new_leader_selected(batch_id),
-        Vec::from([PrepareInit::new(
+        Vec::from([VerifyInit::new(
             report_share.clone(),
-            transcript.leader_prepare_transitions[0]
+            transcript.leader_verify_transitions[0]
                 .message()
                 .unwrap()
                 .clone(),
@@ -919,7 +918,7 @@ async fn taskprov_aggregate_continue() {
                     0,
                     None,
                     ReportAggregationState::HelperContinue {
-                        prepare_state: *transcript.helper_prepare_transitions[0].prepare_state(),
+                        verify_state: *transcript.helper_verify_transitions[0].verify_state(),
                     },
                 ))
                 .await?;
@@ -943,9 +942,9 @@ async fn taskprov_aggregate_continue() {
 
     let request = AggregationJobContinueReq::new(
         AggregationJobStep::from(1),
-        Vec::from([PrepareContinue::new(
+        Vec::from([VerifyContinue::new(
             *report_share.metadata().id(),
-            transcript.leader_prepare_transitions[1]
+            transcript.leader_verify_transitions[1]
                 .message()
                 .unwrap()
                 .clone(),
@@ -1020,9 +1019,9 @@ async fn taskprov_aggregate_continue() {
     assert_eq!(
         aggregate_resp,
         AggregationJobResp {
-            prepare_resps: Vec::from([PrepareResp::new(
+            verify_resps: Vec::from([VerifyResp::new(
                 *report_share.metadata().id(),
-                PrepareStepResult::Finished
+                VerifyStepResult::Finished
             )])
         }
     );
@@ -1168,9 +1167,9 @@ async fn end_to_end() {
     let aggregation_job_init_request = AggregationJobInitializeReq::new(
         aggregation_param.get_encoded().unwrap(),
         PartialBatchSelector::new_leader_selected(batch_id),
-        Vec::from([PrepareInit::new(
+        Vec::from([VerifyInit::new(
             report_share.clone(),
-            transcript.leader_prepare_transitions[0]
+            transcript.leader_verify_transitions[0]
                 .message()
                 .unwrap()
                 .clone(),
@@ -1212,28 +1211,28 @@ async fn end_to_end() {
         AggregationJobResp::MEDIA_TYPE,
     );
     let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut response).await;
-    let prepare_resps = assert_matches!(
+    let verify_resps = assert_matches!(
         aggregation_job_resp,
-        AggregationJobResp { prepare_resps } => prepare_resps
+        AggregationJobResp { verify_resps } => verify_resps
     );
 
-    assert_eq!(prepare_resps.len(), 1);
-    let prepare_resp = &prepare_resps[0];
-    assert_eq!(prepare_resp.report_id(), report_share.metadata().id());
+    assert_eq!(verify_resps.len(), 1);
+    let verify_resp = &verify_resps[0];
+    assert_eq!(verify_resp.report_id(), report_share.metadata().id());
     let message = assert_matches!(
-        prepare_resp.result(),
-        PrepareStepResult::Continue { message } => message.clone()
+        verify_resp.result(),
+        VerifyStepResult::Continue { message } => message.clone()
     );
     assert_eq!(
         &message,
-        transcript.helper_prepare_transitions[0].message().unwrap()
+        transcript.helper_verify_transitions[0].message().unwrap()
     );
 
     let aggregation_job_continue_request = AggregationJobContinueReq::new(
         AggregationJobStep::from(1),
-        Vec::from([PrepareContinue::new(
+        Vec::from([VerifyContinue::new(
             *report_share.metadata().id(),
-            transcript.leader_prepare_transitions[1]
+            transcript.leader_verify_transitions[1]
                 .message()
                 .unwrap()
                 .clone(),
@@ -1275,15 +1274,15 @@ async fn end_to_end() {
         AggregationJobResp::MEDIA_TYPE,
     );
     let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut response).await;
-    let prepare_resps = assert_matches!(
+    let verify_resps = assert_matches!(
         aggregation_job_resp,
-        AggregationJobResp { prepare_resps } => prepare_resps
+        AggregationJobResp { verify_resps } => verify_resps
     );
 
-    assert_eq!(prepare_resps.len(), 1);
-    let prepare_resp = &prepare_resps[0];
-    assert_eq!(prepare_resp.report_id(), report_share.metadata().id());
-    assert_matches!(prepare_resp.result(), PrepareStepResult::Finished);
+    assert_eq!(verify_resps.len(), 1);
+    let verify_resp = &verify_resps[0];
+    assert_eq!(verify_resp.report_id(), report_share.metadata().id());
+    assert_matches!(verify_resp.result(), VerifyStepResult::Finished);
 
     let checksum = ReportIdChecksum::for_report_id(report_share.metadata().id());
     let aggregate_share_request = AggregateShareReq::new(
@@ -1367,9 +1366,9 @@ async fn end_to_end_sumvec_hmac() {
     let aggregation_job_init_request = AggregationJobInitializeReq::new(
         aggregation_param.get_encoded().unwrap(),
         PartialBatchSelector::new_leader_selected(batch_id),
-        Vec::from([PrepareInit::new(
+        Vec::from([VerifyInit::new(
             report_share.clone(),
-            transcript.leader_prepare_transitions[0]
+            transcript.leader_verify_transitions[0]
                 .message()
                 .unwrap()
                 .clone(),
@@ -1411,18 +1410,18 @@ async fn end_to_end_sumvec_hmac() {
         AggregationJobResp::MEDIA_TYPE,
     );
     let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut response).await;
-    let prepare_resps = assert_matches!(
+    let verify_resps = assert_matches!(
         aggregation_job_resp,
-        AggregationJobResp { prepare_resps } => prepare_resps
+        AggregationJobResp { verify_resps } => verify_resps
     );
 
-    assert_eq!(prepare_resps.len(), 1);
-    let prepare_resp = &prepare_resps[0];
-    assert_eq!(prepare_resp.report_id(), report_share.metadata().id());
-    let message = assert_matches!(prepare_resp.result(), PrepareStepResult::Continue { message } => message.clone());
+    assert_eq!(verify_resps.len(), 1);
+    let verify_resp = &verify_resps[0];
+    assert_eq!(verify_resp.report_id(), report_share.metadata().id());
+    let message = assert_matches!(verify_resp.result(), VerifyStepResult::Continue { message } => message.clone());
     assert_eq!(
         &message,
-        transcript.helper_prepare_transitions[0].message().unwrap()
+        transcript.helper_verify_transitions[0].message().unwrap()
     );
 
     let checksum = ReportIdChecksum::for_report_id(report_share.metadata().id());

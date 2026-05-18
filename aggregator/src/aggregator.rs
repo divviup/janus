@@ -55,8 +55,8 @@ use janus_messages::{
     AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq, AggregationJobResp,
     AggregationJobStep, BatchSelector, CollectionJobId, CollectionJobReq, CollectionJobResp,
     Duration, ExtensionType, HpkeConfig, HpkeConfigList, InputShareAad, Interval,
-    PartialBatchSelector, PlaintextInputShare, PrepareResp, Report, ReportError,
-    ReportUploadStatus, Role, TaskId, UploadErrors,
+    PartialBatchSelector, PlaintextInputShare, Report, ReportError, ReportUploadStatus, Role,
+    TaskId, UploadErrors, VerifyResp,
     batch_mode::{LeaderSelected, TimeInterval},
     taskprov::TaskConfig,
 };
@@ -1045,20 +1045,20 @@ impl<C: Clock> TaskAggregator<C> {
             VdafInstance::Fake { rounds } => VdafOps::Fake(Arc::new(dummy::Vdaf::new(*rounds))),
 
             #[cfg(feature = "test-util")]
-            VdafInstance::FakeFailsPrepInit => VdafOps::Fake(Arc::new(
+            VdafInstance::FakeFailsVerifyInit => VdafOps::Fake(Arc::new(
                 dummy::Vdaf::new(1).with_verify_init_fn(|_| -> Result<(), VdafError> {
                     Err(VdafError::Uncategorized(
-                        "FakeFailsPrepInit failed at prep_init".to_string(),
+                        "FakeFailsVerifyInit failed at verify_init".to_string(),
                     ))
                 }),
             )),
 
             #[cfg(feature = "test-util")]
-            VdafInstance::FakeFailsPrepStep => {
+            VdafInstance::FakeFailsVerifyStep => {
                 VdafOps::Fake(Arc::new(dummy::Vdaf::new(1).with_verify_next_fn(
                     |_| -> Result<VerifyTransition<dummy::Vdaf, 0, 16>, VdafError> {
                         Err(VdafError::Uncategorized(
-                            "FakeFailsPrepStep failed at prep_step".to_string(),
+                            "FakeFailsVerifyStep failed at verify_step".to_string(),
                         ))
                     },
                 )))
@@ -1976,7 +1976,7 @@ impl VdafOps {
         mutating_aggregation_job: &AggregationJob<SEED_SIZE, B, A>,
         mutating_report_aggregations: impl IntoIterator<Item = &ReportAggregation<SEED_SIZE, A>>,
         log_forbidden_mutations: Option<PathBuf>,
-    ) -> Result<Option<Vec<PrepareResp>>, datastore::Error>
+    ) -> Result<Option<Vec<VerifyResp>>, datastore::Error>
     where
         B: AccumulableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
@@ -2068,7 +2068,7 @@ impl VdafOps {
             ));
         }
 
-        // This is a repeated request. Send the preparation responses we computed last time.
+        // This is a repeated request. Send the verification responses we computed last time.
         return Ok(Some(
             tx.get_report_aggregations_for_aggregation_job(
                 vdaf,
@@ -2078,7 +2078,7 @@ impl VdafOps {
             )
             .await?
             .iter()
-            .filter_map(ReportAggregation::last_prep_resp)
+            .filter_map(ReportAggregation::last_verify_resp)
             .cloned()
             .collect(),
         ));
@@ -2112,9 +2112,9 @@ impl VdafOps {
 
         // If two ReportShare messages have the same report ID, then the helper MUST abort with
         // error "invalidMessage". (§4.5.1.2)
-        let mut seen_report_ids = HashSet::with_capacity(req.prepare_inits().len());
-        for prepare_init in req.prepare_inits() {
-            if !seen_report_ids.insert(*prepare_init.report_share().metadata().id()) {
+        let mut seen_report_ids = HashSet::with_capacity(req.verify_inits().len());
+        for verify_init in req.verify_inits() {
+            if !seen_report_ids.insert(*verify_init.report_share().metadata().id()) {
                 return Err(Error::InvalidMessage(
                     Some(*task.id()),
                     "aggregate request contains duplicate report IDs",
@@ -2124,9 +2124,9 @@ impl VdafOps {
 
         // Build initial aggregation job & report aggregations.
         let client_timestamp_interval = req
-            .prepare_inits()
+            .verify_inits()
             .iter()
-            .map(|prepare_init| *prepare_init.report_share().metadata().time())
+            .map(|verify_init| *verify_init.report_share().metadata().time())
             .fold(Interval::EMPTY, |interval, timestamp| {
                 interval.merged_with(&timestamp).unwrap()
             });
@@ -2143,19 +2143,19 @@ impl VdafOps {
         .with_last_request_hash(request_hash);
 
         let report_aggregations = req
-            .prepare_inits()
+            .verify_inits()
             .iter()
             .enumerate()
-            .map(|(ord, prepare_init)| {
+            .map(|(ord, verify_init)| {
                 Ok(ReportAggregation::<SEED_SIZE, A>::new(
                     *task.id(),
                     *aggregation_job_id,
-                    *prepare_init.report_share().metadata().id(),
-                    *prepare_init.report_share().metadata().time(),
+                    *verify_init.report_share().metadata().id(),
+                    *verify_init.report_share().metadata().time(),
                     u64::try_from(ord)?,
                     None,
                     ReportAggregationState::HelperInitProcessing {
-                        prepare_init: prepare_init.clone(),
+                        verify_init: verify_init.clone(),
                         require_taskbind_extension,
                     },
                 ))
@@ -2223,7 +2223,7 @@ impl VdafOps {
         // the same response as last time.
         let aggregation_job = Arc::new(aggregation_job);
         let report_aggregations = Arc::new(report_aggregations);
-        if let Some(prepare_resps) = datastore
+        if let Some(verify_resps) = datastore
             .run_tx("aggregate_init_idempotecy", |tx| {
                 let vdaf = Arc::clone(&vdaf);
                 let task = Arc::clone(&task);
@@ -2246,7 +2246,7 @@ impl VdafOps {
             })
             .await?
         {
-            return Ok(Some(AggregationJobResp { prepare_resps }));
+            return Ok(Some(AggregationJobResp { verify_resps }));
         }
 
         // Compute the next aggregation step.
@@ -2262,7 +2262,7 @@ impl VdafOps {
         .await?;
 
         // Store data to datastore.
-        let prepare_resps = Self::handle_aggregate_init_generic_write(
+        let verify_resps = Self::handle_aggregate_init_generic_write(
             datastore,
             vdaf,
             metrics,
@@ -2276,7 +2276,7 @@ impl VdafOps {
         )
         .await?;
 
-        Ok(Some(AggregationJobResp { prepare_resps }))
+        Ok(Some(AggregationJobResp { verify_resps }))
     }
 
     // All report aggregations must be in the HelperInitProcessing state.
@@ -2330,14 +2330,14 @@ impl VdafOps {
         request_hash: [u8; 32],
         aggregation_job: Arc<AggregationJob<SEED_SIZE, B, A>>,
         report_aggregations: Arc<Vec<WritableReportAggregation<SEED_SIZE, A>>>,
-    ) -> Result<Vec<PrepareResp>, Error>
+    ) -> Result<Vec<VerifyResp>, Error>
     where
         B: AccumulableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
         C: Clock,
     {
         let task_aggregation_counters = TaskAggregationCounter::default();
-        let prepare_resps = datastore
+        let verify_resps = datastore
             .run_tx("aggregate_init_aggregator_write", |tx| {
                 let vdaf = Arc::clone(&vdaf);
                 let task = Arc::clone(&task);
@@ -2352,7 +2352,7 @@ impl VdafOps {
                     // the same response as last time. We check during the write transaction, even
                     // if we have checked before, to avoid the possibility of races for concurrent
                     // requests.
-                    if let Some(prepare_resps) = Self::check_aggregate_init_idempotency(
+                    if let Some(verify_resps) = Self::check_aggregate_init_idempotency(
                         tx,
                         vdaf.as_ref(),
                         task.id(),
@@ -2363,7 +2363,7 @@ impl VdafOps {
                     )
                     .await?
                     {
-                        return Ok(prepare_resps);
+                        return Ok(verify_resps);
                     }
 
                     // Write report shares, and ensure this isn't a repeated report aggregation.
@@ -2405,8 +2405,9 @@ impl VdafOps {
                         );
                     aggregation_job_writer
                         .put(aggregation_job.as_ref().clone(), report_aggregations)?;
-                    let mut prep_resps_by_agg_job = aggregation_job_writer.write(tx, vdaf).await?;
-                    Ok(prep_resps_by_agg_job
+                    let mut verify_resps_by_agg_job =
+                        aggregation_job_writer.write(tx, vdaf).await?;
+                    Ok(verify_resps_by_agg_job
                         .remove(aggregation_job.id())
                         .unwrap_or_default())
                 })
@@ -2420,7 +2421,7 @@ impl VdafOps {
             task_aggregation_counters,
         );
 
-        Ok(prepare_resps)
+        Ok(verify_resps)
     }
 
     async fn handle_aggregate_continue_generic<
@@ -2518,9 +2519,9 @@ impl VdafOps {
                         let resp = match task.aggregation_mode() {
                             Some(AggregationMode::Synchronous) => {
                                 AggregationJobContinueResult::Sync(AggregationJobResp {
-                                    prepare_resps: report_aggregations
+                                    verify_resps: report_aggregations
                                         .iter()
-                                        .filter_map(ReportAggregation::last_prep_resp)
+                                        .filter_map(ReportAggregation::last_verify_resp)
                                         .cloned()
                                         .collect(),
                                 })
@@ -2552,23 +2553,23 @@ impl VdafOps {
                         ));
                     }
 
-                    // Pair incoming preparation continuation messages with existing report
+                    // Pair incoming verification continuation messages with existing report
                     // aggregations.
                     let mut report_aggregations_to_write = Vec::with_capacity(report_aggregations.len());
                     let mut report_aggregations_iter = report_aggregations.into_iter();
-                    let mut report_aggregations = Vec::with_capacity(req.prepare_continues().len());
-                    for prepare_continue in req.prepare_continues() {
+                    let mut report_aggregations = Vec::with_capacity(req.verify_continues().len());
+                    for verify_continue in req.verify_continues() {
                         let report_aggregation = loop {
                             let report_aggregation = report_aggregations_iter.next().ok_or_else(|| {
                                 datastore::Error::User(
                                     Error::InvalidMessage(
                                         Some(*task.id()),
-                                        "leader sent unexpected, duplicate, or out-of-order prepare steps",
+                                        "leader sent unexpected, duplicate, or out-of-order verify steps",
                                     )
                                     .into(),
                                 )
                             })?;
-                            if report_aggregation.report_id() != prepare_continue.report_id() {
+                            if report_aggregation.report_id() != verify_continue.report_id() {
                                 // This report was omitted by the leader because of a prior failure.
                                 // Note that the report was dropped (if it's not already in an error
                                 // state) and continue.
@@ -2581,7 +2582,7 @@ impl VdafOps {
                                             .with_state(ReportAggregationState::Failed {
                                                 report_error: ReportError::ReportDropped,
                                             })
-                                            .with_last_prep_resp(None),
+                                            .with_last_verify_resp(None),
                                         None,
                                     ));
                                 }
@@ -2590,13 +2591,13 @@ impl VdafOps {
                             break report_aggregation;
                         };
 
-                        let prepare_state = if let ReportAggregationState::HelperContinue{ prepare_state } = report_aggregation.state() {
-                            prepare_state.clone()
+                        let verify_state = if let ReportAggregationState::HelperContinue{ verify_state } = report_aggregation.state() {
+                            verify_state.clone()
                         } else {
                             return Err(datastore::Error::User(
                                 Error::InvalidMessage(
                                     Some(*task.id()),
-                                    "leader sent prepare step for non-CONTINUE report aggregation",
+                                    "leader sent verify step for non-CONTINUE report aggregation",
                                 )
                                 .into(),
                             ))
@@ -2604,10 +2605,10 @@ impl VdafOps {
 
                         report_aggregations.push(report_aggregation
                             .with_state(ReportAggregationState::HelperContinueProcessing {
-                                prepare_state,
-                                prepare_continue: prepare_continue.clone(),
+                                verify_state,
+                                verify_continue: verify_continue.clone(),
                             })
-                            .with_last_prep_resp(None)
+                            .with_last_verify_resp(None)
                         );
                     }
 
@@ -2624,7 +2625,7 @@ impl VdafOps {
                                     .with_state(ReportAggregationState::Failed {
                                         report_error: ReportError::ReportDropped,
                                     })
-                                    .with_last_prep_resp(None),
+                                    .with_last_verify_resp(None),
                                 None,
                             ));
                         }
@@ -2710,7 +2711,7 @@ impl VdafOps {
         );
 
         // Store data to datastore.
-        let prepare_resps = Self::handle_aggregate_continue_generic_write(
+        let verify_resps = Self::handle_aggregate_continue_generic_write(
             tx,
             task,
             vdaf,
@@ -2722,7 +2723,7 @@ impl VdafOps {
         )
         .await?;
         Ok(AggregationJobContinueResult::Sync(AggregationJobResp {
-            prepare_resps,
+            verify_resps,
         }))
     }
 
@@ -2779,7 +2780,7 @@ impl VdafOps {
         task_aggregation_counters: TaskAggregationCounter,
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<WritableReportAggregation<SEED_SIZE, A>>,
-    ) -> Result<Vec<PrepareResp>, Error> {
+    ) -> Result<Vec<VerifyResp>, Error> {
         // Sanity-check that we have the correct number of report aggregations.
         assert_eq!(report_aggregations.len(), report_aggregations.capacity());
 
@@ -2794,8 +2795,8 @@ impl VdafOps {
                 task_aggregation_counters,
             );
         aggregation_job_writer.put(aggregation_job, report_aggregations)?;
-        let mut prep_resps_by_agg_job = aggregation_job_writer.write(tx, vdaf).await?;
-        Ok(prep_resps_by_agg_job
+        let mut verify_resps_by_agg_job = aggregation_job_writer.write(tx, vdaf).await?;
+        Ok(verify_resps_by_agg_job
             .remove(&aggregation_job_id)
             .unwrap_or_default())
     }
@@ -2858,9 +2859,9 @@ impl VdafOps {
 
                         AggregationJobState::AwaitingRequest | AggregationJobState::Finished => {
                             Some(AggregationJobResp {
-                                prepare_resps: report_aggregations
+                                verify_resps: report_aggregations
                                     .into_iter()
-                                    .filter_map(|ra| ra.last_prep_resp().cloned())
+                                    .filter_map(|ra| ra.last_verify_resp().cloned())
                                     .collect(),
                             })
                         }

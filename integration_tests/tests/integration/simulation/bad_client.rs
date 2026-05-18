@@ -496,7 +496,7 @@ fn shard_encoded_measurement_correct() {
 
     let verify_key: [u8; VERIFY_KEY_LENGTH_PRIO3] = random();
     let ctx = vdaf_application_context(&task_id);
-    let (leader_prepare_state, leader_prepare_share) = vdaf
+    let (leader_verify_state, leader_verify_share) = vdaf
         .verify_init(
             &verify_key,
             &ctx,
@@ -507,7 +507,7 @@ fn shard_encoded_measurement_correct() {
             &input_shares[0],
         )
         .unwrap();
-    let (helper_prepare_state, helper_prepare_share) = vdaf
+    let (helper_verify_state, helper_verify_share) = vdaf
         .verify_init(
             &verify_key,
             &ctx,
@@ -518,14 +518,14 @@ fn shard_encoded_measurement_correct() {
             &input_shares[1],
         )
         .unwrap();
-    let prepare_message = vdaf
-        .verifier_shares_to_message(&ctx, &(), [leader_prepare_share, helper_prepare_share])
+    let verify_message = vdaf
+        .verifier_shares_to_message(&ctx, &(), [leader_verify_share, helper_verify_share])
         .unwrap();
     let leader_transition = vdaf
-        .verify_next(&ctx, leader_prepare_state, prepare_message.clone())
+        .verify_next(&ctx, leader_verify_state, verify_message.clone())
         .unwrap();
     let helper_transition = vdaf
-        .verify_next(&ctx, helper_prepare_state, prepare_message)
+        .verify_next(&ctx, helper_verify_state, verify_message)
         .unwrap();
     let leader_output_share =
         assert_matches!(leader_transition, VerifyTransition::Finish(output_share) => output_share);

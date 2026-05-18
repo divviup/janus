@@ -13,7 +13,7 @@ use janus_aggregator_core::{
     task::AggregatorTask,
 };
 use janus_core::vdaf::vdaf_application_context;
-use janus_messages::{PrepareResp, PrepareStepResult, Role};
+use janus_messages::{Role, VerifyResp, VerifyStepResult};
 use opentelemetry::metrics::Counter;
 use prio::topology::ping_pong::{Continued, PingPongState, PingPongTopology as _};
 use rayon::iter::{IntoParallelIterator as _, ParallelIterator as _};
@@ -93,37 +93,37 @@ where
 
                     // Assert safety: this function should only be called with report
                     // aggregations in the HelperContinueProcessing state.
-                    let (prepare_state, prepare_continue) = assert_matches!(
+                    let (verify_state, verify_continue) = assert_matches!(
                         report_aggregation.state(),
                         ReportAggregationState::HelperContinueProcessing{
-                            prepare_state,
-                            prepare_continue
-                        } => (prepare_state, prepare_continue)
+                            verify_state,
+                            verify_continue
+                        } => (verify_state, verify_continue)
                     );
 
-                    let (report_aggregation_state, prepare_step_result, output_share) =
-                        trace_span!("VDAF preparation (helper continuation)")
+                    let (report_aggregation_state, verify_step_result, output_share) =
+                        trace_span!("VDAF verification (helper continuation)")
                             .in_scope(|| {
                                 // Continue with the incoming message.
                                 vdaf.helper_continued(
                                     &ctx,
                                     aggregation_job.aggregation_parameter(),
-                                    prepare_state.clone(),
-                                    prepare_continue.message(),
+                                    verify_state.clone(),
+                                    verify_continue.message(),
                                 )
                                 .and_then(|continuation| {
                                     Ok(match continuation.evaluate(&ctx, vdaf.as_ref())? {
                                         // Helper did not finish. Store the new state, respond to
                                         // the leader with the message, and await the next message
-                                        // from the Leader to advance preparation.
+                                        // from the Leader to advance verification.
                                         PingPongState::Continued(Continued {
                                             verifier_state,
                                             message,
                                         }) => (
                                             ReportAggregationState::HelperContinue {
-                                                prepare_state: verifier_state,
+                                                verify_state: verifier_state,
                                             },
-                                            PrepareStepResult::Continue { message },
+                                            VerifyStepResult::Continue { message },
                                             None,
                                         ),
 
@@ -135,7 +135,7 @@ where
                                             message,
                                         } => (
                                             ReportAggregationState::Finished,
-                                            PrepareStepResult::Continue { message },
+                                            VerifyStepResult::Continue { message },
                                             Some(output_share),
                                         ),
 
@@ -143,7 +143,7 @@ where
                                         // the leader with a finished message.
                                         PingPongState::Finished { output_share } => (
                                             ReportAggregationState::Finished,
-                                            PrepareStepResult::Finished,
+                                            VerifyStepResult::Finished,
                                             Some(output_share),
                                         ),
                                     })
@@ -153,7 +153,7 @@ where
                                 handle_ping_pong_error(
                                     task.id(),
                                     Role::Leader,
-                                    prepare_continue.report_id(),
+                                    verify_continue.report_id(),
                                     error,
                                     &metrics.aggregate_step_failure_counter,
                                 )
@@ -164,7 +164,7 @@ where
                                     .increment_with_report_error(report_error);
                                 (
                                     ReportAggregationState::Failed { report_error },
-                                    PrepareStepResult::Reject(report_error),
+                                    VerifyStepResult::Reject(report_error),
                                     None,
                                 )
                             });
@@ -174,9 +174,9 @@ where
                         .send(WritableReportAggregation::new(
                             report_aggregation
                                 .with_state(report_aggregation_state)
-                                .with_last_prep_resp(Some(PrepareResp::new(
+                                .with_last_verify_resp(Some(VerifyResp::new(
                                     report_id,
-                                    prepare_step_result,
+                                    verify_step_result,
                                 ))),
                             output_share,
                         ))
@@ -381,8 +381,8 @@ mod tests {
     };
     use janus_messages::{
         AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq,
-        AggregationJobResp, AggregationJobStep, Interval, PartialBatchSelector, PrepareContinue,
-        PrepareResp, PrepareStepResult, Role, batch_mode::TimeInterval,
+        AggregationJobResp, AggregationJobStep, Interval, PartialBatchSelector, Role,
+        VerifyContinue, VerifyResp, VerifyStepResult, batch_mode::TimeInterval,
     };
     use prio::{
         codec::Encode as _,
@@ -397,7 +397,7 @@ mod tests {
             post_aggregation_job_and_decode, post_aggregation_job_expecting_error,
             post_aggregation_job_expecting_status,
         },
-        aggregation_job_init::test_util::{PrepareInitGenerator, put_aggregation_job},
+        aggregation_job_init::test_util::{VerifyInitGenerator, put_aggregation_job},
         http_handlers::{
             AggregatorHandlerBuilder,
             test_util::{HttpHandlerTest, take_problem_details},
@@ -411,7 +411,7 @@ mod tests {
     > {
         task: Task,
         datastore: Arc<Datastore<MockClock>>,
-        prepare_init_generator: PrepareInitGenerator<VERIFY_KEY_LENGTH, V>,
+        verify_init_generator: VerifyInitGenerator<VERIFY_KEY_LENGTH, V>,
         aggregation_job_id: AggregationJobId,
         aggregation_parameter: V::AggregationParam,
         first_continue_request: AggregationJobContinueReq,
@@ -424,7 +424,7 @@ mod tests {
     #[allow(clippy::unit_arg)]
     async fn setup_aggregation_job_continue_test() -> AggregationJobContinueTestCase<0, dummy::Vdaf>
     {
-        // Prepare datastore & request.
+        // Set up datastore & request.
         install_test_trace_subscriber();
 
         let aggregation_job_id = random();
@@ -442,7 +442,7 @@ mod tests {
         let keypair = datastore.put_hpke_key().await.unwrap();
 
         let aggregation_parameter = dummy::AggregationParam(7);
-        let prepare_init_generator = PrepareInitGenerator::new(
+        let verify_init_generator = VerifyInitGenerator::new(
             clock.clone(),
             helper_task.clone(),
             keypair.config().clone(),
@@ -450,20 +450,20 @@ mod tests {
             aggregation_parameter,
         );
 
-        let (prepare_init, transcript) = prepare_init_generator.next(&13);
+        let (verify_init, transcript) = verify_init_generator.next(&13);
 
         datastore
             .run_unnamed_tx(|tx| {
                 let helper_task = helper_task.clone();
-                let prepare_init = prepare_init.clone();
+                let verify_init = verify_init.clone();
                 let transcript = transcript.clone();
 
                 Box::pin(async move {
                     tx.put_aggregator_task(&helper_task).await.unwrap();
                     tx.put_scrubbed_report(
                         helper_task.id(),
-                        prepare_init.report_share().metadata().id(),
-                        prepare_init.report_share().metadata().time(),
+                        verify_init.report_share().metadata().id(),
+                        verify_init.report_share().metadata().time(),
                     )
                     .await
                     .unwrap();
@@ -474,7 +474,7 @@ mod tests {
                         aggregation_parameter,
                         (),
                         Interval::new(
-                            *prepare_init.report_share().metadata().time(),
+                            *verify_init.report_share().metadata().time(),
                             janus_messages::Duration::ONE,
                         )
                         .unwrap(),
@@ -487,13 +487,12 @@ mod tests {
                     tx.put_report_aggregation::<0, dummy::Vdaf>(&ReportAggregation::new(
                         *helper_task.id(),
                         aggregation_job_id,
-                        *prepare_init.report_share().metadata().id(),
-                        *prepare_init.report_share().metadata().time(),
+                        *verify_init.report_share().metadata().id(),
+                        *verify_init.report_share().metadata().time(),
                         0,
                         None,
                         ReportAggregationState::HelperContinue {
-                            prepare_state: *transcript.helper_prepare_transitions[0]
-                                .prepare_state(),
+                            verify_state: *transcript.helper_verify_transitions[0].verify_state(),
                         },
                     ))
                     .await
@@ -507,9 +506,9 @@ mod tests {
 
         let first_continue_request = AggregationJobContinueReq::new(
             AggregationJobStep::from(1),
-            Vec::from([PrepareContinue::new(
-                *prepare_init.report_share().metadata().id(),
-                transcript.leader_prepare_transitions[1]
+            Vec::from([VerifyContinue::new(
+                *verify_init.report_share().metadata().id(),
+                transcript.leader_verify_transitions[1]
                     .message()
                     .unwrap()
                     .clone(),
@@ -531,7 +530,7 @@ mod tests {
         AggregationJobContinueTestCase {
             task,
             datastore,
-            prepare_init_generator,
+            verify_init_generator,
             aggregation_job_id,
             aggregation_parameter,
             first_continue_request,
@@ -559,11 +558,11 @@ mod tests {
         assert_eq!(
             first_continue_response,
             Some(AggregationJobResp {
-                prepare_resps: test_case
+                verify_resps: test_case
                     .first_continue_request
-                    .prepare_continues()
+                    .verify_continues()
                     .iter()
-                    .map(|step| PrepareResp::new(*step.report_id(), PrepareStepResult::Finished))
+                    .map(|step| VerifyResp::new(*step.report_id(), VerifyStepResult::Finished))
                     .collect()
             })
         );
@@ -660,10 +659,7 @@ mod tests {
         // to advance to step 0. Should be rejected because that is an illegal transition.
         let step_zero_request = AggregationJobContinueReq::new(
             AggregationJobStep::from(0),
-            test_case
-                .first_continue_request
-                .prepare_continues()
-                .to_vec(),
+            test_case.first_continue_request.verify_continues().to_vec(),
         );
 
         post_aggregation_job_expecting_error(
@@ -704,21 +700,21 @@ mod tests {
     async fn aggregation_job_continue_step_recovery_mutate_continue_request() {
         let test_case = setup_aggregation_job_continue_step_recovery_test().await;
 
-        let (unrelated_prepare_init, unrelated_transcript) =
-            test_case.prepare_init_generator.next(&13);
+        let (unrelated_verify_init, unrelated_transcript) =
+            test_case.verify_init_generator.next(&13);
 
         let (before_aggregation_job, before_report_aggregations) = test_case
             .datastore
             .run_unnamed_tx(|tx| {
                 let task_id = *test_case.task.id();
-                let unrelated_prepare_init = unrelated_prepare_init.clone();
+                let unrelated_verify_init = unrelated_verify_init.clone();
                 let aggregation_job_id = test_case.aggregation_job_id;
 
                 Box::pin(async move {
                     tx.put_scrubbed_report(
                         &task_id,
-                        unrelated_prepare_init.report_share().metadata().id(),
-                        unrelated_prepare_init.report_share().metadata().time(),
+                        unrelated_verify_init.report_share().metadata().id(),
+                        unrelated_verify_init.report_share().metadata().time(),
                     )
                     .await
                     .unwrap();
@@ -751,9 +747,9 @@ mod tests {
         // ID.
         let modified_request = AggregationJobContinueReq::new(
             test_case.first_continue_request.step(),
-            Vec::from([PrepareContinue::new(
-                *unrelated_prepare_init.report_share().metadata().id(),
-                unrelated_transcript.leader_prepare_transitions[1]
+            Vec::from([VerifyContinue::new(
+                *unrelated_verify_init.report_share().metadata().id(),
+                unrelated_transcript.leader_verify_transitions[1]
                     .message()
                     .unwrap()
                     .clone(),
@@ -835,10 +831,7 @@ mod tests {
         // Send another request for a step that the helper is past. Should fail.
         let past_step_request = AggregationJobContinueReq::new(
             AggregationJobStep::from(1),
-            test_case
-                .first_continue_request
-                .prepare_continues()
-                .to_vec(),
+            test_case.first_continue_request.verify_continues().to_vec(),
         );
 
         post_aggregation_job_expecting_error(
@@ -848,7 +841,7 @@ mod tests {
             &test_case.router,
             StatusCode::BAD_REQUEST,
             "urn:ietf:params:ppm:dap:error:stepMismatch",
-            "The leader and helper are not on the same step of VDAF preparation.",
+            "The leader and helper are not on the same step of VDAF verification.",
             None,
             None,
         )
@@ -863,10 +856,7 @@ mod tests {
         // helper isn't on that step.
         let future_step_request = AggregationJobContinueReq::new(
             AggregationJobStep::from(17),
-            test_case
-                .first_continue_request
-                .prepare_continues()
-                .to_vec(),
+            test_case.first_continue_request.verify_continues().to_vec(),
         );
 
         post_aggregation_job_expecting_error(
@@ -876,7 +866,7 @@ mod tests {
             &test_case.router,
             StatusCode::BAD_REQUEST,
             "urn:ietf:params:ppm:dap:error:stepMismatch",
-            "The leader and helper are not on the same step of VDAF preparation.",
+            "The leader and helper are not on the same step of VDAF verification.",
             None,
             None,
         )
@@ -928,11 +918,11 @@ mod tests {
             .unwrap();
 
         // Subsequent attempts to initialize the job should fail.
-        let (prep_init, _) = test_case.prepare_init_generator.next(&13);
+        let (verify_init_msg, _) = test_case.verify_init_generator.next(&13);
         let init_req = AggregationJobInitializeReq::new(
             test_case.aggregation_parameter.get_encoded().unwrap(),
             PartialBatchSelector::new_time_interval(),
-            Vec::from([prep_init]),
+            Vec::from([verify_init_msg]),
         );
         let mut response = put_aggregation_job(
             &test_case.task,
