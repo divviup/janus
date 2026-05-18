@@ -409,7 +409,7 @@ pub(crate) fn handle_ping_pong_error(
             "verify_init_failure".to_string(),
         ),
         PingPongError::VdafVerifierSharesToMessage(_) => (
-            "Couldn't compute prepare message".to_string(),
+            "Couldn't compute verify message".to_string(),
             "verify_message_failure".to_string(),
         ),
         PingPongError::VdafVerifyNext(_) => (
@@ -417,12 +417,12 @@ pub(crate) fn handle_ping_pong_error(
             "verify_next_failure".to_string(),
         ),
         PingPongError::CodecVerifierShare(_) => (
-            format!("Couldn't decode {peer_role} prepare share"),
-            format!("{peer_role}_prep_share_decode_failure"),
+            format!("Couldn't decode {peer_role} verify share"),
+            format!("{peer_role}_verify_share_decode_failure"),
         ),
         PingPongError::CodecVerifierMessage(_) => (
-            format!("Couldn't decode {peer_role} prepare message"),
-            format!("{peer_role}_prep_message_decode_failure"),
+            format!("Couldn't decode {peer_role} verify message"),
+            format!("{peer_role}_verify_message_decode_failure"),
         ),
         ref error @ PingPongError::PeerMessageMismatch { .. } => (
             format!("{error}"),
