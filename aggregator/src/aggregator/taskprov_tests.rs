@@ -36,10 +36,10 @@ use janus_messages::{
     AggregateShareReq, AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq,
     AggregationJobResp, AggregationJobStep, BatchSelector, Duration, Extension, ExtensionType,
     Interval, MediaType, PartialBatchSelector, ReportError, ReportIdChecksum, ReportShare, Role,
-    TaskId, Time, TimePrecision, VerifyContinue, VerifyInit, VerifyResp, VerifyStepResult,
+    TaskConfiguration, TaskId, Time, TimePrecision, VdafConfig, VerifyContinue, VerifyInit,
+    VerifyResp, VerifyStepResult,
     batch_mode::{self, LeaderSelected},
     codec::{Decode, Encode},
-    taskprov::{TaskConfig, VdafConfig},
 };
 use prio::{
     flp::gadgets::ParallelSumMultithreaded,
@@ -68,7 +68,7 @@ pub struct TaskprovTestCase<const VERIFY_KEY_SIZE: usize, V: Vdaf> {
     router: axum::Router,
     peer_aggregator: PeerAggregator,
     task: Task,
-    task_config: TaskConfig,
+    task_config: TaskConfiguration,
     task_id: TaskId,
     vdaf: V,
     measurement: V::Measurement,
@@ -84,6 +84,17 @@ impl TaskprovTestCase<0, dummy::Vdaf> {
         let aggregation_param = dummy::AggregationParam(7);
         Self::with_vdaf(vdaf_config, vdaf, measurement, aggregation_param).await
     }
+
+    /// Like [`Self::new`], but the advertised `TaskConfiguration` omits the optional
+    /// `task_interval` extension, so the provisioned task has no time bounds.
+    async fn without_task_interval() -> Self {
+        let vdaf = dummy::Vdaf::new(2);
+        let vdaf_config = VdafConfig::Fake { rounds: 2 };
+        let measurement = 13;
+        let aggregation_param = dummy::AggregationParam(7);
+        Self::with_vdaf_and_task_interval(vdaf_config, vdaf, measurement, aggregation_param, false)
+            .await
+    }
 }
 
 impl<const VERIFY_KEY_SIZE: usize, V> TaskprovTestCase<VERIFY_KEY_SIZE, V>
@@ -95,6 +106,17 @@ where
         vdaf: V,
         measurement: V::Measurement,
         aggregation_param: V::AggregationParam,
+    ) -> Self {
+        Self::with_vdaf_and_task_interval(vdaf_config, vdaf, measurement, aggregation_param, true)
+            .await
+    }
+
+    async fn with_vdaf_and_task_interval(
+        vdaf_config: VdafConfig,
+        vdaf: V,
+        measurement: V::Measurement,
+        aggregation_param: V::AggregationParam,
+        include_task_interval: bool,
     ) -> Self {
         install_test_trace_subscriber();
 
@@ -148,19 +170,35 @@ where
         let task_start = clock.now();
         let time_precision = TimePrecision::from_seconds(60);
         let task_duration = Duration::from_hours(24, &time_precision);
-        let task_config = TaskConfig::new(
-            Vec::from("foobar".as_bytes()),
-            "https://leader.example.com/".as_bytes().try_into().unwrap(),
-            "https://helper.example.com/".as_bytes().try_into().unwrap(),
-            time_precision,
-            min_batch_size,
-            batch_mode::Code::LeaderSelected,
-            task_start.to_time(&time_precision),
-            task_duration,
-            vdaf_config,
-            Vec::new(),
-        )
-        .unwrap();
+        let task_config = if include_task_interval {
+            TaskConfiguration::new_with_task_interval(
+                Vec::from("foobar".as_bytes()),
+                "https://leader.example.com/".as_bytes().try_into().unwrap(),
+                "https://helper.example.com/".as_bytes().try_into().unwrap(),
+                time_precision,
+                min_batch_size,
+                batch_mode::Code::LeaderSelected,
+                Vec::new(),
+                task_start.to_time(&time_precision),
+                task_duration,
+                vdaf_config,
+                Vec::new(),
+            )
+            .unwrap()
+        } else {
+            TaskConfiguration::new(
+                Vec::from("foobar".as_bytes()),
+                "https://leader.example.com/".as_bytes().try_into().unwrap(),
+                "https://helper.example.com/".as_bytes().try_into().unwrap(),
+                time_precision,
+                min_batch_size,
+                batch_mode::Code::LeaderSelected,
+                Vec::new(),
+                vdaf_config,
+                Vec::new(),
+            )
+            .unwrap()
+        };
 
         let task_config_encoded = task_config.get_encoded().unwrap();
 
@@ -179,21 +217,21 @@ where
         .with_leader_aggregator_endpoint(Url::parse("https://leader.example.com/").unwrap())
         .with_helper_aggregator_endpoint(Url::parse("https://helper.example.com/").unwrap())
         .with_vdaf_verify_key(vdaf_verify_key)
-        .with_task_start(Some(task_start.to_time(&time_precision)))
-        .with_task_end(Some(
+        .with_task_start(include_task_interval.then(|| task_start.to_time(&time_precision)))
+        .with_task_end(include_task_interval.then(|| {
             task_start
                 .to_time(&time_precision)
                 .add_duration(&task_duration)
-                .unwrap(),
-        ))
+                .unwrap()
+        }))
         .with_report_expiry_age(
             peer_aggregator
                 .report_expiry_age()
                 .map(|d| Duration::from_chrono(d, &time_precision)),
         )
-        .with_min_batch_size(min_batch_size as u64)
+        .with_min_batch_size(min_batch_size)
         .with_time_precision(time_precision)
-        .with_taskprov_task_info(task_config.task_info().to_vec())
+        .with_task_info(task_config.task_info().to_vec())
         .build();
 
         Self {
@@ -406,7 +444,75 @@ async fn taskprov_aggregate_init() {
     );
     let got_task = got_task.unwrap();
     assert_eq!(test.task.taskprov_helper_view().unwrap(), got_task);
-    assert_eq!(got_task.taskprov_task_info(), Some(b"foobar".as_slice()));
+    assert_eq!(got_task.task_info(), Some(b"foobar".as_slice()));
+}
+
+/// A taskprov `TaskConfiguration` may omit the optional `task_interval` extension (DAP-18
+/// §4.2.3). When it does, opt-in must succeed and provision a task with no time bounds, which
+/// disables time-based report rejection — the same behavior as an API-provisioned task created
+/// without task_start/task_end.
+#[tokio::test]
+async fn taskprov_aggregate_init_without_task_interval() {
+    let test = TaskprovTestCase::without_task_interval().await;
+
+    // Sanity check: the advertised config really has no task_interval extension.
+    assert!(test.task_config.task_interval().unwrap().is_none());
+
+    let (transcript, report_share, aggregation_param) = test.next_report_share();
+    let batch_id = random();
+    let request = AggregationJobInitializeReq::new(
+        aggregation_param.get_encoded().unwrap(),
+        PartialBatchSelector::new_leader_selected(batch_id),
+        Vec::from([VerifyInit::new(
+            report_share.clone(),
+            transcript.leader_verify_transitions[0]
+                .message()
+                .unwrap()
+                .clone(),
+        )]),
+    );
+    let aggregation_job_id: AggregationJobId = random();
+
+    let response = test
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(
+                    test.task
+                        .aggregation_job_uri(&aggregation_job_id, None)
+                        .unwrap()
+                        .path(),
+                )
+                .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
+                .header(
+                    http::header::CONTENT_TYPE,
+                    AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
+                )
+                .header(
+                    TASKPROV_HEADER,
+                    URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
+                )
+                .body(Body::from(request.get_encoded().unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    // The provisioned task must carry no time bounds, mirroring the absent task_interval.
+    let got_task = test
+        .datastore
+        .run_unnamed_tx(|tx| {
+            let task_id = test.task_id;
+            Box::pin(async move { tx.get_aggregator_task(&task_id).await })
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(got_task.task_start().is_none());
+    assert!(got_task.task_end().is_none());
 }
 
 #[tokio::test]
@@ -671,13 +777,14 @@ async fn taskprov_opt_out_mismatched_task_id() {
 
     let aggregation_job_id: AggregationJobId = random();
 
-    let another_task_config = TaskConfig::new(
+    let another_task_config = TaskConfiguration::new_with_task_interval(
         Vec::from("foobar".as_bytes()),
         "https://leader.example.com/".as_bytes().try_into().unwrap(),
         "https://helper.example.com/".as_bytes().try_into().unwrap(),
         *test.task.time_precision(),
         100,
         batch_mode::Code::LeaderSelected,
+        Vec::new(),
         test.clock.now().to_time(test.task.time_precision()),
         Duration::from_hours(24, test.task.time_precision()),
         VdafConfig::Fake { rounds: 2 },
@@ -746,7 +853,7 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
 
     let aggregation_job_id: AggregationJobId = random();
 
-    let another_task_config = TaskConfig::new(
+    let another_task_config = TaskConfiguration::new_with_task_interval(
         Vec::from("foobar".as_bytes()),
         // Attempt to configure leader as a helper.
         "https://helper.example.com/".as_bytes().try_into().unwrap(),
@@ -754,6 +861,7 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
         *test.task.time_precision(),
         100,
         batch_mode::Code::LeaderSelected,
+        Vec::new(),
         test.clock.now().to_time(test.task.time_precision()),
         Duration::from_hours(24, test.task.time_precision()),
         VdafConfig::Fake { rounds: 2 },
@@ -819,7 +927,7 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
 
     let aggregation_job_id: AggregationJobId = random();
 
-    let another_task_config = TaskConfig::new(
+    let another_task_config = TaskConfiguration::new_with_task_interval(
         Vec::from("foobar".as_bytes()),
         // Some non-existent aggregator.
         "https://foobar.example.com/".as_bytes().try_into().unwrap(),
@@ -827,6 +935,7 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
         *test.task.time_precision(),
         100,
         batch_mode::Code::LeaderSelected,
+        Vec::new(),
         test.clock.now().to_time(test.task.time_precision()),
         Duration::from_hours(24, test.task.time_precision()),
         VdafConfig::Fake { rounds: 2 },

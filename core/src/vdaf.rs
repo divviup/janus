@@ -1,6 +1,6 @@
 use std::str;
 
-use janus_messages::{TaskId, taskprov};
+use janus_messages::{TaskId, VdafConfig};
 use prio::{
     field::Field64,
     flp::{
@@ -137,38 +137,38 @@ impl VdafInstance {
     }
 }
 
-impl TryFrom<&taskprov::VdafConfig> for VdafInstance {
+impl TryFrom<&VdafConfig> for VdafInstance {
     type Error = &'static str;
 
-    fn try_from(value: &taskprov::VdafConfig) -> Result<Self, Self::Error> {
+    fn try_from(value: &VdafConfig) -> Result<Self, Self::Error> {
         match value {
-            taskprov::VdafConfig::Prio3Count => Ok(Self::Prio3Count),
-            taskprov::VdafConfig::Prio3Sum { max_measurement } => Ok(Self::Prio3Sum {
-                max_measurement: u64::from(*max_measurement),
+            VdafConfig::Prio3Count => Ok(Self::Prio3Count),
+            VdafConfig::Prio3Sum { max_measurement } => Ok(Self::Prio3Sum {
+                max_measurement: *max_measurement,
             }),
-            taskprov::VdafConfig::Prio3SumVec {
+            VdafConfig::Prio3SumVec {
                 max_measurement,
                 length,
                 chunk_length,
             } => Ok(Self::Prio3SumVec {
-                max_measurement: *max_measurement as u64,
+                max_measurement: *max_measurement,
                 length: *length as usize,
                 chunk_length: *chunk_length as usize,
                 dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
             }),
-            taskprov::VdafConfig::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+            VdafConfig::Prio3SumVecField64MultiproofHmacSha256Aes128 {
                 max_measurement,
                 length,
                 chunk_length,
                 proofs,
             } => Ok(Self::Prio3SumVecField64MultiproofHmacSha256Aes128 {
                 proofs: *proofs,
-                max_measurement: *max_measurement as u64,
+                max_measurement: *max_measurement,
                 length: *length as usize,
                 chunk_length: *chunk_length as usize,
                 dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
             }),
-            taskprov::VdafConfig::Prio3Histogram {
+            VdafConfig::Prio3Histogram {
                 length,
                 chunk_length,
             } => Ok(Self::Prio3Histogram {
@@ -178,7 +178,7 @@ impl TryFrom<&taskprov::VdafConfig> for VdafInstance {
             }),
 
             #[cfg(feature = "test-util")]
-            taskprov::VdafConfig::Fake { rounds } => Ok(Self::Fake { rounds: *rounds }),
+            VdafConfig::Fake { rounds } => Ok(Self::Fake { rounds: *rounds }),
 
             _ => Err("unknown VdafType"),
         }

@@ -32,8 +32,8 @@ use janus_messages::{
     AggregateShare, AggregateShareId, AggregateShareReq, AggregationJobContinueReq,
     AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
     CollectionJobId, CollectionJobReq, CollectionJobResp, HpkeConfigList, MediaType, Report,
-    TaskId, UploadErrors, UploadRequest, batch_mode::TimeInterval, codec::Decode,
-    problem_type::DapProblemType, taskprov::TaskConfig,
+    TaskConfiguration, TaskId, UploadErrors, UploadRequest, batch_mode::TimeInterval,
+    codec::Decode, problem_type::DapProblemType,
 };
 use opentelemetry::metrics::Meter;
 use prio::codec::{CodecError, Encode};
@@ -1023,7 +1023,7 @@ fn parse_taskprov_header_from_headers<C: Clock>(
     aggregator: &Aggregator<C>,
     task_id: &TaskId,
     headers: &HeaderMap,
-) -> Result<Option<TaskConfig>, Error> {
+) -> Result<Option<TaskConfiguration>, Error> {
     if !aggregator.cfg.taskprov_config.enabled {
         return Ok(None);
     }
@@ -1060,7 +1060,7 @@ fn parse_taskprov_header_from_headers<C: Clock>(
     // authenticate the client is undesireable. We should rework this such that the authorization
     // header is handled before parsing the untrusted input.
     Ok(Some(
-        TaskConfig::get_decoded(&task_config_encoded).map_err(Error::MessageDecode)?,
+        TaskConfiguration::get_decoded(&task_config_encoded).map_err(Error::MessageDecode)?,
     ))
 }
 

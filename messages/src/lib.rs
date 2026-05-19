@@ -31,11 +31,12 @@ use serde::{
     Deserialize, Serialize, Serializer,
     de::{self, Visitor},
 };
+pub use task::{TaskConfiguration, TaskExtension, TaskExtensionType, VdafConfig};
 pub use time::{Duration, Interval, Time, TimePrecision};
 
 pub mod batch_mode;
 pub mod problem_type;
-pub mod taskprov;
+pub mod task;
 #[cfg(test)]
 mod tests;
 pub mod time;
@@ -52,6 +53,9 @@ pub enum Error {
     /// An invalid parameter was passed.
     #[error("{0}")]
     InvalidParameter(&'static str),
+    /// A codec error occurred while processing a message.
+    #[error("codec error: {0}")]
+    Codec(#[from] prio::codec::CodecError),
     /// An illegal arithmetic operation on a [`Time`] or [`Duration`].
     #[error("{0}")]
     IllegalTimeArithmetic(&'static str),
