@@ -5,7 +5,10 @@ use std::{
     sync::Arc,
 };
 
-use janus_aggregator_core::{datastore, task};
+use janus_aggregator_core::{
+    datastore::{self, models::AggregatorRole},
+    task,
+};
 use janus_core::http::HttpErrorResponse;
 use janus_messages::{
     AggregateShareId, AggregationJobId, AggregationJobStep, CollectionJobId, HpkeConfigId,
@@ -14,6 +17,13 @@ use janus_messages::{
 use opentelemetry::{KeyValue, metrics::Counter};
 use prio::{topology::ping_pong::PingPongError, vdaf::VdafError};
 use tracing::info;
+
+use crate::metrics::aggregate_step_failure_types::{
+    HELPER_PING_PONG_MESSAGE_MISMATCH, HELPER_VERIFY_MESSAGE_DECODE_FAILURE,
+    HELPER_VERIFY_SHARE_DECODE_FAILURE, LEADER_PING_PONG_MESSAGE_MISMATCH,
+    LEADER_VERIFY_MESSAGE_DECODE_FAILURE, LEADER_VERIFY_SHARE_DECODE_FAILURE, VERIFY_INIT_FAILURE,
+    VERIFY_MESSAGE_FAILURE, VERIFY_NEXT_FAILURE,
+};
 
 /// Errors returned by functions and methods in this module.
 ///
@@ -397,37 +407,46 @@ pub(crate) fn handle_ping_pong_error(
     aggregate_step_failure_counter: &Counter<u64>,
 ) -> ReportError {
     let peer_role = match role {
-        Role::Leader => Role::Helper,
-        Role::Helper => Role::Leader,
+        Role::Leader => AggregatorRole::Helper,
+        Role::Helper => AggregatorRole::Leader,
         // panic safety: role should be passed to this function as a literal, so passing a role that
         // isn't an aggregator is a straightforward programmer error and we want to fail noisily.
         _ => panic!("invalid role"),
     };
-    let (error_desc, value) = match ping_pong_error {
-        PingPongError::VdafVerifyInit(_) => (
+    let (error_desc, value) = match (&ping_pong_error, peer_role) {
+        (PingPongError::VdafVerifyInit(_), _) => (
             "Couldn't helper_initialize report share".to_string(),
-            "verify_init_failure".to_string(),
+            VERIFY_INIT_FAILURE,
         ),
-        PingPongError::VdafVerifierSharesToMessage(_) => (
+        (PingPongError::VdafVerifierSharesToMessage(_), _) => (
             "Couldn't compute verify message".to_string(),
-            "verify_message_failure".to_string(),
+            VERIFY_MESSAGE_FAILURE,
         ),
-        PingPongError::VdafVerifyNext(_) => (
-            "Verify next failed".to_string(),
-            "verify_next_failure".to_string(),
+        (PingPongError::VdafVerifyNext(_), _) => {
+            ("Verify next failed".to_string(), VERIFY_NEXT_FAILURE)
+        }
+        (PingPongError::CodecVerifierShare(_), AggregatorRole::Leader) => (
+            "Couldn't decode leader verify share".to_string(),
+            LEADER_VERIFY_SHARE_DECODE_FAILURE,
         ),
-        PingPongError::CodecVerifierShare(_) => (
-            format!("Couldn't decode {peer_role} verify share"),
-            format!("{peer_role}_verify_share_decode_failure"),
+        (PingPongError::CodecVerifierShare(_), AggregatorRole::Helper) => (
+            "Couldn't decode helper verify share".to_string(),
+            HELPER_VERIFY_SHARE_DECODE_FAILURE,
         ),
-        PingPongError::CodecVerifierMessage(_) => (
-            format!("Couldn't decode {peer_role} verify message"),
-            format!("{peer_role}_verify_message_decode_failure"),
+        (PingPongError::CodecVerifierMessage(_), AggregatorRole::Leader) => (
+            "Couldn't decode leader verify message".to_string(),
+            LEADER_VERIFY_MESSAGE_DECODE_FAILURE,
         ),
-        ref error @ PingPongError::PeerMessageMismatch { .. } => (
-            format!("{error}"),
-            format!("{peer_role}_ping_pong_message_mismatch"),
+        (PingPongError::CodecVerifierMessage(_), AggregatorRole::Helper) => (
+            "Couldn't decode helper verify message".to_string(),
+            HELPER_VERIFY_MESSAGE_DECODE_FAILURE,
         ),
+        (error @ PingPongError::PeerMessageMismatch { .. }, AggregatorRole::Leader) => {
+            (error.to_string(), LEADER_PING_PONG_MESSAGE_MISMATCH)
+        }
+        (error @ PingPongError::PeerMessageMismatch { .. }, AggregatorRole::Helper) => {
+            (error.to_string(), HELPER_PING_PONG_MESSAGE_MISMATCH)
+        }
         // enum PingPongError is non_exhaustive so we need a catch-all case
         error => panic!("unhandled PingPongError: {error:?}"),
     };

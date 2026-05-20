@@ -36,6 +36,12 @@ use crate::{
         error::handle_ping_pong_error,
     },
     cache::HpkeKeypairCache,
+    metrics::aggregate_step_failure_types::{
+        DECRYPT_FAILURE, DUPLICATE_EXTENSION, INPUT_SHARE_AAD_ENCODE_FAILURE,
+        INPUT_SHARE_DECODE_FAILURE, MISSING_OR_MALFORMED_TASKBIND_EXTENSION,
+        PLAINTEXT_INPUT_SHARE_DECODE_FAILURE, PUBLIC_SHARE_DECODE_FAILURE,
+        UNEXPECTED_TASKBIND_EXTENSION, UNKNOWN_HPKE_CONFIG_ID, UNRECOGNIZED_EXTENSION,
+    },
 };
 
 #[derive(Clone)]
@@ -157,7 +163,7 @@ where
                             );
                             metrics
                                 .aggregate_step_failure_counter
-                                .add(1, &[KeyValue::new("type", "unknown_hpke_config_id")]);
+                                .add(1, &[KeyValue::new("type", UNKNOWN_HPKE_CONFIG_ID)]);
                             ReportError::HpkeUnknownConfigId
                         });
 
@@ -177,7 +183,7 @@ where
                                 );
                                 metrics.aggregate_step_failure_counter.add(
                                     1,
-                                    &[KeyValue::new("type", "input_share_aad_encode_failure")],
+                                    &[KeyValue::new("type", INPUT_SHARE_AAD_ENCODE_FAILURE)],
                                 );
                                 // HpkeDecryptError isn't strictly accurate, but given that this
                                 // fallible encoding is part of the HPKE decryption process, I think
@@ -218,7 +224,7 @@ where
                                 );
                                 metrics
                                     .aggregate_step_failure_counter
-                                    .add(1, &[KeyValue::new("type", "decrypt_failure")]);
+                                    .add(1, &[KeyValue::new("type", DECRYPT_FAILURE)]);
                                 ReportError::HpkeDecryptError
                             })
                         });
@@ -235,7 +241,7 @@ where
                                         1,
                                         &[KeyValue::new(
                                             "type",
-                                            "plaintext_input_share_decode_failure",
+                                            PLAINTEXT_INPUT_SHARE_DECODE_FAILURE,
                                         )],
                                     );
                                     ReportError::InvalidMessage
@@ -258,7 +264,7 @@ where
                                     );
                                     metrics
                                         .aggregate_step_failure_counter
-                                        .add(1, &[KeyValue::new("type", "unrecognized_extension")]);
+                                        .add(1, &[KeyValue::new("type", UNRECOGNIZED_EXTENSION)]);
                                     return Err(ReportError::InvalidMessage);
                                 }
                                 if extensions
@@ -272,7 +278,7 @@ where
                                     );
                                     metrics
                                         .aggregate_step_failure_counter
-                                        .add(1, &[KeyValue::new("type", "duplicate_extension")]);
+                                        .add(1, &[KeyValue::new("type", DUPLICATE_EXTENSION)]);
                                     return Err(ReportError::InvalidMessage);
                                 }
                             }
@@ -293,7 +299,7 @@ where
                                         1,
                                         &[KeyValue::new(
                                             "type",
-                                            "missing_or_malformed_taskbind_extension",
+                                            MISSING_OR_MALFORMED_TASKBIND_EXTENSION,
                                         )],
                                     );
                                     return Err(ReportError::InvalidMessage);
@@ -308,7 +314,7 @@ where
                                 );
                                 metrics
                                     .aggregate_step_failure_counter
-                                    .add(1, &[KeyValue::new("type", "unexpected_taskbind_extension")]);
+                                    .add(1, &[KeyValue::new("type", UNEXPECTED_TASKBIND_EXTENSION)]);
                                 return Err(ReportError::InvalidMessage);
                             }
 
@@ -329,7 +335,7 @@ where
                                 );
                                 metrics
                                     .aggregate_step_failure_counter
-                                    .add(1, &[KeyValue::new("type", "input_share_decode_failure")]);
+                                    .add(1, &[KeyValue::new("type", INPUT_SHARE_DECODE_FAILURE)]);
                                 ReportError::InvalidMessage
                             })
                         });
@@ -346,7 +352,7 @@ where
                             );
                             metrics
                                 .aggregate_step_failure_counter
-                                .add(1, &[KeyValue::new("type", "public_share_decode_failure")]);
+                                .add(1, &[KeyValue::new("type", PUBLIC_SHARE_DECODE_FAILURE)]);
                             ReportError::InvalidMessage
                         });
 
