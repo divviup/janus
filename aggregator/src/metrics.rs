@@ -314,7 +314,43 @@ pub(crate) fn aggregated_report_share_dimension_histogram(meter: &Meter) -> Hist
 pub(crate) const AGGREGATION_JOB_SIZE_HISTOGRAM_BOUNDARIES: &[f64] =
     &[1.0, 3.0, 10.0, 30.0, 100.0, 300.0, 1000.0];
 
+/// Constants specifying possible values of the `janus_step_failures` counter's `type` label.
+pub(crate) mod aggregate_step_failure_types {
+    pub(crate) const VERIFY_INIT_FAILURE: &str = "verify_init_failure";
+    pub(crate) const VERIFY_NEXT_FAILURE: &str = "verify_next_failure";
+    pub(crate) const VERIFY_MESSAGE_FAILURE: &str = "verify_message_failure";
+    pub(crate) const UNKNOWN_HPKE_CONFIG_ID: &str = "unknown_hpke_config_id";
+    pub(crate) const DECRYPT_FAILURE: &str = "decrypt_failure";
+    pub(crate) const INPUT_SHARE_DECODE_FAILURE: &str = "input_share_decode_failure";
+    pub(crate) const INPUT_SHARE_AAD_ENCODE_FAILURE: &str = "input_share_aad_encode_failure";
+    pub(crate) const PUBLIC_SHARE_DECODE_FAILURE: &str = "public_share_decode_failure";
+    pub(crate) const PUBLIC_SHARE_ENCODE_FAILURE: &str = "public_share_encode_failure";
+    pub(crate) const LEADER_VERIFY_MESSAGE_DECODE_FAILURE: &str =
+        "leader_verify_message_decode_failure";
+    pub(crate) const HELPER_VERIFY_MESSAGE_DECODE_FAILURE: &str =
+        "helper_verify_message_decode_failure";
+    pub(crate) const LEADER_VERIFY_SHARE_DECODE_FAILURE: &str =
+        "leader_verify_share_decode_failure";
+    pub(crate) const HELPER_VERIFY_SHARE_DECODE_FAILURE: &str =
+        "helper_verify_share_decode_failure";
+    pub(crate) const LEADER_PING_PONG_MESSAGE_MISMATCH: &str = "leader_ping_pong_message_mismatch";
+    pub(crate) const HELPER_PING_PONG_MESSAGE_MISMATCH: &str = "helper_ping_pong_message_mismatch";
+    pub(crate) const CONTINUE_MISMATCH: &str = "continue_mismatch";
+    pub(crate) const ACCUMULATE_FAILURE: &str = "accumulate_failure";
+    pub(crate) const FINISH_MISMATCH: &str = "finish_mismatch";
+    pub(crate) const HELPER_STEP_FAILURE: &str = "helper_step_failure";
+    pub(crate) const PLAINTEXT_INPUT_SHARE_DECODE_FAILURE: &str =
+        "plaintext_input_share_decode_failure";
+    pub(crate) const DUPLICATE_EXTENSION: &str = "duplicate_extension";
+    pub(crate) const MISSING_OR_MALFORMED_TASKBIND_EXTENSION: &str =
+        "missing_or_malformed_taskbind_extension";
+    pub(crate) const UNEXPECTED_TASKBIND_EXTENSION: &str = "unexpected_taskbind_extension";
+    pub(crate) const UNRECOGNIZED_EXTENSION: &str = "unrecognized_extension";
+}
+
 pub(crate) fn aggregate_step_failure_counter(meter: &Meter) -> Counter<u64> {
+    use aggregate_step_failure_types::*;
+
     let aggregate_step_failure_counter = meter
         .u64_counter("janus_step_failures")
         .with_description(concat!(
@@ -327,30 +363,30 @@ pub(crate) fn aggregate_step_failure_counter(meter: &Meter) -> Counter<u64> {
     // Initialize counters with desired status labels. This causes Prometheus to see the first
     // non-zero value we record.
     for failure_type in [
-        "verify_init_failure",
-        "verify_next_failure",
-        "verify_message_failure",
-        "unknown_hpke_config_id",
-        "decrypt_failure",
-        "input_share_decode_failure",
-        "input_share_aad_encode_failure",
-        "public_share_decode_failure",
-        "public_share_encode_failure",
-        "leader_verify_message_decode_failure",
-        "helper_verify_message_decode_failure",
-        "leader_verify_share_decode_failure",
-        "helper_verify_share_decode_failure",
-        "leader_ping_pong_message_mismatch",
-        "helper_ping_pong_message_mismatch",
-        "continue_mismatch",
-        "accumulate_failure",
-        "finish_mismatch",
-        "helper_step_failure",
-        "plaintext_input_share_decode_failure",
-        "duplicate_extension",
-        "missing_or_malformed_taskbind_extension",
-        "unexpected_taskbind_extension",
-        "unrecognized_extension",
+        VERIFY_INIT_FAILURE,
+        VERIFY_NEXT_FAILURE,
+        VERIFY_MESSAGE_FAILURE,
+        UNKNOWN_HPKE_CONFIG_ID,
+        DECRYPT_FAILURE,
+        INPUT_SHARE_DECODE_FAILURE,
+        INPUT_SHARE_AAD_ENCODE_FAILURE,
+        PUBLIC_SHARE_DECODE_FAILURE,
+        PUBLIC_SHARE_ENCODE_FAILURE,
+        LEADER_VERIFY_MESSAGE_DECODE_FAILURE,
+        HELPER_VERIFY_MESSAGE_DECODE_FAILURE,
+        LEADER_VERIFY_SHARE_DECODE_FAILURE,
+        HELPER_VERIFY_SHARE_DECODE_FAILURE,
+        LEADER_PING_PONG_MESSAGE_MISMATCH,
+        HELPER_PING_PONG_MESSAGE_MISMATCH,
+        CONTINUE_MISMATCH,
+        ACCUMULATE_FAILURE,
+        FINISH_MISMATCH,
+        HELPER_STEP_FAILURE,
+        PLAINTEXT_INPUT_SHARE_DECODE_FAILURE,
+        DUPLICATE_EXTENSION,
+        MISSING_OR_MALFORMED_TASKBIND_EXTENSION,
+        UNEXPECTED_TASKBIND_EXTENSION,
+        UNRECOGNIZED_EXTENSION,
     ] {
         aggregate_step_failure_counter.add(0, &[KeyValue::new("type", failure_type)]);
     }

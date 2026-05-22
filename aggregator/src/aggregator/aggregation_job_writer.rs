@@ -32,7 +32,7 @@ use rand::{RngExt, rng};
 use tokio::try_join;
 use tracing::{Level, warn};
 
-use crate::Operation;
+use crate::{Operation, metrics::aggregate_step_failure_types::ACCUMULATE_FAILURE};
 
 /// Buffers pending writes to aggregation jobs and their report aggregations.
 pub struct AggregationJobWriter<const SEED_SIZE: usize, B, A, WT, RA>
@@ -753,7 +753,7 @@ where
                             self.writer.update_metrics(|metrics| {
                                 metrics
                                     .aggregate_step_failure_counter
-                                    .add(1, &[KeyValue::new("type", "accumulate_failure")])
+                                    .add(1, &[KeyValue::new("type", ACCUMULATE_FAILURE)])
                             });
                             self.writer
                                 .task_aggregation_counters

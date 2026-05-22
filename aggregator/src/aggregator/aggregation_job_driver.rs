@@ -72,6 +72,10 @@ use crate::{
     },
     cache::HpkeKeypairCache,
     metrics::{
+        aggregate_step_failure_types::{
+            CONTINUE_MISMATCH, DUPLICATE_EXTENSION, FINISH_MISMATCH, HELPER_STEP_FAILURE,
+            PUBLIC_SHARE_ENCODE_FAILURE,
+        },
         aggregated_report_share_dimension_histogram, early_report_clock_skew_histogram,
         keypair_use_counter, past_report_clock_skew_histogram,
     },
@@ -496,7 +500,7 @@ where
                             "Received report with duplicate extensions"
                         );
                         aggregate_step_failure_counter
-                            .add(1, &[KeyValue::new("type", "duplicate_extension")]);
+                            .add(1, &[KeyValue::new("type", DUPLICATE_EXTENSION)]);
                         return ra_sender.send(WritableReportAggregation::new(
                             report_aggregation.with_state(ReportAggregationState::Failed {
                                 report_error: ReportError::InvalidMessage,
@@ -511,7 +515,7 @@ where
                         Err(err) => {
                             debug!(report_id = %report_aggregation.report_id(), ?err, "Could not encode public share");
                             aggregate_step_failure_counter
-                                .add(1, &[KeyValue::new("type", "public_share_encode_failure")]);
+                                .add(1, &[KeyValue::new("type", PUBLIC_SHARE_ENCODE_FAILURE)]);
                             return ra_sender.send(WritableReportAggregation::new(
                                 report_aggregation.with_state(ReportAggregationState::Failed {
                                     report_error: ReportError::InvalidMessage,
@@ -1282,7 +1286,7 @@ where
                                     "Helper continued but Leader did not",
                                 );
                                 aggregate_step_failure_counter
-                                    .add(1, &[KeyValue::new("type", "continue_mismatch")]);
+                                    .add(1, &[KeyValue::new("type", CONTINUE_MISMATCH)]);
                                 task_aggregation_counters
                                     .increment_with_report_error(ReportError::VdafVerifyError);
                                 (
@@ -1307,7 +1311,7 @@ where
                                     "Helper finished but Leader did not",
                                 );
                                 aggregate_step_failure_counter
-                                    .add(1, &[KeyValue::new("type", "finish_mismatch")]);
+                                    .add(1, &[KeyValue::new("type", FINISH_MISMATCH)]);
                                 task_aggregation_counters
                                     .increment_with_report_error(ReportError::VdafVerifyError);
                                 (
@@ -1330,7 +1334,7 @@ where
                                     "Helper couldn't step report aggregation",
                                 );
                                 aggregate_step_failure_counter
-                                    .add(1, &[KeyValue::new("type", "helper_step_failure")]);
+                                    .add(1, &[KeyValue::new("type", HELPER_STEP_FAILURE)]);
                                 task_aggregation_counters.increment_with_helper_report_error(*err);
                                 (ReportAggregationState::Failed { report_error: *err }, None)
                             }
