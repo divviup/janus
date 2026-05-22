@@ -94,6 +94,10 @@ use crate::{
             handle_ping_pong_error,
         },
         report_writer::{ReportWriteBatcher, WritableReport},
+        upload_decode_failure_types::{
+            DUPLICATE_EXTENSION, INPUT_SHARE_DECODE_FAILURE, PUBLIC_SHARE_DECODE_FAILURE,
+            UNRECOGNIZED_EXTENSION,
+        },
     },
     cache::{
         HpkeKeypairCache, PeerAggregatorCache, TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY,
@@ -314,8 +318,10 @@ impl<C: Clock> Aggregator<C> {
             )
             .with_unit("{error}")
             .build();
-        upload_decode_failure_counter.add(0, &[]);
-        upload_decode_failure_counter.add(0, &[KeyValue::new("type", "duplicate_extension")]);
+        upload_decode_failure_counter.add(0, &[KeyValue::new("type", PUBLIC_SHARE_DECODE_FAILURE)]);
+        upload_decode_failure_counter.add(0, &[KeyValue::new("type", INPUT_SHARE_DECODE_FAILURE)]);
+        upload_decode_failure_counter.add(0, &[KeyValue::new("type", DUPLICATE_EXTENSION)]);
+        upload_decode_failure_counter.add(0, &[KeyValue::new("type", UNRECOGNIZED_EXTENSION)]);
 
         let report_aggregation_success_counter = report_aggregation_success_counter(meter);
         let aggregate_step_failure_counter = aggregate_step_failure_counter(meter);
@@ -1833,7 +1839,9 @@ impl VdafOps {
                         ?err,
                         "public share decoding failed",
                     );
-                    metrics.upload_decode_failure_counter.add(1, &[]);
+                    metrics
+                        .upload_decode_failure_counter
+                        .add(1, &[KeyValue::new("type", PUBLIC_SHARE_DECODE_FAILURE)]);
                     return Err(reject_report(ReportRejectionReason::DecodeFailure).await?);
                 }
             };
@@ -1910,7 +1918,9 @@ impl VdafOps {
                     ?err,
                     "Leader input share decoding failed",
                 );
-                metrics.upload_decode_failure_counter.add(1, &[]);
+                metrics
+                    .upload_decode_failure_counter
+                    .add(1, &[KeyValue::new("type", INPUT_SHARE_DECODE_FAILURE)]);
                 return Err(reject_report(ReportRejectionReason::DecodeFailure).await?);
             }
         };
@@ -1931,7 +1941,7 @@ impl VdafOps {
                 );
                 metrics
                     .upload_decode_failure_counter
-                    .add(1, &[KeyValue::new("type", "unrecognized_extension")]);
+                    .add(1, &[KeyValue::new("type", UNRECOGNIZED_EXTENSION)]);
                 return Err(reject_report(ReportRejectionReason::DecodeFailure).await?);
             }
             if extensions
@@ -1945,7 +1955,7 @@ impl VdafOps {
                 );
                 metrics
                     .upload_decode_failure_counter
-                    .add(1, &[KeyValue::new("type", "duplicate_extension")]);
+                    .add(1, &[KeyValue::new("type", DUPLICATE_EXTENSION)]);
                 return Err(reject_report(ReportRejectionReason::DuplicateExtension).await?);
             }
         }
@@ -3897,4 +3907,13 @@ async fn send_request_to_helper(
             Err(error.into())
         }
     }
+}
+
+/// Constants specifying possible values of the `janus_upload_decode_failures` counter's `type`
+/// label.
+mod upload_decode_failure_types {
+    pub(super) const DUPLICATE_EXTENSION: &str = "duplicate_extension";
+    pub(super) const UNRECOGNIZED_EXTENSION: &str = "unrecognized_extension";
+    pub(super) const INPUT_SHARE_DECODE_FAILURE: &str = "input_share_decode_failure";
+    pub(super) const PUBLIC_SHARE_DECODE_FAILURE: &str = "public_share_decode_failure";
 }
