@@ -7,7 +7,7 @@ variable "VERSION" {
 }
 
 variable "SQLX_VERSION" {
-  default = "0.7.2"
+  default = "0.9.0"
 }
 
 variable "GITHUB_REF_NAME" {}
