@@ -272,8 +272,11 @@ impl EphemeralDatastore {
             .await
             .unwrap();
 
+        // Versions of sqlx-postgres before 0.9.0 hard-coded the table name "_sqlx_migrations" for
+        // storing migration information. Newer versions allow different names, but other parts of
+        // Janus and Divvi Up deploy tools still assume and require exactly this name.
         let current_version = connection
-            .list_applied_migrations()
+            .list_applied_migrations("_sqlx_migrations")
             .await
             .unwrap()
             .iter()
