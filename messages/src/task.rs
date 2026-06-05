@@ -31,7 +31,7 @@ pub struct TaskConfiguration {
 }
 
 impl TaskConfiguration {
-    /// Validates that extension types are in strictly increasing order (per DAP-17 spec).
+    /// Validates that extension types are in strictly increasing order (per DAP-18 §4.2.2).
     fn validate_extensions(extensions: &[TaskExtension]) -> Result<(), Error> {
         for window in extensions.windows(2) {
             if window[0].extension_type() >= window[1].extension_type() {
@@ -95,7 +95,6 @@ impl TaskConfiguration {
         vdaf_config: VdafConfig,
         mut extensions: Vec<TaskExtension>,
     ) -> Result<Self, Error> {
-        Self::validate_extensions(&extensions)?;
         if extensions
             .iter()
             .any(|e| *e.extension_type() == TaskExtensionType::TaskInterval)

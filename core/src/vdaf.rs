@@ -78,7 +78,6 @@ pub enum VdafInstance {
     Prio3Sum { max_measurement: u64 },
     /// A vector of `Prio3` sums.
     Prio3SumVec {
-        // TODO: Make this field u128 to match incoming changes to draft-ietf-ppm-dap
         max_measurement: u64,
         length: usize,
         chunk_length: usize,
@@ -89,7 +88,6 @@ pub enum VdafInstance {
     /// different XOF.
     Prio3SumVecField64MultiproofHmacSha256Aes128 {
         proofs: u8,
-        // TODO: Make this field u128 to match incoming changes to draft-ietf-ppm-dap
         max_measurement: u64,
         length: usize,
         chunk_length: usize,
