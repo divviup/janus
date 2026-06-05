@@ -447,7 +447,7 @@ async fn taskprov_aggregate_init() {
     assert_eq!(got_task.task_info(), Some(b"foobar".as_slice()));
 }
 
-/// A taskprov `TaskConfiguration` may omit the optional `task_interval` extension (DAP-18
+/// A `TaskConfiguration` may omit the optional `task_interval` extension (DAP-18
 /// §4.2.3). When it does, opt-in must succeed and provision a task with no time bounds, which
 /// disables time-based report rejection — the same behavior as an API-provisioned task created
 /// without task_start/task_end.

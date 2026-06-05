@@ -33,14 +33,13 @@ pub struct TaskConfiguration {
 impl TaskConfiguration {
     /// Validates that extension types are in strictly increasing order (per DAP-18 §4.2.2).
     fn validate_extensions(extensions: &[TaskExtension]) -> Result<(), Error> {
-        for window in extensions.windows(2) {
-            if window[0].extension_type() >= window[1].extension_type() {
-                return Err(Error::InvalidParameter(
-                    "task extensions must be in strictly increasing order of extension_type",
-                ));
-            }
+        if extensions.is_sorted_by(|a, b| a.extension_type() < b.extension_type()) {
+            Ok(())
+        } else {
+            Err(Error::InvalidParameter(
+                "task extensions must be in strictly increasing order of extension_type",
+            ))
         }
-        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -271,10 +270,6 @@ pub enum VdafConfig {
         /// Largest vector weight.
         max_weight: u64,
     },
-    Poplar1 {
-        /// Bit length of the input string.
-        bits: u16,
-    },
 
     #[cfg(feature = "test-util")]
     #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
@@ -304,7 +299,6 @@ impl VdafConfig {
     const PRIO3_SUM_VEC: u32 = 0x00000003;
     const PRIO3_HISTOGRAM: u32 = 0x00000004;
     const PRIO3_MULTIHOT_COUNT_VEC: u32 = 0x00000005;
-    const POPLAR1: u32 = 0x00000006;
 
     #[cfg(feature = "test-util")]
     const FAKE: u32 = 0xFFFF0000;
@@ -318,7 +312,6 @@ impl VdafConfig {
             Self::Prio3SumVec { .. } => Self::PRIO3_SUM_VEC,
             Self::Prio3Histogram { .. } => Self::PRIO3_HISTOGRAM,
             Self::Prio3MultihotCountVec { .. } => Self::PRIO3_MULTIHOT_COUNT_VEC,
-            Self::Poplar1 { .. } => Self::POPLAR1,
 
             #[cfg(feature = "test-util")]
             Self::Fake { .. } => Self::FAKE,
@@ -337,7 +330,6 @@ impl VdafConfig {
             Self::Prio3SumVec { .. } => 16,
             Self::Prio3Histogram { .. } => 8,
             Self::Prio3MultihotCountVec { .. } => 16,
-            Self::Poplar1 { .. } => 2,
 
             #[cfg(feature = "test-util")]
             Self::Fake { .. } => 4,
@@ -385,9 +377,6 @@ impl Encode for VdafConfig {
                 length.encode(bytes)?;
                 chunk_length.encode(bytes)?;
                 max_weight.encode(bytes)?;
-            }
-            Self::Poplar1 { bits } => {
-                bits.encode(bytes)?;
             }
 
             #[cfg(feature = "test-util")]
@@ -455,9 +444,6 @@ impl Decode for VdafConfig {
                 length: u32::decode(&mut sub)?,
                 chunk_length: u32::decode(&mut sub)?,
                 max_weight: u64::decode(&mut sub)?,
-            },
-            Self::POPLAR1 => Self::Poplar1 {
-                bits: u16::decode(&mut sub)?,
             },
 
             #[cfg(feature = "test-util")]
@@ -583,27 +569,31 @@ pub enum TaskExtensionType {
 impl TaskExtensionType {
     const RESERVED: u16 = 0x0000;
     const TASK_INTERVAL: u16 = 0x0001;
+}
 
-    fn from_u16(val: u16) -> Self {
-        match val {
+impl From<u16> for TaskExtensionType {
+    fn from(value: u16) -> Self {
+        match value {
             Self::RESERVED => Self::Reserved,
             Self::TASK_INTERVAL => Self::TaskInterval,
             other => Self::Unknown(other),
         }
     }
+}
 
-    fn to_u16(self) -> u16 {
-        match self {
-            Self::Reserved => Self::RESERVED,
-            Self::TaskInterval => Self::TASK_INTERVAL,
-            Self::Unknown(val) => val,
+impl From<TaskExtensionType> for u16 {
+    fn from(value: TaskExtensionType) -> Self {
+        match value {
+            TaskExtensionType::Reserved => TaskExtensionType::RESERVED,
+            TaskExtensionType::TaskInterval => TaskExtensionType::TASK_INTERVAL,
+            TaskExtensionType::Unknown(val) => val,
         }
     }
 }
 
 impl PartialEq for TaskExtensionType {
     fn eq(&self, other: &Self) -> bool {
-        self.to_u16() == other.to_u16()
+        u16::from(*self) == u16::from(*other)
     }
 }
 
@@ -611,7 +601,7 @@ impl Eq for TaskExtensionType {}
 
 impl Hash for TaskExtensionType {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.to_u16().hash(state)
+        u16::from(*self).hash(state)
     }
 }
 
@@ -623,13 +613,13 @@ impl PartialOrd for TaskExtensionType {
 
 impl Ord for TaskExtensionType {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.to_u16().cmp(&other.to_u16())
+        u16::from(*self).cmp(&u16::from(*other))
     }
 }
 
 impl Encode for TaskExtensionType {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
-        self.to_u16().encode(bytes)
+        u16::from(*self).encode(bytes)
     }
 
     fn encoded_len(&self) -> Option<usize> {
@@ -640,6 +630,6 @@ impl Encode for TaskExtensionType {
 impl Decode for TaskExtensionType {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let val = u16::decode(bytes)?;
-        Ok(Self::from_u16(val))
+        Ok(Self::from(val))
     }
 }

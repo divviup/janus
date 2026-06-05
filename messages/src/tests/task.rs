@@ -275,17 +275,6 @@ fn roundtrip_vdaf_config() {
             ),
         ),
         (
-            VdafConfig::Poplar1 { bits: 32 },
-            concat!(
-                "00000006", // vdaf_type
-                "0002",     // vdaf_config length
-                concat!(
-                    // vdaf_config
-                    "0020", // bits
-                ),
-            ),
-        ),
-        (
             VdafConfig::Fake { rounds: 15 },
             concat!(
                 "FFFF0000", // vdaf_type
