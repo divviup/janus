@@ -1,4 +1,5 @@
 //! Task configuration data structures as defined in DAP-18[1].
+//!
 //! [1]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/18/
 
 use std::{
