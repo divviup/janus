@@ -715,7 +715,7 @@ INSERT INTO tasks (
     task_id, aggregator_role, aggregation_mode, peer_aggregator_endpoint,
     batch_mode, vdaf, task_start, task_end, report_expiry_age, min_batch_size,
     time_precision, tolerable_clock_skew, collector_hpke_config,
-    vdaf_verify_key, taskprov_task_info, aggregator_auth_token_type,
+    vdaf_verify_key, task_info, aggregator_auth_token_type,
     aggregator_auth_token, aggregator_auth_token_hash,
     collector_auth_token_type, collector_auth_token_hash, created_at,
     updated_at, updated_by)
@@ -773,8 +773,8 @@ ON CONFLICT DO NOTHING",
                         "vdaf_verify_key",
                         task.opaque_vdaf_verify_key().as_ref(),
                     )?,
-                    /* taskprov_task_info */
-                    &task.taskprov_task_info(),
+                    /* task_info */
+                    &task.task_info(),
                     /* aggregator_auth_token_type */
                     &task
                         .aggregator_auth_token()
@@ -882,7 +882,7 @@ SELECT
     aggregator_role, aggregation_mode, peer_aggregator_endpoint, batch_mode,
     vdaf, task_start, task_end, report_expiry_age, min_batch_size,
     time_precision, tolerable_clock_skew, collector_hpke_config,
-    vdaf_verify_key, taskprov_task_info, aggregator_auth_token_type,
+    vdaf_verify_key, task_info, aggregator_auth_token_type,
     aggregator_auth_token, aggregator_auth_token_hash,
     collector_auth_token_type, collector_auth_token_hash
 FROM tasks WHERE task_id = $1",
@@ -905,7 +905,7 @@ SELECT
     task_id, aggregator_role, aggregation_mode, peer_aggregator_endpoint,
     batch_mode, vdaf, task_start, task_end, report_expiry_age, min_batch_size,
     time_precision, tolerable_clock_skew, collector_hpke_config,
-    vdaf_verify_key, taskprov_task_info, aggregator_auth_token_type,
+    vdaf_verify_key, task_info, aggregator_auth_token_type,
     aggregator_auth_token, aggregator_auth_token_hash,
     collector_auth_token_type, collector_auth_token_hash
 FROM tasks",
@@ -957,7 +957,7 @@ FROM tasks",
                 &encrypted_vdaf_verify_key,
             )
             .map(SecretBytes::new)?;
-        let taskprov_task_info: Option<Vec<u8>> = row.get("taskprov_task_info");
+        let task_info: Option<Vec<u8>> = row.get("task_info");
 
         let aggregator_auth_token_type: Option<AuthenticationTokenType> =
             row.get("aggregator_auth_token_type");
@@ -1043,8 +1043,8 @@ FROM tasks",
             tolerable_clock_skew,
             aggregator_parameters,
         )?;
-        if let Some(taskprov_task_info) = taskprov_task_info {
-            task = task.with_taskprov_task_info(taskprov_task_info);
+        if let Some(task_info) = task_info {
+            task = task.with_task_info(task_info);
         }
         Ok(task)
     }

@@ -56,9 +56,8 @@ use janus_messages::{
     AggregationJobStep, BatchSelector, CollectionJobId, CollectionJobReq, CollectionJobResp,
     Duration, ExtensionType, HpkeConfig, HpkeConfigList, InputShareAad, Interval,
     PartialBatchSelector, PlaintextInputShare, Report, ReportError, ReportUploadStatus, Role,
-    TaskId, UploadErrors, VerifyResp,
+    TaskConfiguration, TaskId, UploadErrors, VerifyResp,
     batch_mode::{LeaderSelected, TimeInterval},
-    taskprov::TaskConfig,
 };
 use opentelemetry::{
     KeyValue,
@@ -408,7 +407,7 @@ impl<C: Clock> Aggregator<C> {
         aggregation_job_id: &AggregationJobId,
         req_bytes: &[u8],
         auth_token: Option<AuthenticationToken>,
-        taskprov_task_config: Option<&TaskConfig>,
+        taskprov_task_config: Option<&TaskConfiguration>,
     ) -> Result<Option<AggregationJobResp>, Error> {
         let task_aggregator = match self.task_aggregators.get(task_id).await? {
             Some(task_aggregator) => {
@@ -482,7 +481,7 @@ impl<C: Clock> Aggregator<C> {
         aggregation_job_id: &AggregationJobId,
         req_bytes: &[u8],
         auth_token: Option<AuthenticationToken>,
-        taskprov_task_config: Option<&TaskConfig>,
+        taskprov_task_config: Option<&TaskConfiguration>,
     ) -> Result<AggregationJobContinueResult, Error> {
         let task_aggregator = self
             .task_aggregators
@@ -536,7 +535,7 @@ impl<C: Clock> Aggregator<C> {
         task_id: &TaskId,
         aggregation_job_id: &AggregationJobId,
         auth_token: Option<AuthenticationToken>,
-        taskprov_task_config: Option<&TaskConfig>,
+        taskprov_task_config: Option<&TaskConfiguration>,
         step: AggregationJobStep,
     ) -> Result<Option<AggregationJobResp>, Error> {
         let task_aggregator = self
@@ -583,7 +582,7 @@ impl<C: Clock> Aggregator<C> {
         task_id: &TaskId,
         aggregation_job_id: &AggregationJobId,
         auth_token: Option<AuthenticationToken>,
-        taskprov_task_config: Option<&TaskConfig>,
+        taskprov_task_config: Option<&TaskConfiguration>,
     ) -> Result<(), Error> {
         let task_aggregator = self
             .task_aggregators
@@ -713,7 +712,7 @@ impl<C: Clock> Aggregator<C> {
         &self,
         task: &AggregatorTask,
         auth_token: Option<AuthenticationToken>,
-        taskprov_task_config: Option<&TaskConfig>,
+        taskprov_task_config: Option<&TaskConfiguration>,
     ) -> Result<HpkeConfig, Error> {
         if task.role() != &Role::Helper {
             return Err(Error::UnrecognizedTask(*task.id()));
@@ -756,7 +755,7 @@ impl<C: Clock> Aggregator<C> {
         aggregate_share_id: &AggregateShareId,
         req_bytes: &[u8],
         auth_token: Option<AuthenticationToken>,
-        taskprov_task_config: Option<&TaskConfig>,
+        taskprov_task_config: Option<&TaskConfiguration>,
     ) -> Result<AggregateShare, Error> {
         let task_aggregator = self
             .task_aggregators
@@ -792,7 +791,7 @@ impl<C: Clock> Aggregator<C> {
         task_id: &TaskId,
         aggregate_share_id: &AggregateShareId,
         auth_token: Option<AuthenticationToken>,
-        taskprov_task_config: Option<&TaskConfig>,
+        taskprov_task_config: Option<&TaskConfiguration>,
     ) -> Result<AggregateShare, Error> {
         let task_aggregator = self
             .task_aggregators
@@ -817,7 +816,7 @@ impl<C: Clock> Aggregator<C> {
         task_id: &TaskId,
         aggregate_share_id: &AggregateShareId,
         auth_token: Option<AuthenticationToken>,
-        taskprov_task_config: Option<&TaskConfig>,
+        taskprov_task_config: Option<&TaskConfiguration>,
     ) -> Result<(), Error> {
         let task_aggregator = self
             .task_aggregators
@@ -845,7 +844,7 @@ impl<C: Clock> Aggregator<C> {
         &self,
         peer_role: &Role,
         task_id: &TaskId,
-        task_config: &TaskConfig,
+        task_config: &TaskConfiguration,
         aggregator_auth_token: Option<&AuthenticationToken>,
     ) -> Result<(), Error> {
         let (peer_aggregator, leader_url, _) = self
@@ -861,9 +860,16 @@ impl<C: Clock> Aggregator<C> {
 
         let vdaf_verify_key = peer_aggregator.derive_vdaf_verify_key(task_id, &vdaf_instance);
 
-        let task_end = task_config
-            .task_start()
-            .add_duration(task_config.task_duration())?;
+        let (task_start, task_end) = match task_config.task_interval()? {
+            Some(interval) => {
+                let start = interval.start();
+                (Some(start), Some(start.add_duration(&interval.duration())?))
+            }
+            // task_interval is optional per DAP-18 §4.2.3; when absent the task has no time
+            // bounds, so time-based report rejection is skipped (the same behavior as
+            // API-provisioned tasks created without task_start/task_end).
+            None => (None, None),
+        };
 
         let report_expiry_age = peer_aggregator
             .report_expiry_age()
@@ -876,10 +882,10 @@ impl<C: Clock> Aggregator<C> {
                 BatchMode::try_from(*task_config.batch_mode())?,
                 vdaf_instance,
                 vdaf_verify_key,
-                Some(*task_config.task_start()),
-                Some(task_end),
+                task_start,
+                task_end,
                 report_expiry_age,
-                u64::from(*task_config.min_batch_size()),
+                task_config.min_batch_size(),
                 *task_config.time_precision(),
                 /* tolerable clock skew */
                 Duration::ONE,
@@ -894,7 +900,7 @@ impl<C: Clock> Aggregator<C> {
                 },
             )
             .map_err(|err| Error::InvalidTask(*task_id, OptOutReason::TaskParameters(err)))?
-            .with_taskprov_task_info(task_config.task_info().to_vec()),
+            .with_task_info(task_config.task_info().to_vec()),
         );
         self.datastore
             .run_tx("taskprov_put_task", |tx| {
@@ -931,7 +937,7 @@ impl<C: Clock> Aggregator<C> {
         &self,
         peer_role: &Role,
         task_id: &TaskId,
-        task_config: &TaskConfig,
+        task_config: &TaskConfiguration,
         aggregator_auth_token: Option<&AuthenticationToken>,
     ) -> Result<(&PeerAggregator, Url, Url), Error> {
         let peer_aggregator_url = match peer_role {
