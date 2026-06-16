@@ -42,7 +42,7 @@ COPY tools /src/tools
 COPY xtask /src/xtask
 RUN cargo build --profile $PROFILE -p janus_interop_binaries
 
-FROM alpine:3.24.0 AS final
+FROM alpine:3.24.1 AS final
 ARG BINARY
 ARG PROFILE
 RUN mkdir /logs
