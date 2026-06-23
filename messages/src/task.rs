@@ -577,14 +577,9 @@ impl Decode for VdafConfig {
             }
         };
 
-        if sub.position() as usize != vdaf_config_len {
-            return Err(CodecError::Other(
-                anyhow!(
-                    "vdaf_configuration has {} trailing bytes",
-                    vdaf_config_len - sub.position() as usize
-                )
-                .into(),
-            ));
+        let trailing = vdaf_config_len - sub.position() as usize;
+        if trailing != 0 {
+            return Err(CodecError::BytesLeftOver(trailing));
         }
 
         Ok(vdaf_config)

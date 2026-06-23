@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use assert_matches::assert_matches;
 use prio::codec::{CodecError, Decode as _, Encode as _};
 
@@ -415,7 +417,7 @@ fn vdaf_config_wrong_length_prefix() {
             ))
             .unwrap(),
         ),
-        Err(CodecError::Other(_))
+        Err(CodecError::BytesLeftOver(4))
     );
 
     // Prio3Sum with a length prefix of 12 instead of 8, followed by extra bytes.
@@ -429,7 +431,7 @@ fn vdaf_config_wrong_length_prefix() {
             ))
             .unwrap(),
         ),
-        Err(CodecError::Other(_))
+        Err(CodecError::BytesLeftOver(4))
     );
 
     // Length prefix too short — sub-buffer won't have enough bytes for the variant.
@@ -946,8 +948,6 @@ fn decode_unknown_task_extension_type_from_wire() {
 
 #[test]
 fn task_extension_type_equality_by_codepoint() {
-    use std::collections::HashSet;
-
     // Equality, ordering, and hashing are all defined by the underlying codepoint, so an
     // Unknown that aliases a named codepoint compares and hashes equal to the named variant.
     assert_eq!(
