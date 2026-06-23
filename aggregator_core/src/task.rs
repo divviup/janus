@@ -10,8 +10,8 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    AggregateShareId, AggregationJobId, AggregationJobStep, Duration, HpkeConfig, Role, TaskId,
-    Time, TimePrecision, batch_mode,
+    AggregateShareId, AggregationJobId, AggregationJobStep, BatchConfig, Duration, HpkeConfig,
+    Role, TaskId, Time, TimePrecision, batch_mode,
 };
 use postgres_types::{FromSql, ToSql};
 use rand::{RngExt, distr::StandardUniform, random, rng};
@@ -63,6 +63,22 @@ impl TryFrom<batch_mode::Code> for BatchMode {
             batch_mode::Code::LeaderSelected => Ok(Self::LeaderSelected {
                 batch_time_window_size: None,
             }),
+            batch_mode::Code::Reserved => Err(Error::InvalidParameter("reserved batch mode")),
+            _ => Err(Error::InvalidParameter("unknown batch mode")),
+        }
+    }
+}
+
+impl TryFrom<&BatchConfig> for BatchMode {
+    type Error = Error;
+
+    fn try_from(value: &BatchConfig) -> Result<Self, Self::Error> {
+        match value {
+            BatchConfig::TimeInterval => Ok(Self::TimeInterval),
+            BatchConfig::LeaderSelected => Ok(Self::LeaderSelected {
+                batch_time_window_size: None,
+            }),
+            BatchConfig::Reserved => Err(Error::InvalidParameter("reserved batch mode")),
             _ => Err(Error::InvalidParameter("unknown batch mode")),
         }
     }

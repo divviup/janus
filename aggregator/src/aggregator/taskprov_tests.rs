@@ -34,11 +34,11 @@ use janus_core::{
 use janus_messages::{
     AggregateShare as AggregateShareMessage, AggregateShareAad, AggregateShareId,
     AggregateShareReq, AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq,
-    AggregationJobResp, AggregationJobStep, BatchSelector, Duration, Extension, ExtensionType,
-    Interval, MediaType, PartialBatchSelector, ReportError, ReportIdChecksum, ReportShare, Role,
-    TaskConfiguration, TaskId, Time, TimePrecision, VdafConfig, VerifyContinue, VerifyInit,
-    VerifyResp, VerifyStepResult,
-    batch_mode::{self, LeaderSelected},
+    AggregationJobResp, AggregationJobStep, BatchConfig, BatchSelector, Duration, Extension,
+    ExtensionType, Interval, MediaType, PartialBatchSelector, ReportError, ReportIdChecksum,
+    ReportShare, Role, TaskConfiguration, TaskConfigurationBuilder, TaskId, Time, TimePrecision,
+    VdafConfig, VerifyContinue, VerifyInit, VerifyResp, VerifyStepResult,
+    batch_mode::LeaderSelected,
     codec::{Decode, Encode},
 };
 use prio::{
@@ -170,34 +170,23 @@ where
         let task_start = clock.now();
         let time_precision = TimePrecision::from_seconds(60);
         let task_duration = Duration::from_hours(24, &time_precision);
+        let task_config_builder = TaskConfigurationBuilder::new(
+            Vec::from("foobar".as_bytes()),
+            "https://leader.example.com/".as_bytes().try_into().unwrap(),
+            "https://helper.example.com/".as_bytes().try_into().unwrap(),
+            time_precision,
+            min_batch_size,
+            BatchConfig::LeaderSelected,
+            vdaf_config,
+        );
         let task_config = if include_task_interval {
-            TaskConfiguration::new_with_task_interval(
-                Vec::from("foobar".as_bytes()),
-                "https://leader.example.com/".as_bytes().try_into().unwrap(),
-                "https://helper.example.com/".as_bytes().try_into().unwrap(),
-                time_precision,
-                min_batch_size,
-                batch_mode::Code::LeaderSelected,
-                Vec::new(),
-                task_start.to_time(&time_precision),
-                task_duration,
-                vdaf_config,
-                Vec::new(),
-            )
-            .unwrap()
+            task_config_builder
+                .with_task_interval(task_start.to_time(&time_precision), task_duration)
+                .unwrap()
+                .build()
+                .unwrap()
         } else {
-            TaskConfiguration::new(
-                Vec::from("foobar".as_bytes()),
-                "https://leader.example.com/".as_bytes().try_into().unwrap(),
-                "https://helper.example.com/".as_bytes().try_into().unwrap(),
-                time_precision,
-                min_batch_size,
-                batch_mode::Code::LeaderSelected,
-                Vec::new(),
-                vdaf_config,
-                Vec::new(),
-            )
-            .unwrap()
+            task_config_builder.build().unwrap()
         };
 
         let task_config_encoded = task_config.get_encoded().unwrap();
@@ -456,7 +445,7 @@ async fn taskprov_aggregate_init_without_task_interval() {
     let test = TaskprovTestCase::without_task_interval().await;
 
     // Sanity check: the advertised config really has no task_interval extension.
-    assert!(test.task_config.task_interval().unwrap().is_none());
+    assert!(test.task_config.task_interval().is_none());
 
     let (transcript, report_share, aggregation_param) = test.next_report_share();
     let batch_id = random();
@@ -777,19 +766,21 @@ async fn taskprov_opt_out_mismatched_task_id() {
 
     let aggregation_job_id: AggregationJobId = random();
 
-    let another_task_config = TaskConfiguration::new_with_task_interval(
+    let another_task_config = TaskConfigurationBuilder::new(
         Vec::from("foobar".as_bytes()),
         "https://leader.example.com/".as_bytes().try_into().unwrap(),
         "https://helper.example.com/".as_bytes().try_into().unwrap(),
         *test.task.time_precision(),
         100,
-        batch_mode::Code::LeaderSelected,
-        Vec::new(),
+        BatchConfig::LeaderSelected,
+        VdafConfig::Fake { rounds: 2 },
+    )
+    .with_task_interval(
         test.clock.now().to_time(test.task.time_precision()),
         Duration::from_hours(24, test.task.time_precision()),
-        VdafConfig::Fake { rounds: 2 },
-        Vec::new(),
     )
+    .unwrap()
+    .build()
     .unwrap();
 
     let mut response = test
@@ -853,20 +844,22 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
 
     let aggregation_job_id: AggregationJobId = random();
 
-    let another_task_config = TaskConfiguration::new_with_task_interval(
+    let another_task_config = TaskConfigurationBuilder::new(
         Vec::from("foobar".as_bytes()),
         // Attempt to configure leader as a helper.
         "https://helper.example.com/".as_bytes().try_into().unwrap(),
         "https://leader.example.com/".as_bytes().try_into().unwrap(),
         *test.task.time_precision(),
         100,
-        batch_mode::Code::LeaderSelected,
-        Vec::new(),
+        BatchConfig::LeaderSelected,
+        VdafConfig::Fake { rounds: 2 },
+    )
+    .with_task_interval(
         test.clock.now().to_time(test.task.time_precision()),
         Duration::from_hours(24, test.task.time_precision()),
-        VdafConfig::Fake { rounds: 2 },
-        Vec::new(),
     )
+    .unwrap()
+    .build()
     .unwrap();
     let another_task_config_encoded = another_task_config.get_encoded().unwrap();
     let another_task_id = taskprov_task_id(&another_task_config_encoded);
@@ -927,20 +920,22 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
 
     let aggregation_job_id: AggregationJobId = random();
 
-    let another_task_config = TaskConfiguration::new_with_task_interval(
+    let another_task_config = TaskConfigurationBuilder::new(
         Vec::from("foobar".as_bytes()),
         // Some non-existent aggregator.
         "https://foobar.example.com/".as_bytes().try_into().unwrap(),
         "https://leader.example.com/".as_bytes().try_into().unwrap(),
         *test.task.time_precision(),
         100,
-        batch_mode::Code::LeaderSelected,
-        Vec::new(),
+        BatchConfig::LeaderSelected,
+        VdafConfig::Fake { rounds: 2 },
+    )
+    .with_task_interval(
         test.clock.now().to_time(test.task.time_precision()),
         Duration::from_hours(24, test.task.time_precision()),
-        VdafConfig::Fake { rounds: 2 },
-        Vec::new(),
     )
+    .unwrap()
+    .build()
     .unwrap();
     let another_task_config_encoded = another_task_config.get_encoded().unwrap();
     let another_task_id = taskprov_task_id(&another_task_config_encoded);

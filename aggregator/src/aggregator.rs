@@ -860,7 +860,7 @@ impl<C: Clock> Aggregator<C> {
 
         let vdaf_verify_key = peer_aggregator.derive_vdaf_verify_key(task_id, &vdaf_instance);
 
-        let (task_start, task_end) = match task_config.task_interval()? {
+        let (task_start, task_end) = match task_config.task_interval() {
             Some(interval) => {
                 let start = interval.start();
                 (Some(start), Some(start.add_duration(&interval.duration())?))
@@ -879,7 +879,7 @@ impl<C: Clock> Aggregator<C> {
             AggregatorTask::new(
                 *task_id,
                 leader_url,
-                BatchMode::try_from(*task_config.batch_mode())?,
+                BatchMode::try_from(task_config.batch_config())?,
                 vdaf_instance,
                 vdaf_verify_key,
                 task_start,
