@@ -16,7 +16,7 @@ use janus_core::{
 };
 use janus_messages::{
     ExtensionType, InputShareAad, PlaintextInputShare, ReportError, Role, VerifyResp,
-    VerifyStepResult,
+    VerifyStepResult, extensions_are_strictly_increasing,
 };
 use opentelemetry::{
     KeyValue,
@@ -41,6 +41,7 @@ use crate::{
         INPUT_SHARE_DECODE_FAILURE, MISSING_OR_MALFORMED_TASKBIND_EXTENSION,
         PLAINTEXT_INPUT_SHARE_DECODE_FAILURE, PUBLIC_SHARE_DECODE_FAILURE,
         UNEXPECTED_TASKBIND_EXTENSION, UNKNOWN_HPKE_CONFIG_ID, UNRECOGNIZED_EXTENSION,
+        UNSORTED_EXTENSION,
     },
 };
 
@@ -246,6 +247,23 @@ where
                                     );
                                     ReportError::InvalidMessage
                                 })?;
+
+                            // Public extensions must be in strictly increasing order of extension
+                            // type (DAP-18 §4.4.3); private extensions are validated when the
+                            // plaintext input share is decoded.
+                            if !extensions_are_strictly_increasing(
+                                verify_init.report_share().metadata().public_extensions(),
+                            ) {
+                                debug!(
+                                    task_id = %task.id(),
+                                    report_id = ?verify_init.report_share().metadata().id(),
+                                    "Received report share with unsorted public extensions",
+                                );
+                                metrics
+                                    .aggregate_step_failure_counter
+                                    .add(1, &[KeyValue::new("type", UNSORTED_EXTENSION)]);
+                                return Err(ReportError::InvalidMessage);
+                            }
 
                             // Check for unrecognized extension types (§4.6.2.4 step 5 [dap-16]) and
                             // duplicate extensions (§4.6.2.4 step 6 [dap-16]) in a single pass.

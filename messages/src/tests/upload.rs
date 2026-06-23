@@ -103,6 +103,41 @@ fn roundtrip_report_metadata() {
 }
 
 #[test]
+fn plaintext_input_share_rejects_unordered_extensions() {
+    use prio::codec::Decode;
+
+    // A private_extensions list followed by an empty payload.
+    let payload = "00000000"; // payload length 0
+
+    // Strictly increasing order (0x0000 then 0xFF00) decodes successfully.
+    let ordered = concat!(
+        "0008", // length
+        "0000", "0000", // extension_type 0x0000, empty data
+        "FF00", "0000", // extension_type 0xFF00, empty data
+    );
+    PlaintextInputShare::get_decoded(&hex::decode([ordered, payload].concat()).unwrap())
+        .expect("strictly increasing extensions should decode");
+
+    // Out of order (0xFF00 then 0x0000) is rejected.
+    let unordered = concat!(
+        "0008", // length
+        "FF00", "0000", // extension_type 0xFF00, empty data
+        "0000", "0000", // extension_type 0x0000, empty data
+    );
+    PlaintextInputShare::get_decoded(&hex::decode([unordered, payload].concat()).unwrap())
+        .expect_err("out-of-order extensions should be rejected");
+
+    // Duplicate extension types (not strictly increasing) are rejected.
+    let duplicate = concat!(
+        "0008", // length
+        "0000", "0000", // extension_type 0x0000, empty data
+        "0000", "0000", // extension_type 0x0000, empty data
+    );
+    PlaintextInputShare::get_decoded(&hex::decode([duplicate, payload].concat()).unwrap())
+        .expect_err("duplicate extension types should be rejected");
+}
+
+#[test]
 fn roundtrip_plaintext_input_share() {
     roundtrip_encoding(&[
         (

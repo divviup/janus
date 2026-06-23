@@ -7,7 +7,9 @@ use core::slice;
 #[cfg(test)]
 use std::borrow::Borrow;
 use std::{
+    cmp::Ordering,
     fmt::{self, Debug, Display, Formatter},
+    hash::{Hash, Hasher},
     io::{Cursor, Read},
     num::TryFromIntError,
     str::{self, FromStr},
@@ -856,8 +858,17 @@ impl Decode for Extension {
     }
 }
 
+/// Returns `true` if `extensions` are in strictly increasing order of `extension_type`, as required
+/// for report extensions by DAP-18 §4.4.3. This also rules out repeated extension types.
+pub fn extensions_are_strictly_increasing(extensions: &[Extension]) -> bool {
+    extensions.is_sorted_by(|a, b| a.extension_type() < b.extension_type())
+}
+
 /// DAP protocol message representing the type of an extension included in a client report.
-#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
+///
+/// Equality, ordering, and hashing are all defined in terms of the underlying codepoint, so
+/// `Unknown(0x0000)` compares and hashes equal to `Reserved`.
+#[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub enum ExtensionType {
     Reserved,
@@ -881,6 +892,32 @@ impl ExtensionType {
             Self::Taskbind => Self::TASKBIND,
             Self::Unknown(val) => val,
         }
+    }
+}
+
+impl PartialEq for ExtensionType {
+    fn eq(&self, other: &Self) -> bool {
+        self.to_u16() == other.to_u16()
+    }
+}
+
+impl Eq for ExtensionType {}
+
+impl Hash for ExtensionType {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.to_u16().hash(state)
+    }
+}
+
+impl PartialOrd for ExtensionType {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ExtensionType {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.to_u16().cmp(&other.to_u16())
     }
 }
 
@@ -1261,6 +1298,8 @@ impl Decode for ReportMetadata {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let report_id = ReportId::decode(bytes)?;
         let time = Time::decode(bytes)?;
+        // Public extension ordering is validated per-report by the aggregator rather than here, so
+        // one malformed report doesn't fail decoding of a whole batched `AggregationJobInitReq`.
         let public_extensions = decode_u16_items(&(), bytes)?;
 
         Ok(Self {
@@ -1317,7 +1356,17 @@ impl Encode for PlaintextInputShare {
 
 impl Decode for PlaintextInputShare {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        // Private extensions are decoded per-report after HPKE decryption, so a decode-time
+        // rejection fails only the offending report.
         let private_extensions = decode_u16_items(&(), bytes)?;
+        if !extensions_are_strictly_increasing(&private_extensions) {
+            return Err(CodecError::Other(
+                anyhow!(
+                    "private extensions must be in strictly increasing order of extension_type"
+                )
+                .into(),
+            ));
+        }
         let payload = decode_u32_items(&(), bytes)?;
 
         Ok(Self {

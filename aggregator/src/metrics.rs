@@ -342,6 +342,7 @@ pub(crate) mod aggregate_step_failure_types {
     pub(crate) const PLAINTEXT_INPUT_SHARE_DECODE_FAILURE: &str =
         "plaintext_input_share_decode_failure";
     pub(crate) const DUPLICATE_EXTENSION: &str = "duplicate_extension";
+    pub(crate) const UNSORTED_EXTENSION: &str = "unsorted_extension";
     pub(crate) const MISSING_OR_MALFORMED_TASKBIND_EXTENSION: &str =
         "missing_or_malformed_taskbind_extension";
     pub(crate) const UNEXPECTED_TASKBIND_EXTENSION: &str = "unexpected_taskbind_extension";
@@ -384,6 +385,7 @@ pub(crate) fn aggregate_step_failure_counter(meter: &Meter) -> Counter<u64> {
         HELPER_STEP_FAILURE,
         PLAINTEXT_INPUT_SHARE_DECODE_FAILURE,
         DUPLICATE_EXTENSION,
+        UNSORTED_EXTENSION,
         MISSING_OR_MALFORMED_TASKBIND_EXTENSION,
         UNEXPECTED_TASKBIND_EXTENSION,
         UNRECOGNIZED_EXTENSION,
