@@ -16,7 +16,7 @@ jobs:
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
     - id: auth
-      uses: rust-lang/crates-io-auth-action@v1.0.4
+      uses: rust-lang/crates-io-auth-action@v1.0.5
     - name: "Publish janus_messages"
       run: cargo publish --package janus_messages
       env:
