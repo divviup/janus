@@ -117,7 +117,7 @@ tokio = { version = "1.52", features = ["full", "tracing"] }
 tokio-postgres = "0.7.18"
 tokio-util = "0.7"
 tower = "0.5"
-tower-http = { version = "0.6", features = ["cors", "trace"] }
+tower-http = { version = "0.7", features = ["cors", "trace"] }
 tokio-postgres-rustls = "0.14.0"
 tokio-stream = "0.1.18"
 # TODO: Remove once divviup-client is migrated off Trillium.
