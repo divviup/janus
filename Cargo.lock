@@ -2524,6 +2524,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "itertools"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b4baf93f58d4425749ca49a51c50ebab072c5df6994d08fed93541c331481dc"
+dependencies = [
+ "either",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2552,7 +2561,7 @@ dependencies = [
  "hex",
  "http",
  "http-api-problem",
- "itertools",
+ "itertools 0.15.0",
  "janus_aggregator",
  "janus_aggregator_api",
  "janus_aggregator_core",
@@ -2663,7 +2672,7 @@ dependencies = [
  "hex",
  "http",
  "http-api-problem",
- "itertools",
+ "itertools 0.15.0",
  "janus_aggregator_core",
  "janus_core",
  "janus_messages 0.9.0-prerelease-1",
@@ -2705,7 +2714,7 @@ dependencies = [
  "educe",
  "hex-literal",
  "http",
- "itertools",
+ "itertools 0.15.0",
  "janus_core",
  "janus_messages 0.9.0-prerelease-1",
  "mockito",
@@ -2814,7 +2823,7 @@ dependencies = [
  "futures",
  "hex",
  "http",
- "itertools",
+ "itertools 0.15.0",
  "janus_aggregator",
  "janus_aggregator_core",
  "janus_client",
@@ -4121,7 +4130,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn",
@@ -4134,7 +4143,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn",
@@ -5456,7 +5465,7 @@ dependencies = [
  "ferroid",
  "futures",
  "http",
- "itertools",
+ "itertools 0.14.0",
  "log",
  "memchr",
  "parse-display",
