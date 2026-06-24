@@ -10,8 +10,8 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    AggregateShareId, AggregationJobId, AggregationJobStep, Duration, HpkeConfig, Role, TaskId,
-    Time, TimePrecision, batch_mode,
+    AggregateShareId, AggregationJobId, AggregationJobStep, BatchConfig, Duration, HpkeConfig,
+    Role, TaskId, Time, TimePrecision, batch_mode,
 };
 use postgres_types::{FromSql, ToSql};
 use rand::{RngExt, distr::StandardUniform, random, rng};
@@ -63,6 +63,22 @@ impl TryFrom<batch_mode::Code> for BatchMode {
             batch_mode::Code::LeaderSelected => Ok(Self::LeaderSelected {
                 batch_time_window_size: None,
             }),
+            batch_mode::Code::Reserved => Err(Error::InvalidParameter("reserved batch mode")),
+            _ => Err(Error::InvalidParameter("unknown batch mode")),
+        }
+    }
+}
+
+impl TryFrom<&BatchConfig> for BatchMode {
+    type Error = Error;
+
+    fn try_from(value: &BatchConfig) -> Result<Self, Self::Error> {
+        match value {
+            BatchConfig::TimeInterval => Ok(Self::TimeInterval),
+            BatchConfig::LeaderSelected => Ok(Self::LeaderSelected {
+                batch_time_window_size: None,
+            }),
+            BatchConfig::Reserved => Err(Error::InvalidParameter("reserved batch mode")),
             _ => Err(Error::InvalidParameter("unknown batch mode")),
         }
     }
@@ -120,11 +136,10 @@ struct CommonTaskParameters {
     /// How much clock skew to allow between client and aggregator. Reports from
     /// farther than this duration into the future will be rejected.
     tolerable_clock_skew: Duration,
-    /// The `task_info` byte string from a Taskprov `TaskConfig` struct. This is only present for
-    /// tasks created via Taskprov.
-    ///
-    /// This field is used to distinguish tasks with otherwise equivalent DAP task parameters.
-    taskprov_task_info: Option<Vec<u8>>,
+    /// The `task_info` byte string from a `TaskConfiguration` struct. `None` for API-provisioned
+    /// tasks, which have no `TaskConfiguration`; used to distinguish tasks with otherwise
+    /// equivalent DAP task parameters.
+    task_info: Option<Vec<u8>>,
 }
 
 impl CommonTaskParameters {
@@ -194,7 +209,7 @@ impl CommonTaskParameters {
             min_batch_size,
             time_precision,
             tolerable_clock_skew,
-            taskprov_task_info: None,
+            task_info: None,
         })
     }
 
@@ -476,15 +491,15 @@ impl AggregatorTask {
             .unwrap_or(false)
     }
 
-    /// Set the Taskprov `task_info` field for this task.
-    pub fn with_taskprov_task_info(mut self, taskprov_task_info: Vec<u8>) -> Self {
-        self.common_parameters.taskprov_task_info = Some(taskprov_task_info);
+    /// Set the `task_info` field for this task.
+    pub fn with_task_info(mut self, task_info: Vec<u8>) -> Self {
+        self.common_parameters.task_info = Some(task_info);
         self
     }
 
-    /// Return the Taskprov `task_info` field for this task.
-    pub fn taskprov_task_info(&self) -> Option<&[u8]> {
-        self.common_parameters.taskprov_task_info.as_deref()
+    /// Return the `task_info` field for this task.
+    pub fn task_info(&self) -> Option<&[u8]> {
+        self.common_parameters.task_info.as_deref()
     }
 }
 
@@ -879,7 +894,7 @@ pub mod test_util {
                     min_batch_size,
                     time_precision,
                     tolerable_clock_skew,
-                    taskprov_task_info: None,
+                    task_info: None,
                 },
                 // Ensure provided aggregator endpoints end with a slash, as we will be joining
                 // additional path segments into these endpoints & the Url::join implementation is
@@ -1339,9 +1354,9 @@ pub mod test_util {
             })
         }
 
-        /// Set the Taskprov `task_info` field for this task.
-        pub fn with_taskprov_task_info(mut self, taskprov_task_info: Vec<u8>) -> Self {
-            self.0.common_parameters.taskprov_task_info = Some(taskprov_task_info);
+        /// Set the `task_info` field for this task.
+        pub fn with_task_info(mut self, task_info: Vec<u8>) -> Self {
+            self.0.common_parameters.task_info = Some(task_info);
             self
         }
 

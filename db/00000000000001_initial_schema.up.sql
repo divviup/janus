@@ -115,7 +115,7 @@ CREATE TABLE tasks(
     tolerable_clock_skew        BIGINT NOT NULL,           -- the maximum acceptable clock skew to allow between client and aggregator, in seconds
     collector_hpke_config       BYTEA,                     -- the HPKE config of the collector (encoded HpkeConfig message)
     vdaf_verify_key             BYTEA NOT NULL,            -- the VDAF verification key (encrypted)
-    taskprov_task_info          BYTEA,                     -- if applicable, the task_info field of a Taskprov TaskConfig structure
+    task_info                   BYTEA,                     -- the task_info field of a TaskConfiguration structure; NULL for API-provisioned tasks, which have no TaskConfiguration
 
     -- Authentication token used to authenticate messages to/from the other aggregator.
     -- These columns are NULL if the task was provisioned by taskprov.

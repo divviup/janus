@@ -31,11 +31,14 @@ use serde::{
     Deserialize, Serialize, Serializer,
     de::{self, Visitor},
 };
+#[cfg(feature = "test-util")]
+pub use task::TaskConfigurationBuilder;
+pub use task::{BatchConfig, TaskConfiguration, TaskExtension, TaskExtensionType, VdafConfig};
 pub use time::{Duration, Interval, Time, TimePrecision};
 
 pub mod batch_mode;
 pub mod problem_type;
-pub mod taskprov;
+pub mod task;
 #[cfg(test)]
 mod tests;
 pub mod time;
