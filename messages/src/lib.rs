@@ -2351,6 +2351,7 @@ impl Distribution<AggregationJobId> for StandardUniform {
 #[derive(Clone, Educe, PartialEq, Eq)]
 #[educe(Debug)]
 pub struct AggregationJobInitializeReq<B: BatchMode> {
+    verification_key_id: u8,
     #[educe(Debug(ignore))]
     aggregation_parameter: Vec<u8>,
     partial_batch_selector: PartialBatchSelector<B>,
@@ -2360,15 +2361,22 @@ pub struct AggregationJobInitializeReq<B: BatchMode> {
 impl<B: BatchMode> AggregationJobInitializeReq<B> {
     /// Constructs an aggregate initialization request from its components.
     pub fn new(
+        verification_key_id: u8,
         aggregation_parameter: Vec<u8>,
         partial_batch_selector: PartialBatchSelector<B>,
         verify_inits: Vec<VerifyInit>,
     ) -> Self {
         Self {
+            verification_key_id,
             aggregation_parameter,
             partial_batch_selector,
             verify_inits,
         }
+    }
+
+    /// Gets the identifier for the VDAF verification key nominated by the leader.
+    pub fn verification_key_id(&self) -> u8 {
+        self.verification_key_id
     }
 
     /// Gets the aggregation parameter associated with this aggregate initialization request.
@@ -2394,13 +2402,15 @@ impl<B: BatchMode> MediaType for AggregationJobInitializeReq<B> {
 
 impl<B: BatchMode> Encode for AggregationJobInitializeReq<B> {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
+        self.verification_key_id.encode(bytes)?;
         encode_u32_items(bytes, &(), &self.aggregation_parameter)?;
         self.partial_batch_selector.encode(bytes)?;
         encode_u32_items(bytes, &(), &self.verify_inits)
     }
 
     fn encoded_len(&self) -> Option<usize> {
-        let mut length = 4 + self.aggregation_parameter.len();
+        let mut length = 1;
+        length += 4 + self.aggregation_parameter.len();
         length += self.partial_batch_selector.encoded_len()?;
         length += 4;
         for verify_init in &self.verify_inits {
@@ -2412,11 +2422,13 @@ impl<B: BatchMode> Encode for AggregationJobInitializeReq<B> {
 
 impl<B: BatchMode> Decode for AggregationJobInitializeReq<B> {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let verification_key_id = u8::decode(bytes)?;
         let aggregation_parameter = decode_u32_items(&(), bytes)?;
         let partial_batch_selector = PartialBatchSelector::decode(bytes)?;
         let verify_inits = decode_u32_items(&(), bytes)?;
 
         Ok(Self {
+            verification_key_id,
             aggregation_parameter,
             partial_batch_selector,
             verify_inits,

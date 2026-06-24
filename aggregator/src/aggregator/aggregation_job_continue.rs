@@ -920,6 +920,7 @@ mod tests {
         // Subsequent attempts to initialize the job should fail.
         let (verify_init_msg, _) = test_case.verify_init_generator.next(&13);
         let init_req = AggregationJobInitializeReq::new(
+            0,
             test_case.aggregation_parameter.get_encoded().unwrap(),
             PartialBatchSelector::new_time_interval(),
             Vec::from([verify_init_msg]),

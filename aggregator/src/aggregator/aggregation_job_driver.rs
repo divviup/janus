@@ -618,6 +618,8 @@ where
         let (resp, retry_after) = if !verify_inits.is_empty() {
             // Construct request, send it to the helper, and process the response.
             let request = AggregationJobInitializeReq::<B>::new(
+                // Janus uses a single verification key per task.
+                0,
                 aggregation_job
                     .aggregation_parameter()
                     .get_encoded()

@@ -283,6 +283,7 @@ async fn taskprov_aggregate_init() {
     let (transcript_1, report_share_1, aggregation_param_1) = test.next_report_share();
     let batch_id_1 = random();
     let request_1 = AggregationJobInitializeReq::new(
+        0,
         aggregation_param_1.get_encoded().unwrap(),
         PartialBatchSelector::new_leader_selected(batch_id_1),
         Vec::from([VerifyInit::new(
@@ -298,6 +299,7 @@ async fn taskprov_aggregate_init() {
     let (transcript_2, report_share_2, aggregation_param_2) = test.next_report_share();
     let batch_id_2 = random();
     let request_2 = AggregationJobInitializeReq::new(
+        0,
         aggregation_param_2.get_encoded().unwrap(),
         PartialBatchSelector::new_leader_selected(batch_id_2),
         Vec::from([VerifyInit::new(
@@ -450,6 +452,7 @@ async fn taskprov_aggregate_init_without_task_interval() {
     let (transcript, report_share, aggregation_param) = test.next_report_share();
     let batch_id = random();
     let request = AggregationJobInitializeReq::new(
+        0,
         aggregation_param.get_encoded().unwrap(),
         PartialBatchSelector::new_leader_selected(batch_id),
         Vec::from([VerifyInit::new(
@@ -512,6 +515,7 @@ async fn taskprov_aggregate_init_missing_extension() {
         test.next_report_share_with_private_extensions(Vec::new());
     let batch_id = random();
     let request = AggregationJobInitializeReq::new(
+        0,
         aggregation_param.get_encoded().unwrap(),
         PartialBatchSelector::new_leader_selected(batch_id),
         Vec::from([VerifyInit::new(
@@ -606,6 +610,7 @@ async fn taskprov_aggregate_init_malformed_extension() {
         test.next_report_share_with_private_extensions(Vec::new());
     let batch_id = random();
     let request = AggregationJobInitializeReq::new(
+        0,
         aggregation_param.get_encoded().unwrap(),
         PartialBatchSelector::new_leader_selected(batch_id),
         Vec::from([VerifyInit::new(
@@ -701,6 +706,7 @@ async fn taskprov_opt_out_task_ended_regression() {
 
     let batch_id = random();
     let request = AggregationJobInitializeReq::new(
+        0,
         aggregation_param.get_encoded().unwrap(),
         PartialBatchSelector::new_leader_selected(batch_id),
         Vec::from([VerifyInit::new(
@@ -753,6 +759,7 @@ async fn taskprov_opt_out_mismatched_task_id() {
     let (transcript, report_share, _) = test.next_report_share();
     let batch_id = random();
     let request = AggregationJobInitializeReq::new(
+        0,
         ().get_encoded().unwrap(),
         PartialBatchSelector::new_leader_selected(batch_id),
         Vec::from([VerifyInit::new(
@@ -831,6 +838,7 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
     let (transcript, report_share, _) = test.next_report_share();
     let batch_id = random();
     let request = AggregationJobInitializeReq::new(
+        0,
         ().get_encoded().unwrap(),
         PartialBatchSelector::new_leader_selected(batch_id),
         Vec::from([VerifyInit::new(
@@ -907,6 +915,7 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
     let (transcript, report_share, _) = test.next_report_share();
     let batch_id = random();
     let request = AggregationJobInitializeReq::new(
+        0,
         ().get_encoded().unwrap(),
         PartialBatchSelector::new_leader_selected(batch_id),
         Vec::from([VerifyInit::new(
@@ -1269,6 +1278,7 @@ async fn end_to_end() {
 
     let (transcript, report_share, aggregation_param) = test.next_report_share();
     let aggregation_job_init_request = AggregationJobInitializeReq::new(
+        0,
         aggregation_param.get_encoded().unwrap(),
         PartialBatchSelector::new_leader_selected(batch_id),
         Vec::from([VerifyInit::new(
@@ -1468,6 +1478,7 @@ async fn end_to_end_sumvec_hmac() {
     let aggregate_share_id = random();
     let (transcript, report_share, aggregation_param) = test.next_report_share();
     let aggregation_job_init_request = AggregationJobInitializeReq::new(
+        0,
         aggregation_param.get_encoded().unwrap(),
         PartialBatchSelector::new_leader_selected(batch_id),
         Vec::from([VerifyInit::new(

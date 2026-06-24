@@ -871,6 +871,7 @@ mod tests {
 
         let aggregation_job_id = random();
         let aggregation_job_init_req = AggregationJobInitializeReq::new(
+            0,
             aggregation_param.get_encoded().unwrap(),
             PartialBatchSelector::new_time_interval(),
             verify_inits.clone(),
@@ -997,6 +998,7 @@ mod tests {
             .0;
         let report_id = *verify_init.report_share().metadata().id();
         let aggregation_job_init_req = AggregationJobInitializeReq::new(
+            0,
             dummy::AggregationParam(1).get_encoded().unwrap(),
             PartialBatchSelector::new_time_interval(),
             Vec::from([verify_init]),
@@ -1028,6 +1030,7 @@ mod tests {
 
         // Put the aggregation job again, but with a different aggregation parameter.
         let mutated_aggregation_job_init_req = AggregationJobInitializeReq::new(
+            0,
             dummy::AggregationParam(1).get_encoded().unwrap(),
             PartialBatchSelector::new_time_interval(),
             test_case.aggregation_job_init_req.verify_inits().to_vec(),
@@ -1066,6 +1069,7 @@ mod tests {
             verify_inits.iter().rev().cloned().collect(),
         ] {
             let mutated_aggregation_job_init_req = AggregationJobInitializeReq::new(
+                0,
                 test_case.aggregation_param.get_encoded().unwrap(),
                 PartialBatchSelector::new_time_interval(),
                 mutated_verify_inits,
@@ -1103,6 +1107,7 @@ mod tests {
             .collect();
 
         let mutated_aggregation_job_init_req = AggregationJobInitializeReq::new(
+            0,
             test_case.aggregation_param.get_encoded().unwrap(),
             PartialBatchSelector::new_time_interval(),
             mutated_verify_inits,
@@ -1130,6 +1135,7 @@ mod tests {
         .await;
 
         test_case.aggregation_job_init_req = AggregationJobInitializeReq::new(
+            0,
             test_case.aggregation_param.get_encoded().unwrap(),
             PartialBatchSelector::new_time_interval(),
             Vec::from([
@@ -1248,6 +1254,7 @@ mod tests {
         let aggregation_job_id = random();
 
         let aggregation_job_init_req = AggregationJobInitializeReq::new(
+            0,
             aggregation_param.get_encoded().unwrap(),
             PartialBatchSelector::new_time_interval(),
             Vec::from([
@@ -1389,6 +1396,7 @@ mod tests {
         let aggregation_job_id = random();
 
         let aggregation_job_init_req = AggregationJobInitializeReq::new(
+            0,
             aggregation_param.get_encoded().unwrap(),
             PartialBatchSelector::new_time_interval(),
             Vec::from([
@@ -1449,6 +1457,7 @@ mod tests {
         // setup_aggregate_init_test sets up a task with a time interval query. We send a
         // leader-selected query which should yield an error.
         let wrong_query = AggregationJobInitializeReq::new(
+            0,
             test_case.aggregation_param.get_encoded().unwrap(),
             PartialBatchSelector::new_leader_selected(random()),
             test_case.aggregation_job_init_req.verify_inits().to_vec(),
