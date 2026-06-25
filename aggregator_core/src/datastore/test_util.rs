@@ -274,7 +274,7 @@ impl EphemeralDatastore {
             .unwrap();
 
         let current_version = connection
-            .list_applied_migrations()
+            .list_applied_migrations("_sqlx_migrations")
             .await
             .unwrap()
             .iter()
