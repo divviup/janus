@@ -47,6 +47,12 @@ jobs:
       # We should always make sure that the `kind` CLI we install is from the
       # same release as the node image version used by
       # `janus_core::test_util::kubernetes::EphemeralCluster`
+      #
+      # kind isn't needed until the Test step and is unrelated to the cargo
+      # build directory, so install it in the background while the Rust
+      # toolchain installs and the early cargo builds run.
+      id: kind
+      background: true
       run: go install sigs.k8s.io/kind@v0.31.0
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@master
@@ -74,6 +80,7 @@ jobs:
       run: cargo test --profile ci --locked --all-targets --features=prometheus --no-run
     - name: Test
       id: test
+      wait: kind # ensure the backgrounded `kind` install is on PATH before the k8s tests
       env:
         RUST_LOG: info
         JANUS_E2E_LOGS_PATH: ${{ github.workspace }}/test-logs
@@ -116,6 +123,19 @@ jobs:
       RUSTFLAGS: "-D warnings"
     steps:
     - uses: actions/checkout@v7
+    # cargo-deny runs in its own container and cargo-sort is network-bound;
+    # neither contends for the cargo build directory, so kick them off in the
+    # background to overlap with the clippy compile below.
+    - name: cargo-deny
+      id: deny
+      background: true
+      uses: EmbarkStudios/cargo-deny-action@v2.0.20
+      with:
+        command: check bans licenses sources -A unmatched-organization
+    - name: Install cargo-sort
+      id: install-sort
+      background: true
+      uses: taiki-e/install-action@cargo-sort
     - name: Install Nightly rustfmt
       uses: dtolnay/rust-toolchain@nightly
       with:
@@ -125,22 +145,26 @@ jobs:
       with:
         toolchain: ${{ matrix.rust-toolchain }}
         components: clippy
+    # `cargo fmt` only parses sources and doesn't take the build-directory lock,
+    # so run it in the background alongside the clippy compile.
     - name: Format
+      id: fmt
+      background: true
       run: cargo +nightly fmt --message-format human -- --check
-    - name: Install cargo-sort
-      uses: taiki-e/install-action@cargo-sort
     - name: Check Cargo.toml sorting
+      wait: install-sort
       run: cargo sort --workspace --check
+    # Clippy, Clippy (all features), and Document all share the cargo build
+    # directory and serialize on its lock, so keep them sequential.
     - name: Clippy
       run: cargo clippy --profile ci --workspace --all-targets
     - name: Clippy (all features)
       run: cargo clippy --profile ci --workspace --all-targets --all-features
     - name: Document
       run: cargo doc --profile ci --workspace --all-features
-    - name: cargo-deny
-      uses: EmbarkStudios/cargo-deny-action@v2.0.20
-      with:
-        command: check bans licenses sources -A unmatched-organization
+    # Surface failures from the backgrounded Format and cargo-deny steps.
+    - name: Collect background lints
+      wait-all: true
 
   janus_docker:
     runs-on: ubuntu-latest
@@ -161,13 +185,16 @@ jobs:
         workdir: .
         targets: janus
         load: true
-    - run: docker run --rm janus_aggregator --help
-    - run: docker run --rm janus_garbage_collector --help
-    - run: docker run --rm janus_aggregation_job_creator --help
-    - run: docker run --rm janus_aggregation_job_driver --help
-    - run: docker run --rm janus_collection_job_driver --help
-    - run: docker run --rm janus_cli --help
-    - run: docker run --rm janus_db_migrator --help
+    # These smoke checks only depend on the bake Build above and are independent
+    # of each other, so run them in parallel.
+    - parallel:
+      - run: docker run --rm janus_aggregator --help
+      - run: docker run --rm janus_garbage_collector --help
+      - run: docker run --rm janus_aggregation_job_creator --help
+      - run: docker run --rm janus_aggregation_job_driver --help
+      - run: docker run --rm janus_collection_job_driver --help
+      - run: docker run --rm janus_cli --help
+      - run: docker run --rm janus_db_migrator --help
 
   janus_interop_docker:
     runs-on: ubuntu-latest
