@@ -90,6 +90,12 @@ updates:
       - dependency-name: prio
         update-types:
           - version-update:semver-minor
+      # trillium-testing 0.8+ requires trillium 1.x; this branch is pinned to
+      # trillium 0.2.x.
+      - dependency-name: trillium-testing
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-major
       # opentelemetry-rust has removed support for pull exporters, including
       # opentelemetry-prometheus, and will add it back after the 1.0 release.
       - dependency-name: opentelemetry
