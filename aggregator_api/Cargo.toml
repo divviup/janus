@@ -31,9 +31,9 @@ url.workspace = true
 
 [dev-dependencies]
 assert_matches.workspace = true
-tower.workspace = true
 futures = { workspace = true }
 janus_aggregator_core = { workspace = true, features = ["test-util"] }
 rstest.workspace = true
 serde_test.workspace = true
 tokio.workspace = true
+tower.workspace = true

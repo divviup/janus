@@ -58,13 +58,12 @@ mockito = { workspace = true, optional = true }
 prio = { workspace = true, default-features = true }
 quickcheck = { workspace = true, optional = true }
 rand.workspace = true
-retry-after.workspace = true
 regex = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
+retry-after.workspace = true
 rustls.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, optional = true }
-yaml_serde.workspace = true
 stopper = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true }
 testcontainers = { workspace = true, optional = true }
@@ -75,6 +74,7 @@ tracing = { workspace = true }
 tracing-log = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, features = ["std", "env-filter", "fmt"], optional = true }
 url = { workspace = true }
+yaml_serde.workspace = true
 
 [dev-dependencies]
 hex = { workspace = true, features = ["serde"] }  # ensure this remains compatible with the non-dev dependency
