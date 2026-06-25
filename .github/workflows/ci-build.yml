@@ -80,7 +80,7 @@ jobs:
       run: cargo test --profile ci --locked --all-targets --features=prometheus --no-run
     - name: Test
       id: test
-      wait: kind # ensure the backgrounded `kind` install is on PATH before the k8s tests
+      wait: [kind] # ensure the backgrounded `kind` install is on PATH before the k8s tests
       env:
         RUST_LOG: info
         JANUS_E2E_LOGS_PATH: ${{ github.workspace }}/test-logs
@@ -152,7 +152,7 @@ jobs:
       background: true
       run: cargo +nightly fmt --message-format human -- --check
     - name: Check Cargo.toml sorting
-      wait: install-sort
+      wait: [install-sort]
       run: cargo sort --workspace --check
     # Clippy, Clippy (all features), and Document all share the cargo build
     # directory and serialize on its lock, so keep them sequential.
