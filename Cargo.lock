@@ -808,12 +808,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
-name = "cfg_aliases"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
-
-[[package]]
 name = "chacha20"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1421,7 +1415,7 @@ dependencies = [
  "thiserror 2.0.18",
  "time",
  "trillium-client",
- "trillium-http 0.3.17",
+ "trillium-http",
  "url",
  "uuid",
 ]
@@ -1644,26 +1638,6 @@ name = "fiat-crypto"
 version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
-
-[[package]]
-name = "fieldwork"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16b5ff57d22899405076c15dd38c2735eb8ff261a37fd0d1b0e841f3fd298433"
-dependencies = [
- "fieldwork-derive",
-]
-
-[[package]]
-name = "fieldwork-derive"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9aca8417ff665ef605a5d6f8f7670df33f74f3226003a1021582940878730b3"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
 
 [[package]]
 name = "filetime"
@@ -2078,11 +2052,6 @@ name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
-dependencies = [
- "allocator-api2",
- "equivalent",
- "foldhash",
-]
 
 [[package]]
 name = "hashlink"
@@ -2665,8 +2634,8 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_urlencoded",
- "signal-hook",
- "signal-hook-tokio",
+ "signal-hook 0.4.4",
+ "signal-hook-tokio 0.4.0",
  "tempfile",
  "testcontainers",
  "thiserror 2.0.18",
@@ -3265,17 +3234,6 @@ name = "linux-raw-sys"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
-
-[[package]]
-name = "listenfd"
-version = "1.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b87bc54a4629b4294d0b3ef041b64c40c611097a677d9dc07b2c67739fe39dba"
-dependencies = [
- "libc",
- "uuid",
- "winapi",
-]
 
 [[package]]
 name = "litemap"
@@ -4544,15 +4502,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rlimit"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f35ee2729c56bb610f6dba436bf78135f728b7373bdffae2ec815b2d3eb98cc3"
-dependencies = [
- "libc",
-]
-
-[[package]]
 name = "rstest"
 version = "0.26.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5066,6 +5015,16 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "signal-hook"
+version = "0.3.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d881a16cf4426aa584979d30bd82cb33429027e42122b169753d6ef1085ed6e2"
+dependencies = [
+ "libc",
+ "signal-hook-registry",
+]
+
+[[package]]
+name = "signal-hook"
 version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b2a0c28ca5908dbdbcd52e6fdaa00358ab88637f8ab33e1f188dd510eb44b53d"
@@ -5086,13 +5045,25 @@ dependencies = [
 
 [[package]]
 name = "signal-hook-tokio"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "213241f76fb1e37e27de3b6aa1b068a2c333233b59cca6634f634b80a27ecf1e"
+dependencies = [
+ "futures-core",
+ "libc",
+ "signal-hook 0.3.18",
+ "tokio",
+]
+
+[[package]]
+name = "signal-hook-tokio"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e513e435a8898a0002270f29d0a708b7879708fb5c4d00e46983ca2d2d378cf0"
 dependencies = [
  "futures-core",
  "libc",
- "signal-hook",
+ "signal-hook 0.4.4",
  "tokio",
 ]
 
@@ -5470,18 +5441,6 @@ name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
-
-[[package]]
-name = "swansong"
-version = "0.3.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "59e547d6edfcd09568f663d6340c48478cec8cac1403db95e8072c9a7e513253"
-dependencies = [
- "event-listener 5.4.1",
- "futures-core",
- "log",
- "pin-project-lite",
-]
 
 [[package]]
 name = "syn"
@@ -6160,19 +6119,7 @@ checksum = "b84b5b14b3b2dda42a660fd7476a00f25c7565c4f1dc63b4322a7855a1c5384f"
 dependencies = [
  "async-trait",
  "log",
- "trillium-http 0.3.17",
-]
-
-[[package]]
-name = "trillium"
-version = "1.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "616f6b4783efa17cd96b35ce691de520aefe69c2ef0af3f422e92eb25dc39392"
-dependencies = [
- "futures-lite",
- "log",
- "trillium-http 1.3.10",
- "trillium-macros 0.1.0",
+ "trillium-http",
 ]
 
 [[package]]
@@ -6193,8 +6140,8 @@ dependencies = [
  "serde_json",
  "size",
  "thiserror 1.0.69",
- "trillium-http 0.3.17",
- "trillium-server-common 0.5.2",
+ "trillium-http",
+ "trillium-server-common",
 ]
 
 [[package]]
@@ -6220,38 +6167,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "trillium-http"
-version = "1.3.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "84c6de92944bcc6f4c19ffa329d9f20ad81bc2f93a2008871e1facd3219ae78a"
-dependencies = [
- "atomic-waker",
- "encoding_rs",
- "event-listener 5.4.1",
- "fastrand",
- "fieldwork",
- "futures-lite",
- "hashbrown 0.17.1",
- "httpdate",
- "log",
- "memchr",
- "mime",
- "pin-project-lite",
- "smallvec",
- "smartcow",
- "smartstring",
- "swansong",
- "sync_wrapper",
- "thiserror 2.0.18",
- "trillium-macros 0.1.0",
- "type-set",
-]
-
-[[package]]
 name = "trillium-macros"
-version = "0.0.6"
+version = "0.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "916e37646d33632b88ca02d4b8c4e2e6376f2a89d9888de71b7d82c150ed1f6c"
+checksum = "916054381183f0cfed7604bf7de2044a760624a50d26eef5492468fb73083bbb"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6260,9 +6179,9 @@ dependencies = [
 
 [[package]]
 name = "trillium-macros"
-version = "0.1.0"
+version = "0.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3caa8c474e8cfacd96ca0692f57f932891543db2147beca4758a075a7d26a0b2"
+checksum = "916e37646d33632b88ca02d4b8c4e2e6376f2a89d9888de71b7d82c150ed1f6c"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6279,7 +6198,7 @@ dependencies = [
  "log",
  "rustls-pemfile",
  "rustls-platform-verifier",
- "trillium-server-common 0.5.2",
+ "trillium-server-common",
  "webpki-roots",
 ]
 
@@ -6295,51 +6214,28 @@ dependencies = [
  "futures-lite",
  "log",
  "pin-project-lite",
- "rlimit 0.10.2",
- "trillium 0.2.20",
- "trillium-http 0.3.17",
- "url",
-]
-
-[[package]]
-name = "trillium-server-common"
-version = "0.7.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6981ace34aa3164b8a25f8083fbd66e077bbf6f5015b07ad7832335d66107bcf"
-dependencies = [
- "async-channel 2.5.0",
- "async_cell",
- "atomic-waker",
- "cfg_aliases",
- "fieldwork",
- "futures-lite",
- "listenfd",
- "log",
- "pin-project-lite",
- "rlimit 0.11.0",
- "smallvec",
- "swansong",
- "trillium 1.3.0",
- "trillium-http 1.3.10",
+ "rlimit",
+ "trillium",
+ "trillium-http",
  "url",
 ]
 
 [[package]]
 name = "trillium-tokio"
-version = "0.6.4"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "25e3b81554f70e425cc23030c8cd5c851a213d883cb30ebbf81eb2e9b24be1ad"
+checksum = "160f07d12cc798d7de6a65e2279bb445f0606ecc4a9c594315ffff556ab7968b"
 dependencies = [
  "async-compat",
  "log",
- "signal-hook",
- "signal-hook-tokio",
+ "signal-hook 0.3.18",
+ "signal-hook-tokio 0.3.1",
  "tokio",
  "tokio-stream",
- "trillium 1.3.0",
- "trillium-http 1.3.10",
- "trillium-macros 0.1.0",
- "trillium-server-common 0.7.7",
+ "trillium",
+ "trillium-http",
+ "trillium-macros 0.0.5",
+ "trillium-server-common",
 ]
 
 [[package]]
@@ -6381,12 +6277,6 @@ dependencies = [
  "sha1 0.10.6",
  "thiserror 2.0.18",
 ]
-
-[[package]]
-name = "type-set"
-version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a6d0bbc2be93a6be556bf72da67cab01b87e650f9dbd8a095e8b1a3d4712dfb"
 
 [[package]]
 name = "typenum"
