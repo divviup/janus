@@ -1047,6 +1047,83 @@ async fn upload_report_duplicate_extensions() {
 }
 
 #[tokio::test]
+async fn upload_report_unsorted_extensions() {
+    let mut runtime_manager = TestRuntimeManager::new();
+    let UploadTest {
+        aggregator,
+        clock,
+        datastore,
+        ephemeral_datastore: _ephemeral_datastore,
+        hpke_keypair,
+        ..
+    } = UploadTest::new_with_runtime(
+        default_aggregator_config(),
+        runtime_manager.with_label("aggregator"),
+    )
+    .await;
+
+    let time_precision = TimePrecision::from_seconds(100);
+    let task = TaskBuilder::new(
+        BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
+        VdafInstance::Prio3Count,
+    )
+    .with_time_precision(time_precision)
+    .with_task_start(None)
+    .with_report_expiry_age(Some(Duration::from_seconds(60, &time_precision)))
+    .build()
+    .leader_view()
+    .unwrap();
+    datastore.put_aggregator_task(&task).await.unwrap();
+
+    // Distinct public extensions that are not in strictly increasing order of extension type
+    // (0xFF00 before 0x0000).
+    let report = create_report_custom(
+        &task,
+        clock.now().to_time(task.time_precision()),
+        random(),
+        &hpke_keypair,
+        /* public */
+        Vec::from([
+            Extension::new(ExtensionType::Taskbind, Vec::new()),
+            Extension::new(ExtensionType::Reserved, Vec::new()),
+        ]),
+        /* leader */ Vec::new(),
+        /* helper */ Vec::new(),
+    );
+
+    let upload_result = aggregator
+        .handle_upload(task.id(), report_stream(report.clone()))
+        .await
+        .unwrap();
+    let result_upload_status = &upload_result.status()[0];
+    assert_matches!(
+        result_upload_status.error(),
+        ReportError::InvalidMessage => {
+            assert_eq!(report.metadata().id(), &result_upload_status.report_id());
+        }
+    );
+
+    runtime_manager
+        .wait_for_completed_tasks("aggregator", 1)
+        .await;
+
+    let got_counters = datastore
+        .run_unnamed_tx(|tx| {
+            let task_id = *task.id();
+            Box::pin(async move { TaskUploadCounter::load(tx, &task_id).await })
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        got_counters,
+        Some(TaskUploadCounter::new_with_values(
+            0, 1, 0, 0, 0, 0, 0, 0, 0, 0
+        ))
+    )
+}
+
+#[tokio::test]
 async fn upload_report_unrecognized_extension() {
     let mut runtime_manager = TestRuntimeManager::new();
     let UploadTest {

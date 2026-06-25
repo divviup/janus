@@ -58,6 +58,7 @@ use janus_messages::{
     PartialBatchSelector, PlaintextInputShare, Report, ReportError, ReportUploadStatus, Role,
     TaskConfiguration, TaskId, UploadErrors, VerifyResp,
     batch_mode::{LeaderSelected, TimeInterval},
+    extensions_are_strictly_increasing,
 };
 use opentelemetry::{
     KeyValue,
@@ -95,7 +96,7 @@ use crate::{
         report_writer::{ReportWriteBatcher, WritableReport},
         upload_decode_failure_types::{
             DUPLICATE_EXTENSION, INPUT_SHARE_DECODE_FAILURE, PUBLIC_SHARE_DECODE_FAILURE,
-            UNRECOGNIZED_EXTENSION,
+            UNRECOGNIZED_EXTENSION, UNSORTED_EXTENSION,
         },
     },
     cache::{
@@ -320,6 +321,7 @@ impl<C: Clock> Aggregator<C> {
         upload_decode_failure_counter.add(0, &[KeyValue::new("type", PUBLIC_SHARE_DECODE_FAILURE)]);
         upload_decode_failure_counter.add(0, &[KeyValue::new("type", INPUT_SHARE_DECODE_FAILURE)]);
         upload_decode_failure_counter.add(0, &[KeyValue::new("type", DUPLICATE_EXTENSION)]);
+        upload_decode_failure_counter.add(0, &[KeyValue::new("type", UNSORTED_EXTENSION)]);
         upload_decode_failure_counter.add(0, &[KeyValue::new("type", UNRECOGNIZED_EXTENSION)]);
 
         let report_aggregation_success_counter = report_aggregation_success_counter(meter);
@@ -1930,6 +1932,20 @@ impl VdafOps {
                 return Err(reject_report(ReportRejectionReason::DecodeFailure).await?);
             }
         };
+
+        // Public extensions must be in strictly increasing order of extension type (DAP-18 §4.4.3);
+        // private extensions are validated when the plaintext input share is decoded.
+        if !extensions_are_strictly_increasing(report.metadata().public_extensions()) {
+            debug!(
+                task_id = %task.id(),
+                report_id = ?report.metadata().id(),
+                "Received report with unsorted public extensions",
+            );
+            metrics
+                .upload_decode_failure_counter
+                .add(1, &[KeyValue::new("type", UNSORTED_EXTENSION)]);
+            return Err(reject_report(ReportRejectionReason::DecodeFailure).await?);
+        }
 
         // Check for unrecognized extension types (§4.6.2.4 step 5 [dap-16]) and
         // duplicate extensions (§4.6.2.4 step 6 [dap-16]) in a single pass.
@@ -3919,6 +3935,7 @@ async fn send_request_to_helper(
 /// label.
 mod upload_decode_failure_types {
     pub(super) const DUPLICATE_EXTENSION: &str = "duplicate_extension";
+    pub(super) const UNSORTED_EXTENSION: &str = "unsorted_extension";
     pub(super) const UNRECOGNIZED_EXTENSION: &str = "unrecognized_extension";
     pub(super) const INPUT_SHARE_DECODE_FAILURE: &str = "input_share_decode_failure";
     pub(super) const PUBLIC_SHARE_DECODE_FAILURE: &str = "public_share_decode_failure";

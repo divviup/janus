@@ -37,6 +37,7 @@ use janus_messages::{
     PartialBatchSelector, ReportError, ReportMetadata, ReportShare, Role, VerifyContinue,
     VerifyInit, VerifyResp, VerifyStepResult,
     batch_mode::{LeaderSelected, TimeInterval},
+    extensions_are_strictly_increasing,
 };
 use opentelemetry::{
     KeyValue,
@@ -74,7 +75,7 @@ use crate::{
     metrics::{
         aggregate_step_failure_types::{
             CONTINUE_MISMATCH, DUPLICATE_EXTENSION, FINISH_MISMATCH, HELPER_STEP_FAILURE,
-            PUBLIC_SHARE_ENCODE_FAILURE,
+            PUBLIC_SHARE_ENCODE_FAILURE, UNSORTED_EXTENSION,
         },
         aggregated_report_share_dimension_histogram, early_report_clock_skew_histogram,
         keypair_use_counter, past_report_clock_skew_histogram,
@@ -487,6 +488,24 @@ where
                             report_aggregation.state()
                         ),
                     };
+
+                    // Public extensions must be in strictly increasing order of extension type
+                    // (DAP-18 §4.4.3); private extensions are validated when the plaintext input
+                    // share is decoded.
+                    if !extensions_are_strictly_increasing(public_extensions) {
+                        debug!(
+                            report_id = %report_aggregation.report_id(),
+                            "Received report with unsorted public extensions"
+                        );
+                        aggregate_step_failure_counter
+                            .add(1, &[KeyValue::new("type", UNSORTED_EXTENSION)]);
+                        return ra_sender.send(WritableReportAggregation::new(
+                            report_aggregation.with_state(ReportAggregationState::Failed {
+                                report_error: ReportError::InvalidMessage,
+                            }),
+                            None,
+                        )).map_err(|_| ());
+                    }
 
                     // Check for repeated extensions.
                     let mut extension_types = HashSet::new();
