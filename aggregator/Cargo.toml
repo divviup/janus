@@ -15,14 +15,8 @@ rustdoc-args = ["--cfg", "docsrs"]
 [features]
 default = []
 tokio-console = ["dep:console-subscriber"]
-otlp = [
-    "dep:opentelemetry-otlp",
-    "dep:tracing-opentelemetry",
-]
-prometheus = [
-    "dep:opentelemetry-prometheus",
-    "dep:prometheus",
-]
+otlp = ["dep:opentelemetry-otlp", "dep:tracing-opentelemetry"]
+prometheus = ["dep:opentelemetry-prometheus", "dep:prometheus"]
 test-util = [
     "janus_aggregator_core/test-util",
     "janus_core/test-util",
@@ -34,10 +28,10 @@ test-util = [
 [dependencies]
 anyhow.workspace = true
 assert_matches = { workspace = true }
-axum.workspace = true
 async-stream = { workspace = true }
 async-trait = { workspace = true }
 aws-lc-rs = { workspace = true }
+axum.workspace = true
 backon = { workspace = true }
 base64.workspace = true
 bytes.workspace = true
@@ -74,14 +68,13 @@ rand = { workspace = true }
 rayon.workspace = true
 regex = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
+retry-after.workspace = true
 rustls = { workspace = true }
 rustls-pki-types = { workspace = true }
-retry-after.workspace = true
 sec1.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_urlencoded = { workspace = true }
-yaml_serde.workspace = true
 signal-hook = { workspace = true }
 signal-hook-tokio = { workspace = true, features = ["futures-v0_3"] }
 testcontainers = { workspace = true, optional = true }
@@ -90,16 +83,20 @@ tokio.workspace = true
 tokio-postgres = { workspace = true, features = ["with-chrono-0_4", "with-serde_json-1", "with-uuid-1", "array-impls"] }
 tokio-postgres-rustls = { workspace = true }
 tokio-util = { workspace = true, features = ["rt"] }
+tower = { workspace = true }
+tower-http = { workspace = true }
 tracing = { workspace = true }
 tracing-chrome = { workspace = true }
 tracing-log = { workspace = true }
 tracing-opentelemetry = { workspace = true, optional = true }
 tracing-stackdriver = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["std", "env-filter", "fmt", "json"] }
-tower = { workspace = true }
-tower-http = { workspace = true }
 url.workspace = true
 uuid = { workspace = true, features = ["serde"] }
+yaml_serde.workspace = true
+
+[build-dependencies]
+rustc_version = { workspace = true }
 
 [dev-dependencies]
 janus_aggregator = { workspace = true, features = ["test-util"] }
@@ -114,6 +111,3 @@ tempfile = { workspace = true }
 tokio = { workspace = true, features = ["net", "test-util"] } # ensure this remains compatible with the non-dev dependency
 trycmd = { workspace = true }
 wait-timeout = { workspace = true }
-
-[build-dependencies]
-rustc_version = { workspace = true }
