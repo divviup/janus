@@ -70,7 +70,7 @@ ohttp = { version = "0.7.2", default-features = false }
 opentelemetry = { version = "0.27", default-features = false, features = ["trace", "metrics"] }
 opentelemetry-otlp = { version = "0.27", default-features = false, features = ["trace", "metrics", "grpc-tonic"] }
 opentelemetry-prometheus = "0.27"
-opentelemetry_sdk = { version = "0.27", default-features = false, features = ["trace", "metrics"] }
+opentelemetry_sdk = { version = "0.32", default-features = false, features = ["trace", "metrics"] }
 pem = "3"
 postgres-protocol = "0.6.11"
 postgres-types = "0.2.13"
