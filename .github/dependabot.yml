@@ -90,9 +90,8 @@ updates:
       - dependency-name: prio
         update-types:
           - version-update:semver-minor
-      # trillium-testing 0.8+ requires trillium 1.x; this branch is pinned to
-      # trillium 0.2.x.
-      - dependency-name: trillium-testing
+      # trillium-* is pinned to trillium 0.2.x on this release branch.
+      - dependency-name: trillium*
         update-types:
           - version-update:semver-minor
           - version-update:semver-major
