@@ -674,6 +674,7 @@ async fn leader_sync_time_interval_aggregation_job_init_single_step() {
     // It would be nicer to retrieve the request bytes from the mock, then do our own parsing &
     // verification -- but mockito does not expose this functionality at time of writing.)
     let leader_request = AggregationJobInitializeReq::new(
+        0,
         ().get_encoded().unwrap(),
         PartialBatchSelector::new_time_interval(),
         Vec::from([VerifyInit::new(
@@ -1060,6 +1061,7 @@ async fn leader_sync_time_interval_aggregation_job_init_two_steps() {
     // It would be nicer to retrieve the request bytes from the mock, then do our own parsing &
     // verification -- but mockito does not expose this functionality at time of writing.)
     let leader_request = AggregationJobInitializeReq::new(
+        0,
         aggregation_param.get_encoded().unwrap(),
         PartialBatchSelector::new_time_interval(),
         Vec::from([VerifyInit::new(
@@ -1432,6 +1434,7 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
 
     // Setup: prepare mocked HTTP response.
     let leader_request = AggregationJobInitializeReq::new(
+        0,
         ().get_encoded().unwrap(),
         PartialBatchSelector::new_time_interval(),
         Vec::from([
@@ -1761,6 +1764,7 @@ async fn leader_sync_leader_selected_aggregation_job_init_single_step() {
     // It would be nicer to retrieve the request bytes from the mock, then do our own parsing &
     // verification -- but mockito does not expose this functionality at time of writing.)
     let leader_request = AggregationJobInitializeReq::new(
+        0,
         ().get_encoded().unwrap(),
         PartialBatchSelector::new_leader_selected(batch_id),
         Vec::from([VerifyInit::new(
@@ -2079,6 +2083,7 @@ async fn leader_sync_leader_selected_aggregation_job_init_two_steps() {
     // It would be nicer to retrieve the request bytes from the mock, then do our own parsing &
     // verification -- but mockito does not expose this functionality at time of writing.)
     let leader_request = AggregationJobInitializeReq::new(
+        0,
         aggregation_param.get_encoded().unwrap(),
         PartialBatchSelector::new_leader_selected(batch_id),
         Vec::from([VerifyInit::new(
@@ -2998,6 +3003,7 @@ async fn leader_async_aggregation_job_init_to_pending() {
 
     // Setup: prepare mocked HTTP response.
     let leader_request = AggregationJobInitializeReq::new(
+        0,
         aggregation_param.get_encoded().unwrap(),
         PartialBatchSelector::new_time_interval(),
         Vec::from([VerifyInit::new(
@@ -3254,6 +3260,7 @@ async fn leader_async_aggregation_job_init_to_pending_two_step() {
 
     // Setup: prepare mocked HTTP response.
     let leader_request = AggregationJobInitializeReq::new(
+        0,
         aggregation_param.get_encoded().unwrap(),
         PartialBatchSelector::new_time_interval(),
         Vec::from([VerifyInit::new(

@@ -328,6 +328,7 @@ fn roundtrip_aggregation_job_initialize_req() {
     // TimeInterval.
     roundtrip_encoding(&[(
         AggregationJobInitializeReq {
+            verification_key_id: 7,
             aggregation_parameter: Vec::from("012345"),
             partial_batch_selector: PartialBatchSelector::new_time_interval(),
             verify_inits: Vec::from([
@@ -370,6 +371,7 @@ fn roundtrip_aggregation_job_initialize_req() {
             ]),
         },
         concat!(
+            "07", // verification_key_id
             concat!(
                 // aggregation_parameter
                 "00000006",     // length
@@ -482,6 +484,7 @@ fn roundtrip_aggregation_job_initialize_req() {
     // LeaderSelected.
     roundtrip_encoding(&[(
         AggregationJobInitializeReq::<LeaderSelected> {
+            verification_key_id: 255,
             aggregation_parameter: Vec::from("012345"),
             partial_batch_selector: PartialBatchSelector::new_leader_selected(BatchId::from(
                 [2u8; 32],
@@ -526,6 +529,7 @@ fn roundtrip_aggregation_job_initialize_req() {
             ]),
         },
         concat!(
+            "ff", // verification_key_id
             concat!(
                 // aggregation_parameter
                 "00000006",     // length

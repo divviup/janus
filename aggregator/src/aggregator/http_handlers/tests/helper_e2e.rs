@@ -66,11 +66,13 @@ async fn helper_aggregation_report_share_replay() {
     let aggregation_job_id_2 = random();
 
     let agg_init_req_1 = AggregationJobInitializeReq::new(
+        0,
         agg_param.get_encoded().unwrap(),
         PartialBatchSelector::new_leader_selected(batch_id_1),
         Vec::from([replayed_report.clone(), other_report_1.clone()]),
     );
     let agg_init_req_2 = AggregationJobInitializeReq::new(
+        0,
         agg_param.get_encoded().unwrap(),
         PartialBatchSelector::new_leader_selected(batch_id_2),
         Vec::from([replayed_report.clone(), other_report_2.clone()]),

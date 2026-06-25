@@ -70,6 +70,7 @@ async fn aggregate_leader() {
         .unwrap();
 
     let request = AggregationJobInitializeReq::new(
+        0,
         Vec::new(),
         PartialBatchSelector::new_time_interval(),
         Vec::new(),
@@ -163,6 +164,7 @@ async fn aggregate_wrong_agg_auth_token() {
         .unwrap();
 
     let request = AggregationJobInitializeReq::new(
+        0,
         Vec::new(),
         PartialBatchSelector::new_time_interval(),
         Vec::new(),
@@ -582,6 +584,7 @@ async fn aggregate_init_sync() {
 
     let aggregation_param = dummy::AggregationParam(0);
     let request = AggregationJobInitializeReq::new(
+        0,
         aggregation_param.get_encoded().unwrap(),
         PartialBatchSelector::new_time_interval(),
         Vec::from([
@@ -848,6 +851,7 @@ async fn aggregate_init_async() {
 
     let aggregation_param = dummy::AggregationParam(0);
     let request = AggregationJobInitializeReq::new(
+        0,
         aggregation_param.get_encoded().unwrap(),
         PartialBatchSelector::new_time_interval(),
         Vec::from([verify_init_0.clone(), verify_init_1.clone()]),
@@ -980,6 +984,7 @@ async fn aggregate_init_batch_already_collected() {
     let aggregation_param = dummy::AggregationParam(0);
     let batch_id = random();
     let request = AggregationJobInitializeReq::new(
+        0,
         aggregation_param.get_encoded().unwrap(),
         PartialBatchSelector::new_leader_selected(batch_id),
         Vec::from([verify_init.clone()]),
@@ -1088,6 +1093,7 @@ async fn aggregate_init_verify_init_failed() {
 
     let (verify_init, _) = verify_init_generator.next(&0);
     let request = AggregationJobInitializeReq::new(
+        0,
         dummy::AggregationParam(0).get_encoded().unwrap(),
         PartialBatchSelector::new_time_interval(),
         Vec::from([verify_init.clone()]),
@@ -1154,6 +1160,7 @@ async fn aggregate_init_verify_step_failed() {
 
     let (verify_init, _) = verify_init_generator.next(&0);
     let request = AggregationJobInitializeReq::new(
+        0,
         dummy::AggregationParam(0).get_encoded().unwrap(),
         PartialBatchSelector::new_time_interval(),
         Vec::from([verify_init.clone()]),
@@ -1221,6 +1228,7 @@ async fn aggregate_init_duplicated_report_id() {
     let (verify_init, _) = verify_init_generator.next(&0);
 
     let request = AggregationJobInitializeReq::new(
+        0,
         dummy::AggregationParam(0).get_encoded().unwrap(),
         PartialBatchSelector::new_time_interval(),
         Vec::from([verify_init.clone(), verify_init]),
@@ -1306,6 +1314,7 @@ async fn aggregate_init_partially_replayed_aggregation_init() {
     .collect();
 
     let request = AggregationJobInitializeReq::new(
+        0,
         agg_param.clone(),
         partial_batch_selector.clone(),
         Vec::from([verify_init_1.clone(), verify_init_2.clone()]),
@@ -1330,6 +1339,7 @@ async fn aggregate_init_partially_replayed_aggregation_init() {
     }
 
     let request = AggregationJobInitializeReq::new(
+        0,
         agg_param.clone(),
         partial_batch_selector,
         Vec::from([
