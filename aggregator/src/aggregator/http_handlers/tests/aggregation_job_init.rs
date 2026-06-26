@@ -378,8 +378,8 @@ async fn aggregate_init_sync() {
         random(),
         clock.now().to_time(task.time_precision()),
         Vec::from([
-            Extension::new(ExtensionType::Reserved, Vec::new()),
-            Extension::new(ExtensionType::Reserved, Vec::new()),
+            Extension::new(ExtensionType::Taskbind, Vec::new()),
+            Extension::new(ExtensionType::Taskbind, Vec::new()),
         ]),
     );
     let transcript_7 = run_vdaf(
@@ -427,8 +427,8 @@ async fn aggregate_init_sync() {
         hpke_keypair.config(),
         &transcript_8.public_share,
         Vec::from([
-            Extension::new(ExtensionType::Reserved, Vec::new()),
-            Extension::new(ExtensionType::Reserved, Vec::new()),
+            Extension::new(ExtensionType::Taskbind, Vec::new()),
+            Extension::new(ExtensionType::Taskbind, Vec::new()),
         ]),
         &transcript_8.helper_input_share,
     );
@@ -446,7 +446,7 @@ async fn aggregate_init_sync() {
     let report_metadata_9 = ReportMetadata::new(
         random(),
         clock.now().to_time(task.time_precision()),
-        Vec::from([Extension::new(ExtensionType::Reserved, Vec::new())]),
+        Vec::from([Extension::new(ExtensionType::Taskbind, Vec::new())]),
     );
     let transcript_9 = run_vdaf(
         &vdaf,
@@ -461,7 +461,7 @@ async fn aggregate_init_sync() {
         report_metadata_9,
         hpke_keypair.config(),
         &transcript_9.public_share,
-        Vec::from([Extension::new(ExtensionType::Reserved, Vec::new())]),
+        Vec::from([Extension::new(ExtensionType::Taskbind, Vec::new())]),
         &transcript_9.helper_input_share,
     );
 

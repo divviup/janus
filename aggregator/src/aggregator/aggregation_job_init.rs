@@ -32,8 +32,8 @@ use tracing::{Span, debug, info_span, trace_span};
 
 use crate::{
     aggregator::{
-        AggregatorMetrics, Error, aggregation_job_writer::WritableReportAggregation,
-        error::handle_ping_pong_error,
+        AggregatorMetrics, Error, ExtensionTypeExt,
+        aggregation_job_writer::WritableReportAggregation, error::handle_ping_pong_error,
     },
     cache::HpkeKeypairCache,
     metrics::aggregate_step_failure_types::{
@@ -273,7 +273,7 @@ where
                                 .iter()
                                 .chain(verify_init.report_share().metadata().public_extensions())
                             {
-                                if matches!(extension.extension_type(), ExtensionType::Unknown(_)) {
+                                if !extension.extension_type().is_supported() {
                                     debug!(
                                         task_id = %task.id(),
                                         report_id = ?verify_init.report_share().metadata().id(),

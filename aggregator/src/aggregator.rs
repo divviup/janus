@@ -1954,7 +1954,7 @@ impl VdafOps {
             .iter()
             .chain(report.metadata().public_extensions())
         {
-            if matches!(extension.extension_type(), ExtensionType::Unknown(_)) {
+            if !extension.extension_type().is_supported() {
                 debug!(
                     task_id = %task.id(),
                     report_id = ?report.metadata().id(),
@@ -3928,6 +3928,17 @@ async fn send_request_to_helper(
             timer.finish_attempt("error");
             Err(error.into())
         }
+    }
+}
+
+trait ExtensionTypeExt {
+    /// Determines whether a report extension type is supported by this implementation.
+    fn is_supported(&self) -> bool;
+}
+
+impl ExtensionTypeExt for ExtensionType {
+    fn is_supported(&self) -> bool {
+        matches!(self, ExtensionType::Taskbind)
     }
 }
 
