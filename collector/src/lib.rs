@@ -12,12 +12,14 @@
 //! use std::{fs::File, str::FromStr};
 //!
 //! use janus_collector::{Collector, PrivateCollectorCredential};
-//! use janus_messages::{Duration, Interval, Query, TaskId, Time};
+//! use janus_messages::{Duration, Interval, Query, TaskId, Time, TimePrecision};
 //! use prio::vdaf::prio3::Prio3;
 //! use url::Url;
 //!
 //! # async fn run() {
+//! # const TIME_PRECISION: u64 = 3600;
 //! let task_id = TaskId::from_str("[your DAP task ID here]").unwrap();
+//! let time_precision = TimePrecision::from_seconds(TIME_PRECISION);
 //!
 //! let collector_credential: PrivateCollectorCredential =
 //!     serde_json::from_reader(File::open("[path to JSON encoded collector credential]").unwrap())
@@ -36,14 +38,15 @@
 //!     collector_credential.authentication_token(),
 //!     collector_credential.hpke_keypair(),
 //!     vdaf,
+//!     time_precision,
 //! )
 //! .unwrap();
 //!
 //! // If this is a time interval task, specify the time interval over which the aggregation
 //! // should be calculated.
-//! let interval = Interval::new_with_duration(
-//!     Time::from_seconds_since_epoch(1_656_000_000),
-//!     Duration::from_seconds(3600),
+//! let interval = Interval::new(
+//!     Time::from_seconds_since_epoch(1_656_000_000, &time_precision),
+//!     Duration::from_seconds(3600, &time_precision),
 //! )
 //! .unwrap();
 //!

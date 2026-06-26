@@ -79,6 +79,8 @@ jobs:
         JANUS_E2E_LOGS_PATH: ${{ github.workspace }}/test-logs
         DIVVIUP_TS_INTEROP_CONTAINER: ${{ steps.default-input-values.outputs.divviup_ts_interop_container }}
       run: cargo test --profile ci --locked --all-targets --features=prometheus
+    - name: Documentation tests
+      run: cargo test --profile ci --locked --doc --features=prometheus
     - name: Build (Docker-specific tests)
       # This matches the `cargo test` command invoked by `cargo xtask test-docker`, except for `--no-run`.
       run: cargo test --profile ci --locked --package=janus_interop_binaries --package=janus_integration_tests --features=testcontainer --no-run
