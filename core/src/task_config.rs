@@ -3,34 +3,30 @@
 //! In DAP-18, the task's [`TaskConfiguration`] is bound into the HPKE additional authenticated data
 //! (AAD) for input shares and aggregate shares. Every party (both aggregators, the client, and the
 //! collector) must independently reconstruct *byte-identical* [`TaskConfiguration`] bytes, or all
-//! decryption fails. [`build_task_configuration`] is the single canonical construction path, so
-//! that normalization (e.g. of aggregator endpoint URLs) and the mapping of internal
-//! representations onto the wire format happen in exactly one place.
+//! decryption fails. [`build_task_configuration`] is the single canonical construction path that
+//! maps internal representations onto the wire format in exactly one place.
+//!
+//! Endpoint URLs are kept as [`janus_messages::Url`] — the raw bytes from the wire — and
+//! bound directly, per DAP-18 §4.1.
 
 use janus_messages::{
     BatchConfig, Error, Interval, TaskConfiguration, TaskExtension, TimePrecision, Url as DapUrl,
     VdafConfig,
 };
-use url::Url;
 
-use crate::url_ensure_trailing_slash;
-
-/// Construct a canonical [`TaskConfiguration`] from a task's parameters, normalizing the inputs so
-/// that every party reconstructs byte-identical bytes.
+/// Construct a canonical [`TaskConfiguration`] from a task's parameters. Endpoints are bound
+/// verbatim from their wire bytes (no normalization — see the module docs).
 #[allow(clippy::too_many_arguments)]
 pub fn build_task_configuration(
     task_info: Vec<u8>,
-    leader_aggregator_endpoint: Url,
-    helper_aggregator_endpoint: Url,
+    leader_aggregator_endpoint: DapUrl,
+    helper_aggregator_endpoint: DapUrl,
     time_precision: TimePrecision,
     min_batch_size: u64,
     batch_config: BatchConfig,
     vdaf_config: VdafConfig,
     task_interval: Option<Interval>,
 ) -> Result<TaskConfiguration, Error> {
-    let leader_aggregator_endpoint = normalize_endpoint(leader_aggregator_endpoint)?;
-    let helper_aggregator_endpoint = normalize_endpoint(helper_aggregator_endpoint)?;
-
     // The optional task_interval becomes the lone extension, or none.
     let extensions = Vec::from_iter(task_interval.map(TaskExtension::TaskInterval));
 
@@ -46,37 +42,32 @@ pub fn build_task_configuration(
     )
 }
 
-/// Normalize an aggregator endpoint and convert it to the DAP wire [`DapUrl`] representation.
-fn normalize_endpoint(endpoint: Url) -> Result<DapUrl, Error> {
-    let endpoint = url_ensure_trailing_slash(endpoint);
-    DapUrl::try_from(endpoint.as_str().as_bytes())
-        .map_err(|_| Error::InvalidParameter("aggregator endpoint is not a valid DAP URL"))
-}
-
 #[cfg(test)]
 mod tests {
     use assert_matches::assert_matches;
-    use janus_messages::{BatchConfig, Duration, Error, Interval, Time, TimePrecision, VdafConfig};
+    use janus_messages::{
+        BatchConfig, Duration, Error, Interval, Time, TimePrecision, Url as DapUrl, VdafConfig,
+    };
     use prio::codec::Encode as _;
-    use url::Url;
 
     use super::build_task_configuration;
 
-    fn leader() -> Url {
-        Url::parse("https://leader.example.com").unwrap()
+    fn leader() -> DapUrl {
+        DapUrl::try_from("https://leader.example.com/".as_bytes()).unwrap()
     }
 
-    fn helper() -> Url {
-        Url::parse("https://helper.example.com").unwrap()
+    fn helper() -> DapUrl {
+        DapUrl::try_from("https://helper.example.com/".as_bytes()).unwrap()
     }
 
     #[test]
-    fn normalizes_endpoints() {
-        // Neither input URL ends with a slash; the synthesized configuration must.
+    fn endpoints_bound_verbatim() {
+        // A path-bearing endpoint with no trailing slash must be bound exactly as given: this code
+        // performs no normalization (forbidden by DAP-18 §4.1).
         let config = build_task_configuration(
             b"task".to_vec(),
-            leader(),
-            helper(),
+            DapUrl::try_from("https://leader.example.com/dap".as_bytes()).unwrap(),
+            DapUrl::try_from("https://helper.example.com/dap".as_bytes()).unwrap(),
             TimePrecision::from_seconds(3600),
             100,
             BatchConfig::TimeInterval,
@@ -86,11 +77,11 @@ mod tests {
         .unwrap();
         assert_eq!(
             config.leader_aggregator_endpoint().to_string(),
-            "https://leader.example.com/"
+            "https://leader.example.com/dap"
         );
         assert_eq!(
             config.helper_aggregator_endpoint().to_string(),
-            "https://helper.example.com/"
+            "https://helper.example.com/dap"
         );
     }
 
@@ -157,8 +148,8 @@ mod tests {
         let time_precision = TimePrecision::from_seconds(3600);
         let config = build_task_configuration(
             b"foobar".to_vec(),
-            Url::parse("https://example.com").unwrap(),
-            Url::parse("https://another.example.com").unwrap(),
+            DapUrl::try_from("https://example.com/".as_bytes()).unwrap(),
+            DapUrl::try_from("https://another.example.com/".as_bytes()).unwrap(),
             time_precision,
             10000,
             BatchConfig::TimeInterval,
