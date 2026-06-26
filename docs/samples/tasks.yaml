@@ -24,13 +24,21 @@
   # determined by the task's VDAF.
   vdaf_verify_key: "1CmuYNtBLYIoXN8bU0T_XA"
 
+  # The task_info field of the task's TaskConfiguration, in base64url-encoded
+  # form. Must be non-empty and at most 255 bytes. Distinguishes tasks with
+  # otherwise equivalent DAP parameters.
+  task_info: "dGFzay1pbmZv"
+
   # The DAP task's time precision. This determines how clients round report
   # timestamps, and sets the minimum duration of any batch interval for time
   # interval queries.
   time_precision: 1800
 
-  # The task's end time, as a number of time_precision units since the UNIX epoch
-  task_end: 946716
+  # The task's validity interval, expressed as a start instant and a duration, both
+  # in time_precision units. Either both fields are set or both are omitted; a
+  # half-open interval is not allowed. (Here the interval ends at 946716.)
+  task_start: 0
+  task_duration: 946716
 
   # Time in time_precision units after which reports expire and may be garbage collected.
   # This is a Janus-specific parameter. Garbage collection for a task may
@@ -100,7 +108,9 @@
   vdaf: Prio3Count
   role: Helper
   vdaf_verify_key: "ZXtE4kLqtsCOr8h_pNUeoQ"
-  task_end: 5680296
+  task_info: "dGFzay1pbmZv"
+  task_start: 0
+  task_duration: 5680296
   report_expiry_age: null
   min_batch_size: 100
   time_precision: 300

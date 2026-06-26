@@ -23,7 +23,7 @@ use janus_core::{
         install_test_trace_subscriber,
         runtime::{TestRuntime, TestRuntimeManager},
     },
-    time::{Clock, DateTimeExt, MockClock},
+    time::{Clock, DateTimeExt, MockClock, TimeExt},
     vdaf::{VERIFY_KEY_LENGTH_PRIO3, VdafInstance},
 };
 use janus_messages::{
@@ -544,24 +544,21 @@ async fn upload_report_task_not_started() {
     )
     .await;
 
-    // Set the task start time to the future, and generate & upload a report from before that time.
+    // Task starts an hour from now; report is from before then.
     let time_precision = TimePrecision::from_seconds(100);
+    let hour = Duration::from_seconds(3600, &time_precision);
+    let task_start = clock
+        .now()
+        .add_duration(&hour, &time_precision)
+        .unwrap()
+        .to_time(&time_precision);
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     )
     .with_time_precision(time_precision)
-    .with_task_start(Some(
-        clock
-            .now()
-            .add_duration(
-                &Duration::from_seconds(3600, &time_precision),
-                &time_precision,
-            )
-            .unwrap()
-            .to_time(&time_precision),
-    ))
+    .with_task_interval(Some(Interval::new(task_start, hour).unwrap()))
     .build()
     .leader_view()
     .unwrap();
@@ -623,15 +620,19 @@ async fn upload_report_task_ended() {
     .await;
 
     let precision = TimePrecision::from_seconds(100);
+    let hour = Duration::from_seconds(3600, &precision);
     let task_end_time = clock.now().to_time(&precision);
 
+    // Task started an hour ago and has just ended.
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     )
     .with_time_precision(precision)
-    .with_task_end(Some(task_end_time))
+    .with_task_interval(Some(
+        Interval::new(task_end_time.sub_duration(&hour).unwrap(), hour).unwrap(),
+    ))
     .build()
     .leader_view()
     .unwrap();
@@ -995,7 +996,6 @@ async fn upload_report_duplicate_extensions() {
         VdafInstance::Prio3Count,
     )
     .with_time_precision(time_precision)
-    .with_task_start(None)
     .with_report_expiry_age(Some(Duration::from_seconds(60, &time_precision)))
     .build()
     .leader_view()
@@ -1069,7 +1069,6 @@ async fn upload_report_unsorted_extensions() {
         VdafInstance::Prio3Count,
     )
     .with_time_precision(time_precision)
-    .with_task_start(None)
     .with_report_expiry_age(Some(Duration::from_seconds(60, &time_precision)))
     .build()
     .leader_view()
@@ -1151,7 +1150,6 @@ async fn upload_report_unrecognized_extension() {
             VdafInstance::Prio3Count,
         )
         .with_time_precision(time_precision)
-        .with_task_start(None)
         .with_report_expiry_age(Some(Duration::from_seconds(60, &time_precision)))
         .build()
         .leader_view()

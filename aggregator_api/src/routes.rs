@@ -18,7 +18,7 @@ use janus_aggregator_core::{
         self,
         task_counters::{TaskAggregationCounter, TaskUploadCounter},
     },
-    task::{AggregatorTask, AggregatorTaskParameters},
+    task::{AggregatorTask, AggregatorTaskParameters, reconstruct_task_interval},
     taskprov::PeerAggregator,
 };
 use janus_core::{
@@ -139,6 +139,11 @@ pub(super) async fn post_task<C: Clock>(
 
     let vdaf_verify_key = SecretBytes::new(vdaf_verify_key_bytes);
 
+    let task_info = URL_SAFE_NO_PAD
+        .decode(&req.task_info)
+        .context("Invalid base64 value for task_info")
+        .map_err(|err| Error::BadRequest(err.into()))?;
+
     let (aggregator_auth_token, aggregator_parameters) = match req.role {
         Role::Leader => {
             let aggregator_auth_token = req.aggregator_auth_token.ok_or_else(|| {
@@ -191,6 +196,11 @@ pub(super) async fn post_task<C: Clock>(
         _ => unreachable!(),
     };
 
+    // The task's validity interval is supplied as a separate start and duration, which must both be
+    // present or both absent; a half-open interval is rejected.
+    let task_interval = reconstruct_task_interval(req.task_start, req.task_duration)
+        .map_err(|err| Error::BadRequest(err.into()))?;
+
     let task = Arc::new(
         AggregatorTask::new(
             task_id,
@@ -198,8 +208,7 @@ pub(super) async fn post_task<C: Clock>(
             /* batch_mode */ req.batch_mode,
             /* vdaf */ req.vdaf,
             vdaf_verify_key,
-            /* task_start */ req.task_start,
-            /* task_end */ req.task_end,
+            /* task_interval */ task_interval,
             /* report_expiry_age */
             Some(Duration::from_seconds(
                 3600 * 24 * 7 * 2,
@@ -209,6 +218,7 @@ pub(super) async fn post_task<C: Clock>(
             /* time_precision */ req.time_precision,
             /* tolerable_clock_skew */
             Duration::ONE,
+            task_info,
             aggregator_parameters,
         )
         .context("Error constructing task")
@@ -228,8 +238,8 @@ pub(super) async fn post_task<C: Clock>(
                         && existing_task.vdaf() == task.vdaf()
                         && existing_task.opaque_vdaf_verify_key() == task.opaque_vdaf_verify_key()
                         && existing_task.role() == task.role()
-                        && existing_task.task_start() == task.task_start()
-                        && existing_task.task_end() == task.task_end()
+                        && existing_task.task_info() == task.task_info()
+                        && existing_task.task_interval() == task.task_interval()
                         && existing_task.min_batch_size() == task.min_batch_size()
                         && existing_task.time_precision() == task.time_precision()
                         && existing_task.tolerable_clock_skew() == task.tolerable_clock_skew()
@@ -307,6 +317,23 @@ pub(super) async fn patch_task<C: Clock>(
         .run_tx("patch_task", |tx| {
             Box::pin(async move {
                 if let Some(task_end) = req.task_end {
+                    // Setting a concrete end requires an existing task_start that is not after the
+                    // new end. PATCH cannot create a half-open interval, and an end before the start
+                    // would be a negative (unrepresentable) duration.
+                    if let Some(end) = task_end {
+                        if let Some(existing) = tx.get_aggregator_task(&task_id).await? {
+                            if existing.task_start().is_none_or(|start| start > end) {
+                                return Err(datastore::Error::User(
+                                    Error::BadRequest(
+                                        "task_end requires an existing task_start that is not after \
+                                         it"
+                                        .into(),
+                                    )
+                                    .into(),
+                                ));
+                            }
+                        }
+                    }
                     tx.update_task_end(&task_id, task_end.as_ref()).await?;
                 }
                 tx.get_aggregator_task(&task_id).await

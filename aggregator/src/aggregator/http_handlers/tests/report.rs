@@ -16,9 +16,9 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, InputShareAad, MediaType,
-    PlaintextInputShare, Report, ReportError, ReportId, ReportMetadata, Role, TimePrecision,
-    UploadErrors, UploadRequest,
+    Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, InputShareAad, Interval,
+    MediaType, PlaintextInputShare, Report, ReportError, ReportId, ReportMetadata, Role,
+    TimePrecision, UploadErrors, UploadRequest,
 };
 use opentelemetry::Key;
 use opentelemetry_sdk::metrics::data::{Histogram, Sum};
@@ -348,12 +348,8 @@ async fn upload_handler() {
     // advance it, and we have to instead tolerate skew.
     .with_tolerable_clock_skew(Duration::from_time_precision_units(2))
     .with_time_precision(*task.time_precision())
-    .with_task_end(Some(
-        clock
-            .now()
-            .to_time(task.time_precision())
-            .add_duration(&Duration::ONE)
-            .unwrap(),
+    .with_task_interval(Some(
+        Interval::new(clock.now().to_time(task.time_precision()), Duration::ONE).unwrap(),
     ))
     .build();
     let leader_task_end_soon = task_end_soon.leader_view().unwrap();
@@ -788,14 +784,18 @@ async fn upload_handler_task_not_started() {
         VdafInstance::Prio3Count,
     )
     .with_time_precision(time_precision)
-    .with_task_start(Some(
-        clock
-            .now()
-            .to_time(&time_precision)
-            .add_duration(&Duration::ONE) // Add one time precision interval
-            .unwrap()
-            .add_duration(&Duration::ONE) // Add another to be clearly in the future
-            .unwrap(),
+    .with_task_interval(Some(
+        Interval::new(
+            clock
+                .now()
+                .to_time(&time_precision)
+                .add_duration(&Duration::ONE)
+                .unwrap()
+                .add_duration(&Duration::ONE) // two precision units, clearly in the future
+                .unwrap(),
+            Duration::from_time_precision_units(10),
+        )
+        .unwrap(),
     ))
     // Need to allow clock skew so the handler doesn't reject for being "too far in the future"
     .with_tolerable_clock_skew(Duration::from_seconds(

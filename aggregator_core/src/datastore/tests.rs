@@ -242,8 +242,13 @@ async fn roundtrip_task(ephemeral_datastore: EphemeralDatastore) {
             AggregationMode::Synchronous,
             vdaf,
         )
-        .with_task_start(Some(Time::from_seconds_since_epoch(1000, &TIME_PRECISION)))
-        .with_task_end(Some(Time::from_seconds_since_epoch(4000, &TIME_PRECISION)))
+        .with_task_interval(Some(
+            Interval::new(
+                Time::from_seconds_since_epoch(1000, &TIME_PRECISION),
+                Duration::from_seconds(3000, &TIME_PRECISION),
+            )
+            .unwrap(),
+        ))
         .with_time_precision(TIME_PRECISION)
         .with_report_expiry_age(Some(Duration::from_seconds(3600, &TIME_PRECISION)))
         .build()
@@ -348,7 +353,13 @@ async fn update_task_end(ephemeral_datastore: EphemeralDatastore) {
         VdafInstance::Prio3Count,
     )
     .with_time_precision(TIME_PRECISION)
-    .with_task_end(Some(Time::from_seconds_since_epoch(1000, &TIME_PRECISION)))
+    .with_task_interval(Some(
+        Interval::new(
+            Time::from_seconds_since_epoch(0, &TIME_PRECISION),
+            Duration::from_seconds(1000, &TIME_PRECISION),
+        )
+        .unwrap(),
+    ))
     .build()
     .leader_view()
     .unwrap();
@@ -359,7 +370,7 @@ async fn update_task_end(ephemeral_datastore: EphemeralDatastore) {
         Box::pin(async move {
             let task = tx.get_aggregator_task(&task_id).await.unwrap().unwrap();
             assert_eq!(
-                task.task_end().cloned(),
+                task.task_end(),
                 Some(Time::from_seconds_since_epoch(1000, &TIME_PRECISION))
             );
 
@@ -372,14 +383,14 @@ async fn update_task_end(ephemeral_datastore: EphemeralDatastore) {
 
             let task = tx.get_aggregator_task(&task_id).await.unwrap().unwrap();
             assert_eq!(
-                task.task_end().cloned(),
+                task.task_end(),
                 Some(Time::from_seconds_since_epoch(2000, &TIME_PRECISION))
             );
 
             tx.update_task_end(&task_id, None).await.unwrap();
 
             let task = tx.get_aggregator_task(&task_id).await.unwrap().unwrap();
-            assert_eq!(task.task_end().cloned(), None);
+            assert_eq!(task.task_end(), None);
 
             let result = tx
                 .update_task_end(

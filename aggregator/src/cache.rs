@@ -307,7 +307,7 @@ mod tests {
         time::MockClock,
         vdaf::VdafInstance,
     };
-    use janus_messages::{Time, TimePrecision};
+    use janus_messages::{Interval, Time, TimePrecision};
     use tokio::time::sleep;
 
     use crate::{
@@ -387,6 +387,7 @@ mod tests {
             VdafInstance::Prio3Count,
         )
         .with_time_precision(TimePrecision::from_seconds(100))
+        .with_task_interval(Some(Interval::EMPTY))
         .build()
         .leader_view()
         .unwrap();
@@ -418,7 +419,7 @@ mod tests {
         let task_aggregator = task_aggregators.get(task.id()).await.unwrap().unwrap();
         assert!(
             (task_aggregator.task.task_end() == task.task_end())
-                || (task_aggregator.task.task_end() == Some(&new_end))
+                || (task_aggregator.task.task_end() == Some(new_end))
         );
 
         // Unfortunately, because moka doesn't provide any facility for a fake clock, we have to
@@ -426,7 +427,7 @@ mod tests {
         sleep(Duration::from_secs(1)).await;
 
         let task_aggregator = task_aggregators.get(task.id()).await.unwrap().unwrap();
-        assert_eq!(task_aggregator.task.task_end(), Some(&new_end));
+        assert_eq!(task_aggregator.task.task_end(), Some(new_end));
     }
 
     #[tokio::test]
@@ -457,6 +458,7 @@ mod tests {
             VdafInstance::Prio3Count,
         )
         .with_time_precision(TimePrecision::from_seconds(100))
+        .with_task_interval(Some(Interval::EMPTY))
         .build()
         .leader_view()
         .unwrap();
@@ -492,12 +494,12 @@ mod tests {
         let task_aggregator = task_aggregators.get(task.id()).await.unwrap().unwrap();
         assert!(
             (task_aggregator.task.task_end() == task.task_end())
-                || (task_aggregator.task.task_end() == Some(&new_end))
+                || (task_aggregator.task.task_end() == Some(new_end))
         );
 
         sleep(Duration::from_secs(1)).await;
 
         let task_aggregator = task_aggregators.get(task.id()).await.unwrap().unwrap();
-        assert_eq!(task_aggregator.task.task_end(), Some(&new_end));
+        assert_eq!(task_aggregator.task.task_end(), Some(new_end));
     }
 }

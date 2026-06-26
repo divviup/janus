@@ -28,7 +28,7 @@ use janus_core::{
     report_id::ReportIdChecksumExt,
     taskprov::TASKPROV_HEADER,
     test_util::{VdafTranscript, install_test_trace_subscriber, runtime::TestRuntime},
-    time::{Clock, DateTimeExt, MockClock, TimeExt},
+    time::{Clock, DateTimeExt, MockClock},
     vdaf::new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128,
 };
 use janus_messages::{
@@ -195,33 +195,30 @@ where
         let vdaf_instance = task_config.vdaf_config().try_into().unwrap();
         let vdaf_verify_key = peer_aggregator.derive_vdaf_verify_key(&task_id, &vdaf_instance);
 
-        let task = TaskBuilder::new(
-            BatchMode::LeaderSelected {
-                batch_time_window_size: None,
-            },
-            AggregationMode::Synchronous,
-            vdaf_instance,
-        )
-        .with_id(task_id)
-        .with_leader_aggregator_endpoint(Url::parse("https://leader.example.com/").unwrap())
-        .with_helper_aggregator_endpoint(Url::parse("https://helper.example.com/").unwrap())
-        .with_vdaf_verify_key(vdaf_verify_key)
-        .with_task_start(include_task_interval.then(|| task_start.to_time(&time_precision)))
-        .with_task_end(include_task_interval.then(|| {
-            task_start
-                .to_time(&time_precision)
-                .add_duration(&task_duration)
-                .unwrap()
-        }))
-        .with_report_expiry_age(
-            peer_aggregator
-                .report_expiry_age()
-                .map(|d| Duration::from_chrono(d, &time_precision)),
-        )
-        .with_min_batch_size(min_batch_size)
-        .with_time_precision(time_precision)
-        .with_task_info(task_config.task_info().to_vec())
-        .build();
+        let task =
+            TaskBuilder::new(
+                BatchMode::LeaderSelected {
+                    batch_time_window_size: None,
+                },
+                AggregationMode::Synchronous,
+                vdaf_instance,
+            )
+            .with_id(task_id)
+            .with_leader_aggregator_endpoint(Url::parse("https://leader.example.com/").unwrap())
+            .with_helper_aggregator_endpoint(Url::parse("https://helper.example.com/").unwrap())
+            .with_vdaf_verify_key(vdaf_verify_key)
+            .with_task_interval(include_task_interval.then(|| {
+                Interval::new(task_start.to_time(&time_precision), task_duration).unwrap()
+            }))
+            .with_report_expiry_age(
+                peer_aggregator
+                    .report_expiry_age()
+                    .map(|d| Duration::from_chrono(d, &time_precision)),
+            )
+            .with_min_batch_size(min_batch_size)
+            .with_time_precision(time_precision)
+            .with_task_info(task_config.task_info().to_vec())
+            .build();
 
         Self {
             _ephemeral_datastore: ephemeral_datastore,
@@ -435,7 +432,7 @@ async fn taskprov_aggregate_init() {
     );
     let got_task = got_task.unwrap();
     assert_eq!(test.task.taskprov_helper_view().unwrap(), got_task);
-    assert_eq!(got_task.task_info(), Some(b"foobar".as_slice()));
+    assert_eq!(got_task.task_info(), b"foobar".as_slice());
 }
 
 /// A `TaskConfiguration` may omit the optional `task_interval` extension (DAP-18

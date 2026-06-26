@@ -22,7 +22,7 @@ use futures::future::try_join_all;
 use janus_core::{
     auth_tokens::AuthenticationToken,
     hpke::{self, HpkePrivateKey},
-    time::{Clock, IntervalExt, TimeExt},
+    time::{Clock, TimeExt},
     vdaf::VdafInstance,
 };
 use janus_messages::{
@@ -713,7 +713,7 @@ WHERE success = TRUE ORDER BY version DESC LIMIT(1)",
                 "-- put_aggregator_task()
 INSERT INTO tasks (
     task_id, aggregator_role, aggregation_mode, peer_aggregator_endpoint,
-    batch_mode, vdaf, task_start, task_end, report_expiry_age, min_batch_size,
+    batch_mode, vdaf, task_start, task_duration, report_expiry_age, min_batch_size,
     time_precision, tolerable_clock_skew, collector_hpke_config,
     vdaf_verify_key, task_info, aggregator_auth_token_type,
     aggregator_auth_token, aggregator_auth_token_hash,
@@ -742,10 +742,10 @@ ON CONFLICT DO NOTHING",
                         .task_start()
                         .map(|t| t.as_signed_time_precision_units())
                         .transpose()?,
-                    /* task_end */
+                    /* task_duration */
                     &task
-                        .task_end()
-                        .map(|t| t.as_signed_time_precision_units())
+                        .task_interval()
+                        .map(|i| i.duration().as_signed_time_precision_units())
                         .transpose()?,
                     /* report_expiry_age */
                     &task
@@ -837,6 +837,14 @@ DELETE FROM tasks WHERE task_id = $1",
     }
 
     /// Sets or unsets the end date of a task.
+    ///
+    /// Because the task's validity interval is stored as a (start, duration) pair and a half-open
+    /// interval is not representable, the requested end is translated into a new `task_duration`:
+    ///
+    /// * `Some(end)`: `task_duration` is recomputed as `end - task_start`, leaving `task_start`
+    ///   unchanged. If the task has no `task_start`, both columns remain NULL (the interval cannot
+    ///   be set without a start), which is a no-op.
+    /// * `None`: both `task_start` and `task_duration` are cleared, removing the interval entirely.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn update_task_end(
         &self,
@@ -846,7 +854,11 @@ DELETE FROM tasks WHERE task_id = $1",
         let stmt = self
             .prepare_cached(
                 "-- update_task_end()
-UPDATE tasks SET task_end = $1, updated_at = $2, updated_by = $3
+UPDATE tasks SET
+    task_start = CASE WHEN $1::BIGINT IS NULL THEN NULL ELSE task_start END,
+    task_duration = CASE WHEN $1::BIGINT IS NULL THEN NULL ELSE $1 - task_start END,
+    updated_at = $2,
+    updated_by = $3
    WHERE task_id = $4",
             )
             .await?;
@@ -880,7 +892,7 @@ UPDATE tasks SET task_end = $1, updated_at = $2, updated_by = $3
                 "-- get_aggregator_task()
 SELECT
     aggregator_role, aggregation_mode, peer_aggregator_endpoint, batch_mode,
-    vdaf, task_start, task_end, report_expiry_age, min_batch_size,
+    vdaf, task_start, task_duration, report_expiry_age, min_batch_size,
     time_precision, tolerable_clock_skew, collector_hpke_config,
     vdaf_verify_key, task_info, aggregator_auth_token_type,
     aggregator_auth_token, aggregator_auth_token_hash,
@@ -903,7 +915,7 @@ FROM tasks WHERE task_id = $1",
                 "-- get_aggregator_tasks()
 SELECT
     task_id, aggregator_role, aggregation_mode, peer_aggregator_endpoint,
-    batch_mode, vdaf, task_start, task_end, report_expiry_age, min_batch_size,
+    batch_mode, vdaf, task_start, task_duration, report_expiry_age, min_batch_size,
     time_precision, tolerable_clock_skew, collector_hpke_config,
     vdaf_verify_key, task_info, aggregator_auth_token_type,
     aggregator_auth_token, aggregator_auth_token_hash,
@@ -932,9 +944,11 @@ FROM tasks",
         let task_start = row
             .get_nullable_bigint_and_convert("task_start")?
             .map(Time::from_time_precision_units);
-        let task_end = row
-            .get_nullable_bigint_and_convert("task_end")?
-            .map(Time::from_time_precision_units);
+        let task_duration = row
+            .get_nullable_bigint_and_convert("task_duration")?
+            .map(Duration::from_time_precision_units);
+        let task_interval = task::reconstruct_task_interval(task_start, task_duration)
+            .map_err(|e| Error::DbState(format!("task row has invalid validity interval: {e}")))?;
         let report_expiry_age = row
             .get_nullable_bigint_and_convert("report_expiry_age")?
             .map(|s| Duration::from_seconds(s, &time_precision));
@@ -957,7 +971,7 @@ FROM tasks",
                 &encrypted_vdaf_verify_key,
             )
             .map(SecretBytes::new)?;
-        let task_info: Option<Vec<u8>> = row.get("task_info");
+        let task_info: Vec<u8> = row.get("task_info");
 
         let aggregator_auth_token_type: Option<AuthenticationTokenType> =
             row.get("aggregator_auth_token_type");
@@ -1029,23 +1043,20 @@ FROM tasks",
             }
         };
 
-        let mut task = AggregatorTask::new(
+        let task = AggregatorTask::new(
             *task_id,
             peer_aggregator_endpoint,
             batch_mode,
             vdaf,
             vdaf_verify_key,
-            task_start,
-            task_end,
+            task_interval,
             report_expiry_age,
             min_batch_size,
             time_precision,
             tolerable_clock_skew,
+            task_info,
             aggregator_parameters,
         )?;
-        if let Some(task_info) = task_info {
-            task = task.with_task_info(task_info);
-        }
         Ok(task)
     }
 

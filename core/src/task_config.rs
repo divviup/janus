@@ -44,9 +44,8 @@ pub fn build_task_configuration(
 
 #[cfg(test)]
 mod tests {
-    use assert_matches::assert_matches;
     use janus_messages::{
-        BatchConfig, Duration, Error, Interval, Time, TimePrecision, Url as DapUrl, VdafConfig,
+        BatchConfig, Duration, Interval, Time, TimePrecision, Url as DapUrl, VdafConfig,
     };
     use prio::codec::Encode as _;
 
@@ -124,20 +123,20 @@ mod tests {
     }
 
     #[test]
-    fn rejects_empty_task_info() {
-        assert_matches!(
-            build_task_configuration(
-                Vec::new(),
-                leader(),
-                helper(),
-                TimePrecision::from_seconds(3600),
-                100,
-                BatchConfig::TimeInterval,
-                VdafConfig::Prio3Count,
-                None,
-            ),
-            Err(Error::InvalidParameter(_))
-        );
+    fn allows_empty_task_info() {
+        // task_info may be empty per DAP-19 (draft-ietf-ppm-dap#787).
+        let config = build_task_configuration(
+            Vec::new(),
+            leader(),
+            helper(),
+            TimePrecision::from_seconds(3600),
+            100,
+            BatchConfig::TimeInterval,
+            VdafConfig::Prio3Count,
+            None,
+        )
+        .unwrap();
+        assert!(config.task_info().is_empty());
     }
 
     /// Pins the exact encoded bytes produced by the canonical builder. Because DAP implementations
