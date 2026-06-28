@@ -3321,11 +3321,53 @@ impl VdafOps {
         A::AggregationParam: Send + Sync + Eq + Hash,
         A::AggregateShare: Send + Sync,
     {
-        // Decode request, and verify that it is for the current task. We use an assert to check
-        // that the task IDs match as this should be guaranteed by the caller.
+        // Decode request.
         let aggregate_share_req =
             Arc::new(AggregateShareReq::<Q>::get_decoded(req_bytes).map_err(Error::MessageDecode)?);
 
+        Self::handle_aggregate_share_inner(
+            datastore,
+            clock,
+            task,
+            vdaf,
+            aggregate_share_req,
+            batch_aggregation_shard_count,
+            max_future_concurrency,
+            collector_hpke_config,
+            dp_strategy,
+        )
+        .await
+    }
+
+    #[tracing::instrument(
+        skip_all,
+        fields(
+            batch_identifier = %aggregate_share_req.batch_selector().batch_identifier(),
+            request_report_count = aggregate_share_req.report_count()
+        ),
+        err(level = Level::DEBUG)
+    )]
+    async fn handle_aggregate_share_inner<
+        const SEED_SIZE: usize,
+        Q: CollectableQueryType,
+        S: DifferentialPrivacyStrategy + Clone + Send + Sync + 'static,
+        A: vdaf::AggregatorWithNoise<SEED_SIZE, 16, S> + Send + Sync + 'static,
+        C: Clock,
+    >(
+        datastore: &Datastore<C>,
+        clock: &C,
+        task: Arc<AggregatorTask>,
+        vdaf: Arc<A>,
+        aggregate_share_req: Arc<AggregateShareReq<Q>>,
+        batch_aggregation_shard_count: u64,
+        max_future_concurrency: usize,
+        collector_hpke_config: &HpkeConfig,
+        dp_strategy: Arc<S>,
+    ) -> Result<AggregateShare, Error>
+    where
+        A::AggregationParam: Send + Sync + Eq + Hash,
+        A::AggregateShare: Send + Sync,
+    {
         // §4.4.4.3: check that the batch interval meets the requirements from §4.6
         if !Q::validate_collection_identifier(
             &task,
