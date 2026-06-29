@@ -1531,7 +1531,9 @@ mod tests {
         let poll_result = collector.poll_once(&job).await.unwrap();
         assert_matches!(
             poll_result,
-            PollResult::NotReady(Some(RetryAfter::Delay(duration))) => assert_eq!(duration, std::time::Duration::from_secs(65535))
+            PollResult::NotReady(Some(RetryAfter::Delay(duration))) => {
+                assert_eq!(duration, std::time::Duration::from_secs(65535));
+            }
         );
 
         mock_collection_job_empty_body_with_retry
@@ -1727,7 +1729,9 @@ mod tests {
             .await;
         assert_matches!(
             collector.poll_once(&job).await.unwrap(),
-            PollResult::NotReady(Some(RetryAfter::Delay(duration))) => assert_eq!(duration, std::time::Duration::from_secs(60))
+            PollResult::NotReady(Some(RetryAfter::Delay(duration))) => {
+                assert_eq!(duration, std::time::Duration::from_secs(60));
+            }
         );
         mock_collect_poll_retry_after_60s.assert_async().await;
 
@@ -1741,7 +1745,9 @@ mod tests {
         let ref_date_time = Utc.with_ymd_and_hms(2015, 10, 21, 7, 28, 0).unwrap();
         assert_matches!(
             collector.poll_once(&job).await.unwrap(),
-            PollResult::NotReady(Some(RetryAfter::DateTime(system_time))) => assert_eq!(system_time, SystemTime::from(ref_date_time))
+            PollResult::NotReady(Some(RetryAfter::DateTime(system_time))) => {
+                assert_eq!(system_time, SystemTime::from(ref_date_time));
+            }
         );
         mock_collect_poll_retry_after_date_time.assert_async().await;
     }

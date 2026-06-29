@@ -143,7 +143,9 @@ struct AuthenticationOptions {
     /// Authentication token for the DAP-Auth-Token HTTP header
     #[clap(
         long,
-        value_parser = StringValueParser::new().try_map(AuthenticationToken::new_dap_auth_token_from_string),
+        value_parser = StringValueParser::new().try_map(
+            AuthenticationToken::new_dap_auth_token_from_string,
+        ),
         env,
         hide_env_values = true,
         help_heading = "Authorization",
@@ -155,7 +157,9 @@ struct AuthenticationOptions {
     /// Authentication token for the "Authorization: Bearer ..." HTTP header
     #[clap(
         long,
-        value_parser = StringValueParser::new().try_map(AuthenticationToken::new_bearer_token_from_string),
+        value_parser = StringValueParser::new().try_map(
+            AuthenticationToken::new_bearer_token_from_string,
+        ),
         env,
         hide_env_values = true,
         help_heading = "Authorization",

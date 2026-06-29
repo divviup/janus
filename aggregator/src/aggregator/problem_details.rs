@@ -246,10 +246,7 @@ mod tests {
                     Box::new(|| Error::UnrecognizedAggregationJob(random(), random())),
                     Some(DapProblemType::UnrecognizedAggregationJob),
                 ),
-                TestCase::new(
-                    Box::new(|| Error::UnauthorizedRequest(random())),
-                    None,
-                ),
+                TestCase::new(Box::new(|| Error::UnauthorizedRequest(random())), None),
                 TestCase::new(
                     Box::new(|| Error::InvalidBatchSize(random(), 8)),
                     Some(DapProblemType::InvalidBatchSize),
@@ -261,7 +258,9 @@ mod tests {
                             format!(
                                 "{}",
                                 Interval::new(
-                                    RealClock::default().now().to_time(&TimePrecision::from_seconds(1)),
+                                    RealClock::default()
+                                        .now()
+                                        .to_time(&TimePrecision::from_seconds(1)),
                                     Duration::from_seconds(3600, &TimePrecision::from_seconds(1))
                                 )
                                 .unwrap()
@@ -274,8 +273,13 @@ mod tests {
                     Box::new(|| {
                         Error::BatchOverlap(
                             random(),
-                            Interval::new(RealClock::default().now().to_time(&TimePrecision::from_seconds(1)), Duration::from_seconds(3600, &TimePrecision::from_seconds(1)))
-                                .unwrap(),
+                            Interval::new(
+                                RealClock::default()
+                                    .now()
+                                    .to_time(&TimePrecision::from_seconds(1)),
+                                Duration::from_seconds(3600, &TimePrecision::from_seconds(1)),
+                            )
+                            .unwrap(),
                         )
                     }),
                     Some(DapProblemType::BatchOverlap),
@@ -292,14 +296,8 @@ mod tests {
                     }),
                     Some(DapProblemType::BatchMismatch),
                 ),
-                TestCase::new(
-                    Box::new(|| Error::TooManyRequests),
-                    None,
-                ),
-                TestCase::new(
-                    Box::new(|| Error::RequestTimeout),
-                    None,
-                ),
+                TestCase::new(Box::new(|| Error::TooManyRequests), None),
+                TestCase::new(Box::new(|| Error::RequestTimeout), None),
             ]
             .into_iter()
             .map(|test_case| {
@@ -344,7 +342,10 @@ mod tests {
                     assert_matches!(
                         actual_error,
                         Error::Http(error_response) => {
-                            assert_eq!(error_response.dap_problem_type(), test_case.expected_problem_type.as_ref());
+                            assert_eq!(
+                                error_response.dap_problem_type(),
+                                test_case.expected_problem_type.as_ref()
+                            );
                         }
                     );
                 }

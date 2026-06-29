@@ -532,7 +532,11 @@ async fn aggregate_share_request() {
                                 let task_id = *task.id();
 
                                 async move {
-                                    tx.get_batch_aggregations_for_batch::<0, TimeInterval, dummy::Vdaf>(
+                                    tx.get_batch_aggregations_for_batch::<
+                                        0,
+                                        TimeInterval,
+                                        dummy::Vdaf,
+                                    >(
                                         &dummy::Vdaf::new(1),
                                         &task_id,
                                         &batch_identifier,

@@ -191,7 +191,12 @@ where
         match lease.leased().batch_mode() {
             task::BatchMode::TimeInterval => {
                 vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
-                    self.step_aggregation_job_generic::<VERIFY_KEY_LENGTH, C, TimeInterval, VdafType>(
+                    self.step_aggregation_job_generic::<
+                        VERIFY_KEY_LENGTH,
+                        C,
+                        TimeInterval,
+                        VdafType,
+                    >(
                         datastore,
                         hpke_keypairs,
                         Arc::new(vdaf),
@@ -201,7 +206,12 @@ where
             }
             task::BatchMode::LeaderSelected { .. } => {
                 vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
-                    self.step_aggregation_job_generic::<VERIFY_KEY_LENGTH, C, LeaderSelected, VdafType>(
+                    self.step_aggregation_job_generic::<
+                        VERIFY_KEY_LENGTH,
+                        C,
+                        LeaderSelected,
+                        VdafType,
+                    >(
                         datastore,
                         hpke_keypairs,
                         Arc::new(vdaf),
