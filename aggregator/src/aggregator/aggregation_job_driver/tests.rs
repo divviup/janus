@@ -549,8 +549,8 @@ async fn leader_sync_time_interval_aggregation_job_init_single_step() {
             random(),
             time,
             Vec::from([
-                Extension::new(ExtensionType::Reserved, Vec::new()),
-                Extension::new(ExtensionType::Reserved, Vec::new()),
+                Extension::new(ExtensionType::Taskbind, Vec::new()),
+                Extension::new(ExtensionType::Taskbind, Vec::new()),
             ]),
         ),
         helper_hpke_keypair.config(),
@@ -562,8 +562,8 @@ async fn leader_sync_time_interval_aggregation_job_init_single_step() {
         ReportMetadata::new(random(), time, Vec::new()),
         helper_hpke_keypair.config(),
         Vec::from([
-            Extension::new(ExtensionType::Reserved, Vec::new()),
-            Extension::new(ExtensionType::Reserved, Vec::new()),
+            Extension::new(ExtensionType::Taskbind, Vec::new()),
+            Extension::new(ExtensionType::Taskbind, Vec::new()),
         ]),
         &transcript,
     );
@@ -572,10 +572,10 @@ async fn leader_sync_time_interval_aggregation_job_init_single_step() {
         ReportMetadata::new(
             random(),
             time,
-            Vec::from([Extension::new(ExtensionType::Reserved, Vec::new())]),
+            Vec::from([Extension::new(ExtensionType::Taskbind, Vec::new())]),
         ),
         helper_hpke_keypair.config(),
-        Vec::from([Extension::new(ExtensionType::Reserved, Vec::new())]),
+        Vec::from([Extension::new(ExtensionType::Taskbind, Vec::new())]),
         &transcript,
     );
     let aggregation_job_id = random();

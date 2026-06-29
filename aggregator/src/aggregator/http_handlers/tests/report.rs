@@ -596,8 +596,8 @@ async fn upload_handler() {
         clock.now().to_time(task.time_precision()),
         random(),
         &hpke_keypair,
-        /* public */ Vec::from([Extension::new(ExtensionType::Reserved, Vec::new())]),
-        /* leader */ Vec::from([Extension::new(ExtensionType::Reserved, Vec::new())]),
+        /* public */ Vec::from([Extension::new(ExtensionType::Taskbind, Vec::new())]),
+        /* leader */ Vec::from([Extension::new(ExtensionType::Taskbind, Vec::new())]),
         /* helper */ Vec::new(),
     );
     let mut response = router
