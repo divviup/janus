@@ -140,7 +140,7 @@ mod tests {
         );
     }
 
-    /// Pins the exact encoded bytes produced by the canonical builder. Because taskprov clients can
+    /// Pins the exact encoded bytes produced by the canonical builder. Because DAP implementations can
     /// be non-Janus, this synthesized encoding is a cross-implementation wire-compatibility
     /// contract, so we assert the bytes directly rather than only round-tripping.
     #[test]

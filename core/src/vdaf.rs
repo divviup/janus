@@ -142,8 +142,8 @@ impl VdafInstance {
     /// foreign trait to produce the foreign [`VdafConfig`] type from this crate.
     ///
     /// The differential privacy strategy is **not** representable in [`VdafConfig`] and is silently
-    /// dropped. Both aggregators must drop it identically for the synthesized task configuration
-    /// (and therefore the HPKE AAD it is bound into) to match.
+    /// dropped. It is anticipated that future task extensions will allow for agreement on differential
+    /// privacy mechanisms.
     pub fn to_vdaf_config(&self) -> Result<VdafConfig, &'static str> {
         // VDAF length parameters are `usize` here but `u32` on the wire.
         fn to_u32(value: usize) -> Result<u32, &'static str> {

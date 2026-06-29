@@ -60,9 +60,8 @@ impl BatchMode {
     ///
     /// This is the inverse of [`BatchMode::try_from(&BatchConfig)`](TryFrom). The
     /// `batch_time_window_size` of [`BatchMode::LeaderSelected`] is a Janus-specific parameter that
-    /// is not part of the DAP batch configuration, and is silently dropped; both aggregators must
-    /// drop it identically for the synthesized task configuration (and therefore the HPKE AAD it is
-    /// bound into) to match.
+    /// is not part of the DAP batch configuration, and is silently dropped. Therefore, the HPKE AAD
+    /// does not force the aggregators to agree on the `batch_time_window_size`.
     pub fn to_batch_config(&self) -> BatchConfig {
         match self {
             BatchMode::TimeInterval => BatchConfig::TimeInterval,
