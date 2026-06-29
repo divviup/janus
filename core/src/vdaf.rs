@@ -142,8 +142,8 @@ impl VdafInstance {
     /// foreign trait to produce the foreign [`VdafConfig`] type from this crate.
     ///
     /// The differential privacy strategy is **not** representable in [`VdafConfig`] and is silently
-    /// dropped. It is anticipated that future task extensions will allow for agreement on differential
-    /// privacy mechanisms.
+    /// dropped. It is anticipated that future task extensions will allow for agreement on
+    /// differential privacy mechanisms.
     pub fn to_vdaf_config(&self) -> Result<VdafConfig, &'static str> {
         // VDAF length parameters are `usize` here but `u32` on the wire.
         fn to_u32(value: usize) -> Result<u32, &'static str> {
