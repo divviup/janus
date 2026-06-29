@@ -1545,7 +1545,7 @@ impl VdafOps {
 
     #[tracing::instrument(
         skip(self, datastore, metrics, task, req, request_hash),
-        fields(task_id = ?task.id()),
+        fields(task_id = ?task.id(), step = %req.step()),
         err(level = Level::DEBUG)
     )]
     async fn handle_aggregate_continue<C: Clock>(
@@ -2142,6 +2142,50 @@ impl VdafOps {
         let req = AggregationJobInitializeReq::<B>::get_decoded(req_bytes)
             .map_err(Error::MessageDecode)?;
 
+        Self::handle_aggregate_init_inner(
+            datastore,
+            hpke_keypairs,
+            vdaf,
+            metrics,
+            task,
+            batch_aggregation_shard_count,
+            task_counter_shard_count,
+            aggregation_job_id,
+            require_taskbind_extension,
+            log_forbidden_mutations,
+            req,
+            request_hash,
+        )
+        .await
+    }
+
+    #[tracing::instrument(
+        skip_all,
+        fields(
+            verification_key_id = req.verification_key_id(),
+            partial_batch_identifier = ?req.batch_selector().batch_identifier()
+        ),
+        err(level = Level::DEBUG)
+    )]
+    async fn handle_aggregate_init_inner<const SEED_SIZE: usize, B, A, C>(
+        datastore: Arc<Datastore<C>>,
+        hpke_keypairs: Arc<HpkeKeypairCache>,
+        vdaf: Arc<A>,
+        metrics: &AggregatorMetrics,
+        task: Arc<AggregatorTask>,
+        batch_aggregation_shard_count: u64,
+        task_counter_shard_count: u64,
+        aggregation_job_id: &AggregationJobId,
+        require_taskbind_extension: bool,
+        log_forbidden_mutations: Option<PathBuf>,
+        req: AggregationJobInitializeReq<B>,
+        request_hash: [u8; 32],
+    ) -> Result<Option<AggregationJobResp>, Error>
+    where
+        B: AccumulableBatchMode,
+        A: AsyncAggregator<SEED_SIZE>,
+        C: Clock,
+    {
         // If two ReportShare messages have the same report ID, then the helper MUST abort with
         // error "invalidMessage". (§4.5.1.2)
         let mut seen_report_ids = HashSet::with_capacity(req.verify_inits().len());
@@ -3004,6 +3048,28 @@ impl VdafOps {
     ) -> Result<Vec<u8>, Error> {
         let req =
             Arc::new(CollectionJobReq::<B>::get_decoded(req_bytes).map_err(Error::MessageDecode)?);
+
+        Self::handle_create_collection_job_inner(datastore, task, vdaf, collection_job_id, req)
+            .await
+    }
+
+    #[tracing::instrument(
+        skip_all,
+        fields(query = ?req.query().query_body()),
+        err(level = Level::DEBUG)
+    )]
+    async fn handle_create_collection_job_inner<
+        const SEED_SIZE: usize,
+        B: CollectableBatchMode,
+        A: AsyncAggregator<SEED_SIZE>,
+        C: Clock,
+    >(
+        datastore: &Datastore<C>,
+        task: Arc<AggregatorTask>,
+        vdaf: Arc<A>,
+        collection_job_id: &CollectionJobId,
+        req: Arc<CollectionJobReq<B>>,
+    ) -> Result<Vec<u8>, Error> {
         let aggregation_param = Arc::new(
             A::AggregationParam::get_decoded(req.aggregation_parameter())
                 .map_err(Error::MessageDecode)?,
@@ -3327,6 +3393,7 @@ impl VdafOps {
             .await?;
         Ok(())
     }
+
     /// Implements the `tasks/{task-id}/aggregate_shares/{aggregate-share-id}` GET endpoint for
     /// the helper.
     #[tracing::instrument(
