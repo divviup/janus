@@ -1650,7 +1650,7 @@ impl VdafOps {
 
     #[tracing::instrument(
         skip(self, datastore, metrics, task, req, request_hash),
-        fields(task_id = ?task.id()),
+        fields(task_id = ?task.id(), step = %req.step()),
         err(level = Level::DEBUG)
     )]
     async fn handle_aggregate_continue<C: Clock>(
@@ -2117,6 +2117,60 @@ impl VdafOps {
                 .map_err(Error::MessageDecode)?,
         );
 
+        Self::handle_aggregate_init_inner(
+            datastore,
+            clock,
+            global_hpke_keypairs,
+            vdaf,
+            metrics,
+            task,
+            batch_aggregation_shard_count,
+            task_counter_shard_count,
+            aggregation_job_id,
+            verify_key,
+            require_taskprov_extension,
+            log_forbidden_mutations,
+            req,
+            request_hash,
+        )
+        .await
+    }
+
+    #[tracing::instrument(
+        skip_all,
+        fields(partial_batch_identifier = ?req.batch_selector().batch_identifier()),
+        err(level = Level::DEBUG)
+    )]
+    async fn handle_aggregate_init_inner<const SEED_SIZE: usize, Q, A, C>(
+        datastore: Arc<Datastore<C>>,
+        clock: &C,
+        global_hpke_keypairs: &GlobalHpkeKeypairCache,
+        vdaf: Arc<A>,
+        metrics: &AggregatorMetrics,
+        task: Arc<AggregatorTask>,
+        batch_aggregation_shard_count: u64,
+        task_counter_shard_count: u64,
+        aggregation_job_id: &AggregationJobId,
+        verify_key: &VerifyKey<SEED_SIZE>,
+        require_taskprov_extension: bool,
+        log_forbidden_mutations: Option<PathBuf>,
+        req: Arc<AggregationJobInitializeReq<Q>>,
+        request_hash: [u8; 32],
+    ) -> Result<AggregationJobResp, Error>
+    where
+        Q: AccumulableQueryType,
+        A: vdaf::Aggregator<SEED_SIZE, 16> + 'static + Send + Sync,
+        C: Clock,
+        A::AggregationParam: Send + Sync + PartialEq + Eq,
+        A::AggregateShare: Send + Sync,
+        A::InputShare: Send + Sync,
+        A::PrepareMessage: Send + Sync + PartialEq,
+        A::PrepareShare: Send + Sync + PartialEq,
+        for<'a> A::PrepareState:
+            Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)> + PartialEq,
+        A::PublicShare: Send + Sync,
+        A::OutputShare: Send + Sync + PartialEq,
+    {
         let task_aggregation_counters = Arc::new(SyncMutex::new(TaskAggregationCounter::default()));
 
         // Check if this is a repeated request, and if it is the same as before, send
@@ -2933,6 +2987,32 @@ impl VdafOps {
     {
         let req =
             Arc::new(CollectionReq::<Q>::get_decoded(req_bytes).map_err(Error::MessageDecode)?);
+
+        Self::handle_create_collection_job_inner(datastore, task, vdaf, collection_job_id, req)
+            .await
+    }
+
+    #[tracing::instrument(
+        skip_all,
+        fields(query = ?req.query().query_body()),
+        err(level = Level::DEBUG)
+    )]
+    async fn handle_create_collection_job_inner<
+        const SEED_SIZE: usize,
+        Q: CollectableQueryType,
+        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
+        C: Clock,
+    >(
+        datastore: &Datastore<C>,
+        task: Arc<AggregatorTask>,
+        vdaf: Arc<A>,
+        collection_job_id: &CollectionJobId,
+        req: Arc<CollectionReq<Q>>,
+    ) -> Result<(), Error>
+    where
+        A::AggregationParam: 'static + Send + Sync + PartialEq + Eq + Hash,
+        A::AggregateShare: Send + Sync,
+    {
         let aggregation_param = Arc::new(
             A::AggregationParam::get_decoded(req.aggregation_parameter())
                 .map_err(Error::MessageDecode)?,
