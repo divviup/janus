@@ -3449,7 +3449,7 @@ impl VdafOps {
     async fn handle_get_aggregate_share_generic<
         const SEED_SIZE: usize,
         B: CollectableBatchMode,
-        S: DifferentialPrivacyStrategy + Send + Clone + Send + Sync + 'static,
+        S: DifferentialPrivacyStrategy + Clone + Send + Sync + 'static,
         A: AsyncAggregatorWithNoise<SEED_SIZE, S>,
         C: Clock,
     >(
@@ -3574,7 +3574,7 @@ impl VdafOps {
     async fn handle_aggregate_share_generic<
         const SEED_SIZE: usize,
         B: CollectableBatchMode,
-        S: DifferentialPrivacyStrategy + Send + Clone + Send + Sync + 'static,
+        S: DifferentialPrivacyStrategy + Clone + Send + Sync + 'static,
         A: AsyncAggregatorWithNoise<SEED_SIZE, S>,
         C: Clock,
     >(
