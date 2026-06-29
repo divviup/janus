@@ -310,13 +310,19 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         match (task.batch_mode(), task.vdaf()) {
             (task::BatchMode::TimeInterval, VdafInstance::Prio3Count) => {
                 let vdaf = Arc::new(Prio3::new_count(2)?);
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH_PRIO3, Prio3Count>(task, vdaf)
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<
+                    VERIFY_KEY_LENGTH_PRIO3,
+                    Prio3Count,
+                >(task, vdaf)
                     .await
             }
 
             (task::BatchMode::TimeInterval, VdafInstance::Prio3Sum { max_measurement }) => {
                 let vdaf = Arc::new(Prio3::new_sum(2, *max_measurement)?);
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH_PRIO3, Prio3Sum>(task, vdaf)
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<
+                    VERIFY_KEY_LENGTH_PRIO3,
+                    Prio3Sum,
+                >(task, vdaf)
                     .await
             }
 
@@ -335,7 +341,10 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     *length,
                     *chunk_length,
                 )?);
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH_PRIO3, Prio3SumVec>(task, vdaf)
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<
+                    VERIFY_KEY_LENGTH_PRIO3,
+                    Prio3SumVec,
+                >(task, vdaf)
                     .await
             }
 
@@ -369,7 +378,10 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 },
             ) => {
                 let vdaf = Arc::new(Prio3::new_histogram(2, *length, *chunk_length)?);
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH_PRIO3, Prio3Histogram>(task, vdaf)
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<
+                    VERIFY_KEY_LENGTH_PRIO3,
+                    Prio3Histogram,
+                >(task, vdaf)
                     .await
             }
 
@@ -3325,7 +3337,7 @@ mod tests {
                     .await
                     .unwrap()
                     .into_iter()
-                    .map(|agg_job| async {
+                    .map(|agg_job: AggregationJob<SEED_SIZE, B, A>| async {
                         let agg_job_id = *agg_job.id();
                         let report_aggs = tx
                             .get_report_aggregations_for_aggregation_job(
@@ -3338,16 +3350,15 @@ mod tests {
                             .unwrap();
 
                         for ra in &report_aggs {
-                            // AggregationJob<_, _, A>::aggregation_parameter returns
-                            // &A::AggregationParam, but we nonetheless need this cast or the
-                            // compiler won't let us call clone
-                            let agg_param = (agg_job.aggregation_parameter() as &A::AggregationParam).clone();
+                            let agg_param = agg_job.aggregation_parameter().clone();
                             let want_ra_state = want_ra_states
                                 .get(&(*ra.report_id(), agg_param))
                                 .unwrap_or_else(|| {
                                     panic!(
-                                        "found report aggregation for unknown report {} aggregation param {:?}",
-                                        ra.report_id(), agg_job.aggregation_parameter(),
+                                        "found report aggregation for unknown report {} \
+                                         aggregation param {:?}",
+                                        ra.report_id(),
+                                        agg_job.aggregation_parameter(),
                                     )
                                 });
                             assert_eq!(want_ra_state, ra.state());

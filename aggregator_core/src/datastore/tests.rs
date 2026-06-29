@@ -2087,16 +2087,24 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
     ds.run_unnamed_tx(|tx| {
         let (task, mut maybe_leased_aggregation_job_ids) = (
             leader_task.clone(),
-            leader_aggregation_job_ids.clone().into_iter().chain(
-                // When we get leases, we expect to see the finished and expired jobs (because we
-                // haven't advanced time yet), but not the helper job (because we query on the
-                // leader task).
-                Vec::from([finished_aggregation_job_id, expired_aggregation_job_id])).collect::<Vec<_>>(),
-
+            leader_aggregation_job_ids
+                .clone()
+                .into_iter()
+                .chain(
+                    // When we get leases, we expect to see the finished and expired jobs (because
+                    // we haven't advanced time yet), but not the helper job
+                    // (because we query on the leader task).
+                    Vec::from([finished_aggregation_job_id, expired_aggregation_job_id]),
+                )
+                .collect::<Vec<_>>(),
         );
         Box::pin(async move {
             let maybe_leases = tx
-                .get_aggregation_job_leases_by_task::<VERIFY_KEY_LENGTH_PRIO3, TimeInterval, Prio3Count>(
+                .get_aggregation_job_leases_by_task::<
+                    VERIFY_KEY_LENGTH_PRIO3,
+                    TimeInterval,
+                    Prio3Count,
+                >(
                     task.id(),
                 )
                 .await
@@ -2116,7 +2124,11 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
             assert_eq!(maybe_leased_aggregation_job_ids, seen_aggregation_job_ids);
 
             let no_such_task = tx
-                .get_aggregation_job_leases_by_task::<VERIFY_KEY_LENGTH_PRIO3, TimeInterval, Prio3Count>(
+                .get_aggregation_job_leases_by_task::<
+                    VERIFY_KEY_LENGTH_PRIO3,
+                    TimeInterval,
+                    Prio3Count,
+                >(
                     &random(),
                 )
                 .await
@@ -2270,7 +2282,11 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
         );
         Box::pin(async move {
             let maybe_leases = tx
-                .get_aggregation_job_leases_by_task::<VERIFY_KEY_LENGTH_PRIO3, TimeInterval, Prio3Count>(
+                .get_aggregation_job_leases_by_task::<
+                    VERIFY_KEY_LENGTH_PRIO3,
+                    TimeInterval,
+                    Prio3Count,
+                >(
                     task.id(),
                 )
                 .await
@@ -2955,20 +2971,19 @@ SELECT updated_at, updated_by FROM report_aggregations
         // Make a "new" report aggregation with the same ID, but which is not expired. It should get
         // upserted, replacing the effectively GCed report aggregation.
         ds.run_unnamed_tx(|tx| {
-            let unexpired_report_aggregation = report_aggregation.clone().with_time(clock.now().to_time(&TIME_PRECISION));
+            let unexpired_report_aggregation = report_aggregation
+                .clone()
+                .with_time(clock.now().to_time(&TIME_PRECISION));
             Box::pin(async move {
                 tx.put_report_aggregation(&unexpired_report_aggregation)
                     .await
                     .unwrap();
 
-                let row = tx
-                    .query_one(
-                        "SELECT client_timestamp FROM report_aggregations WHERE client_report_id = $1",
-                        &[&report_id.as_ref()],
-                    )
-                    .await
-                    .unwrap();
-                let client_timestamp = Time::from_date_time(row.get("client_timestamp"), TIME_PRECISION);
+                let sql =
+                    "SELECT client_timestamp FROM report_aggregations WHERE client_report_id = $1";
+                let row = tx.query_one(sql, &[&report_id.as_ref()]).await.unwrap();
+                let client_timestamp =
+                    Time::from_date_time(row.get("client_timestamp"), TIME_PRECISION);
 
                 assert_eq!(unexpired_report_aggregation.time(), &client_timestamp);
 
@@ -5737,7 +5752,10 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                     task.id(),
                     &vdaf,
                     &Interval::new(
-                        Time::from_seconds_since_epoch(START_TIMESTAMP + 100, task.time_precision()),
+                        Time::from_seconds_since_epoch(
+                            START_TIMESTAMP + 100,
+                            task.time_precision(),
+                        ),
                         Duration::from_time_precision_units(4)
                     )
                     .unwrap(),
@@ -5764,8 +5782,11 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                 *first_batch_aggregation.batch_interval(),
                 *first_batch_aggregation.aggregation_parameter(),
                 first_batch_aggregation.ord(),
-                Interval::minimal(Time::from_seconds_since_epoch(START_TIMESTAMP + 100, task.time_precision()))
-                    .unwrap(),
+                Interval::minimal(Time::from_seconds_since_epoch(
+                    START_TIMESTAMP + 100,
+                    task.time_precision(),
+                ))
+                .unwrap(),
                 BatchAggregationState::Aggregating {
                     aggregate_share: Some(dummy::AggregateShare(92)),
                     report_count: 1,
@@ -5788,7 +5809,10 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                     task.id(),
                     &vdaf,
                     &Interval::new(
-                        Time::from_seconds_since_epoch(START_TIMESTAMP + 100, task.time_precision()),
+                        Time::from_seconds_since_epoch(
+                            START_TIMESTAMP + 100,
+                            task.time_precision(),
+                        ),
                         Duration::from_time_precision_units(4),
                     )
                     .unwrap(),
@@ -5834,7 +5858,10 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                     task.id(),
                     &vdaf,
                     &Interval::new(
-                        Time::from_seconds_since_epoch(START_TIMESTAMP + 100, task.time_precision()),
+                        Time::from_seconds_since_epoch(
+                            START_TIMESTAMP + 100,
+                            task.time_precision(),
+                        ),
                         Duration::from_time_precision_units(3)
                     )
                     .unwrap(),

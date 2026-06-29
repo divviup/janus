@@ -106,28 +106,46 @@ impl CollectionJobDriver {
     ) -> Result<(), Error> {
         match lease.leased().batch_mode() {
             task::BatchMode::TimeInterval => {
-                vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH, dp_strategy, DpStrategy) => {
-                    self.step_collection_job_generic::<
+                vdaf_dispatch!(
+                    lease.leased().vdaf(),
+                    (
+                        vdaf,
+                        VdafType,
                         VERIFY_KEY_LENGTH,
-                        C,
-                        TimeInterval,
-                        DpStrategy,
-                        VdafType
-                    >(datastore, clock, Arc::new(vdaf), lease, dp_strategy)
-                    .await
-                })
+                        dp_strategy,
+                        DpStrategy
+                    ) => {
+                        self.step_collection_job_generic::<
+                            VERIFY_KEY_LENGTH,
+                            C,
+                            TimeInterval,
+                            DpStrategy,
+                            VdafType,
+                        >(datastore, clock, Arc::new(vdaf), lease, dp_strategy)
+                        .await
+                    }
+                )
             }
             task::BatchMode::LeaderSelected { .. } => {
-                vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH, dp_strategy, DpStrategy) => {
-                    self.step_collection_job_generic::<
+                vdaf_dispatch!(
+                    lease.leased().vdaf(),
+                    (
+                        vdaf,
+                        VdafType,
                         VERIFY_KEY_LENGTH,
-                        C,
-                        LeaderSelected,
-                        DpStrategy,
-                        VdafType
-                    >(datastore, clock, Arc::new(vdaf), lease, dp_strategy)
-                    .await
-                })
+                        dp_strategy,
+                        DpStrategy
+                    ) => {
+                        self.step_collection_job_generic::<
+                            VERIFY_KEY_LENGTH,
+                            C,
+                            LeaderSelected,
+                            DpStrategy,
+                            VdafType,
+                        >(datastore, clock, Arc::new(vdaf), lease, dp_strategy)
+                        .await
+                    }
+                )
             }
         }
     }
@@ -584,7 +602,12 @@ impl CollectionJobDriver {
         match lease.leased().batch_mode() {
             task::BatchMode::TimeInterval => {
                 vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
-                    self.abandon_collection_job_generic::<VERIFY_KEY_LENGTH, C, TimeInterval, VdafType>(
+                    self.abandon_collection_job_generic::<
+                        VERIFY_KEY_LENGTH,
+                        C,
+                        TimeInterval,
+                        VdafType,
+                    >(
                         datastore,
                         Arc::new(vdaf),
                         lease,
@@ -594,7 +617,12 @@ impl CollectionJobDriver {
             }
             task::BatchMode::LeaderSelected { .. } => {
                 vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
-                    self.abandon_collection_job_generic::<VERIFY_KEY_LENGTH, C, LeaderSelected, VdafType>(
+                    self.abandon_collection_job_generic::<
+                        VERIFY_KEY_LENGTH,
+                        C,
+                        LeaderSelected,
+                        VdafType,
+                    >(
                         datastore,
                         Arc::new(vdaf),
                         lease,
@@ -1407,7 +1435,10 @@ mod tests {
         assert_matches!(
             error,
             Error::Http(error_response) => {
-                assert_matches!(error_response.dap_problem_type(), Some(DapProblemType::InvalidMessage));
+                assert_matches!(
+                    error_response.dap_problem_type(),
+                    Some(DapProblemType::InvalidMessage)
+                );
                 assert_eq!(error_response.status(), StatusCode::BAD_REQUEST);
             }
         );
@@ -1497,20 +1528,35 @@ mod tests {
                     .unwrap()
                     .unwrap();
 
-                assert_matches!(collection_job.state(), CollectionJobState::Finished{ report_count, client_timestamp_interval, encrypted_helper_aggregate_share, leader_aggregate_share } => {
-                    assert_eq!(report_count, &10);
-                    assert_eq!(
+                assert_matches!(
+                    collection_job.state(),
+                    CollectionJobState::Finished {
+                        report_count,
                         client_timestamp_interval,
-                        &Interval::new(
-                            clock.now().to_time(&time_precision),
-                            Duration::from_time_precision_units(3),
-                        ).unwrap()
-                    );
-                    assert_eq!(encrypted_helper_aggregate_share, &helper_aggregate_share);
-                    assert_eq!(leader_aggregate_share, &dummy::AggregateShare(0));
-                });
+                        encrypted_helper_aggregate_share,
+                        leader_aggregate_share,
+                    } => {
+                        assert_eq!(report_count, &10);
+                        assert_eq!(
+                            client_timestamp_interval,
+                            &Interval::new(
+                                clock.now().to_time(&time_precision),
+                                Duration::from_time_precision_units(3),
+                            )
+                            .unwrap()
+                        );
+                        assert_eq!(encrypted_helper_aggregate_share, &helper_aggregate_share);
+                        assert_eq!(leader_aggregate_share, &dummy::AggregateShare(0));
+                    }
+                );
 
-                let batch_aggregations = tx.get_batch_aggregations_for_task::<0, TimeInterval, dummy::Vdaf>(&dummy::Vdaf::new(1), &task_id).await.unwrap();
+                let batch_aggregations = tx
+                    .get_batch_aggregations_for_task::<0, TimeInterval, dummy::Vdaf>(
+                        &dummy::Vdaf::new(1),
+                        &task_id,
+                    )
+                    .await
+                    .unwrap();
                 assert_eq!(batch_aggregations.len(), 128);
                 for batch_aggregation in batch_aggregations {
                     assert_matches!(batch_aggregation.state(), BatchAggregationState::Scrubbed);
@@ -1579,18 +1625,27 @@ mod tests {
                     .unwrap()
                     .unwrap();
 
-                assert_matches!(collection_job.state(), CollectionJobState::Finished{ report_count, client_timestamp_interval, encrypted_helper_aggregate_share, leader_aggregate_share } => {
-                    assert_eq!(report_count, &10);
-                    assert_eq!(
+                assert_matches!(
+                    collection_job.state(),
+                    CollectionJobState::Finished {
+                        report_count,
                         client_timestamp_interval,
-                        &Interval::new(
-                            clock.now().to_time(&time_precision),
-                            Duration::from_time_precision_units(3),
-                        ).unwrap()
-                    );
-                    assert_eq!(encrypted_helper_aggregate_share, &helper_aggregate_share);
-                    assert_eq!(leader_aggregate_share, &dummy::AggregateShare(0));
-                });
+                        encrypted_helper_aggregate_share,
+                        leader_aggregate_share,
+                    } => {
+                        assert_eq!(report_count, &10);
+                        assert_eq!(
+                            client_timestamp_interval,
+                            &Interval::new(
+                                clock.now().to_time(&time_precision),
+                                Duration::from_time_precision_units(3),
+                            )
+                            .unwrap()
+                        );
+                        assert_eq!(encrypted_helper_aggregate_share, &helper_aggregate_share);
+                        assert_eq!(leader_aggregate_share, &dummy::AggregateShare(0));
+                    }
+                );
 
                 Ok(())
             })
@@ -2269,8 +2324,11 @@ mod tests {
                     .unwrap()
                     .unwrap();
 
-                assert_matches!(collection_job.state(), CollectionJobState::Finished{
-                    report_count, leader_aggregate_share, encrypted_helper_aggregate_share, client_timestamp_interval: _
+                assert_matches!(collection_job.state(), CollectionJobState::Finished {
+                    report_count,
+                    leader_aggregate_share,
+                    encrypted_helper_aggregate_share,
+                    client_timestamp_interval: _,
                 } => {
                     assert_eq!(report_count, &10);
                     assert_eq!(leader_aggregate_share, &dummy::AggregateShare(0));

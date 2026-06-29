@@ -5305,11 +5305,12 @@ ord, type, token FROM taskprov_collector_auth_tokens AS a
             .await?;
         let collector_auth_token_rows = self.query(&stmt, &[]);
 
-        let (peer_aggregator_rows, aggregator_auth_token_rows, collector_auth_token_rows) = try_join!(
+        let rows = try_join!(
             peer_aggregator_rows,
             aggregator_auth_token_rows,
             collector_auth_token_rows,
         )?;
+        let (peer_aggregator_rows, aggregator_auth_token_rows, collector_auth_token_rows) = rows;
 
         let mut aggregator_auth_token_rows_by_peer_id: HashMap<i64, Vec<Row>> = HashMap::new();
         for row in aggregator_auth_token_rows {
@@ -5386,11 +5387,12 @@ SELECT ord, type, token FROM taskprov_collector_auth_tokens
             .await?;
         let collector_auth_token_rows = self.query(&stmt, params);
 
-        let (peer_aggregator_row, aggregator_auth_token_rows, collector_auth_token_rows) = try_join!(
+        let rows = try_join!(
             peer_aggregator_row,
             aggregator_auth_token_rows,
             collector_auth_token_rows,
         )?;
+        let (peer_aggregator_row, aggregator_auth_token_rows, collector_auth_token_rows) = rows;
         peer_aggregator_row
             .map(|peer_aggregator_row| {
                 self.taskprov_peer_aggregator_from_rows(

@@ -850,9 +850,12 @@ async fn leader_sync_time_interval_aggregation_job_init_single_step() {
             let vdaf = Arc::clone(&vdaf);
             let task = task.clone();
             let report_id = *report.metadata().id();
-            let repeated_public_extension_report_id = *repeated_public_extension_report.metadata().id();
-            let repeated_private_extension_report_id = *repeated_private_extension_report.metadata().id();
-            let repeated_public_private_extension_report_id = *repeated_public_private_extension_report.metadata().id();
+            let repeated_public_extension_report_id =
+                *repeated_public_extension_report.metadata().id();
+            let repeated_private_extension_report_id =
+                *repeated_private_extension_report.metadata().id();
+            let repeated_public_private_extension_report_id =
+                *repeated_public_private_extension_report.metadata().id();
 
             Box::pin(async move {
                 let aggregation_job = tx
@@ -908,7 +911,11 @@ async fn leader_sync_time_interval_aggregation_job_init_single_step() {
                     .unwrap()
                     .unwrap();
                 let batch_aggregations = merge_batch_aggregations_by_batch(
-                    tx.get_batch_aggregations_for_task::<VERIFY_KEY_LENGTH_PRIO3, TimeInterval, Prio3Count>(&vdaf, task.id())
+                    tx.get_batch_aggregations_for_task::<
+                        VERIFY_KEY_LENGTH_PRIO3,
+                        TimeInterval,
+                        Prio3Count,
+                    >(&vdaf, task.id())
                         .await
                         .unwrap(),
                 );
@@ -1621,7 +1628,11 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
                     .await
                     .unwrap();
                 let batch_aggregations = merge_batch_aggregations_by_batch(
-                    tx.get_batch_aggregations_for_task::<VERIFY_KEY_LENGTH_PRIO3, TimeInterval, Prio3Count>(&vdaf, task.id())
+                    tx.get_batch_aggregations_for_task::<
+                        VERIFY_KEY_LENGTH_PRIO3,
+                        TimeInterval,
+                        Prio3Count,
+                    >(&vdaf, task.id())
                         .await
                         .unwrap(),
                 );
@@ -1938,7 +1949,11 @@ async fn leader_sync_leader_selected_aggregation_job_init_single_step() {
                     .unwrap()
                     .unwrap();
                 let batch_aggregations = merge_batch_aggregations_by_batch(
-                    tx.get_batch_aggregations_for_task::<VERIFY_KEY_LENGTH_PRIO3, LeaderSelected, Prio3Count>(
+                    tx.get_batch_aggregations_for_task::<
+                        VERIFY_KEY_LENGTH_PRIO3,
+                        LeaderSelected,
+                        Prio3Count,
+                    >(
                         &vdaf,
                         task.id(),
                     )
@@ -2468,7 +2483,10 @@ async fn leader_sync_time_interval_aggregation_job_continue() {
         error,
         Error::Http(error_response) => {
             assert_eq!(error_response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-            assert_eq!(*error_response.dap_problem_type().unwrap(), DapProblemType::UnrecognizedTask);
+            assert_eq!(
+                *error_response.dap_problem_type().unwrap(),
+                DapProblemType::UnrecognizedTask
+            );
         }
     );
     aggregation_job_driver
@@ -6108,7 +6126,7 @@ async fn cancel_aggregation_job() {
         },
     )]);
 
-    let (got_aggregation_job, got_report_aggregation, got_batch_aggregations, got_leases) = test_case
+    let (got_aggregation_job, got_report_aggregation, got_batch_aggs, got_leases) = test_case
         .datastore
         .run_unnamed_tx(|tx| {
             let (vdaf, task, report_id, aggregation_job) = (
@@ -6138,7 +6156,11 @@ async fn cancel_aggregation_job() {
                     .unwrap()
                     .unwrap();
                 let batch_aggregations = merge_batch_aggregations_by_batch(
-                    tx.get_batch_aggregations_for_task::<VERIFY_KEY_LENGTH_PRIO3, TimeInterval, Prio3Count>(&vdaf, task.id())
+                    tx.get_batch_aggregations_for_task::<
+                        VERIFY_KEY_LENGTH_PRIO3,
+                        TimeInterval,
+                        Prio3Count,
+                    >(&vdaf, task.id())
                         .await
                         .unwrap(),
                 );
@@ -6146,14 +6168,19 @@ async fn cancel_aggregation_job() {
                     .acquire_incomplete_aggregation_jobs(&StdDuration::from_secs(60), 1)
                     .await
                     .unwrap();
-                Ok((aggregation_job, report_aggregation, batch_aggregations, leases))
+                Ok((
+                    aggregation_job,
+                    report_aggregation,
+                    batch_aggregations,
+                    leases,
+                ))
             })
         })
         .await
         .unwrap();
     assert_eq!(want_aggregation_job, got_aggregation_job);
     assert_eq!(test_case.report_aggregation, got_report_aggregation);
-    assert_eq!(want_batch_aggregations, got_batch_aggregations);
+    assert_eq!(want_batch_aggregations, got_batch_aggs);
     assert!(got_leases.is_empty());
 }
 
@@ -6404,7 +6431,11 @@ async fn abandon_failing_aggregation_job_with_retryable_error() {
                     .unwrap()
                     .unwrap();
                 let got_batch_aggregations = merge_batch_aggregations_by_batch(
-                    tx.get_batch_aggregations_for_task::<VERIFY_KEY_LENGTH_PRIO3, TimeInterval, Prio3Count>(&vdaf, task.id())
+                    tx.get_batch_aggregations_for_task::<
+                        VERIFY_KEY_LENGTH_PRIO3,
+                        TimeInterval,
+                        Prio3Count,
+                    >(&vdaf, task.id())
                         .await
                         .unwrap(),
                 );
@@ -6645,7 +6676,11 @@ async fn abandon_failing_aggregation_job_with_fatal_error() {
                     .unwrap()
                     .unwrap();
                 let got_batch_aggregations = merge_batch_aggregations_by_batch(
-                    tx.get_batch_aggregations_for_task::<VERIFY_KEY_LENGTH_PRIO3, TimeInterval, Prio3Count>(&vdaf, task.id())
+                    tx.get_batch_aggregations_for_task::<
+                        VERIFY_KEY_LENGTH_PRIO3,
+                        TimeInterval,
+                        Prio3Count,
+                    >(&vdaf, task.id())
                         .await
                         .unwrap(),
                 );

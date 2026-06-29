@@ -1334,7 +1334,18 @@ enum VdafOps {
 /// specify the VDAF's type, and the name of a const that will be set to the VDAF's verify key
 /// length, also for explicitly specifying type parameters.
 macro_rules! vdaf_ops_dispatch {
-    ($vdaf_ops:expr, ($vdaf:pat_param, $Vdaf:ident, $VERIFY_KEY_LENGTH:ident, $dp_strategy:ident, $DpStrategy:ident) => $body:tt) => {
+    (
+        $vdaf_ops:expr,
+        (
+            $vdaf:pat_param,
+            $Vdaf:ident,
+            $VERIFY_KEY_LENGTH:ident,
+            $dp_strategy:ident,
+            $DpStrategy:ident
+        )
+        =>
+        $body:tt
+    ) => {
         match $vdaf_ops {
             crate::aggregator::VdafOps::Prio3Count(vdaf) => {
                 let $vdaf = vdaf;
@@ -1376,7 +1387,10 @@ macro_rules! vdaf_ops_dispatch {
                 }
             }
 
-            crate::aggregator::VdafOps::Prio3SumVecField64MultiproofHmacSha256Aes128(vdaf, _dp_strategy) => {
+            crate::aggregator::VdafOps::Prio3SumVecField64MultiproofHmacSha256Aes128(
+                vdaf,
+                _dp_strategy
+            ) => {
                 let $vdaf = vdaf;
                 type $Vdaf = ::janus_core::vdaf::Prio3SumVecField64MultiproofHmacSha256Aes128<
                     ::prio::flp::gadgets::ParallelSum<
@@ -1435,8 +1449,29 @@ macro_rules! vdaf_ops_dispatch {
         }
     };
 
-    ($vdaf_ops:expr, ($vdaf:pat_param, $Vdaf:ident, $VERIFY_KEY_LENGTH:ident) => $body:tt) => {
-        vdaf_ops_dispatch!($vdaf_ops, ($vdaf, $Vdaf, $VERIFY_KEY_LENGTH, _unused, _Unused) => $body)};
+    (
+        $vdaf_ops:expr,
+        (
+            $vdaf:pat_param,
+            $Vdaf:ident,
+            $VERIFY_KEY_LENGTH:ident
+        )
+        =>
+        $body:tt
+    ) => {
+        vdaf_ops_dispatch!(
+            $vdaf_ops,
+            (
+                $vdaf,
+                $Vdaf,
+                $VERIFY_KEY_LENGTH,
+                _unused,
+                _Unused
+            )
+            =>
+            $body
+        )
+    };
 }
 
 impl VdafOps {
@@ -1506,7 +1541,12 @@ impl VdafOps {
         match task.batch_mode() {
             task::BatchMode::TimeInterval => {
                 vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
-                    Self::handle_aggregate_init_generic::<VERIFY_KEY_LENGTH, TimeInterval, VdafType, _>(
+                    Self::handle_aggregate_init_generic::<
+                        VERIFY_KEY_LENGTH,
+                        TimeInterval,
+                        VdafType,
+                        _,
+                    >(
                         datastore,
                         hpke_keypairs,
                         Arc::clone(vdaf),
@@ -1524,7 +1564,12 @@ impl VdafOps {
             }
             task::BatchMode::LeaderSelected { .. } => {
                 vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
-                    Self::handle_aggregate_init_generic::<VERIFY_KEY_LENGTH, LeaderSelected, VdafType, _>(
+                    Self::handle_aggregate_init_generic::<
+                        VERIFY_KEY_LENGTH,
+                        LeaderSelected,
+                        VdafType,
+                        _,
+                    >(
                         datastore,
                         hpke_keypairs,
                         Arc::clone(vdaf),
@@ -1562,7 +1607,12 @@ impl VdafOps {
         match task.batch_mode() {
             task::BatchMode::TimeInterval => {
                 vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
-                    Self::handle_aggregate_continue_generic::<VERIFY_KEY_LENGTH, TimeInterval, VdafType, _>(
+                    Self::handle_aggregate_continue_generic::<
+                        VERIFY_KEY_LENGTH,
+                        TimeInterval,
+                        VdafType,
+                        _,
+                    >(
                         datastore,
                         Arc::clone(vdaf),
                         metrics,
@@ -1578,7 +1628,12 @@ impl VdafOps {
             }
             task::BatchMode::LeaderSelected { .. } => {
                 vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
-                    Self::handle_aggregate_continue_generic::<VERIFY_KEY_LENGTH, LeaderSelected, VdafType, _>(
+                    Self::handle_aggregate_continue_generic::<
+                        VERIFY_KEY_LENGTH,
+                        LeaderSelected,
+                        VdafType,
+                        _,
+                    >(
                         datastore,
                         Arc::clone(vdaf),
                         metrics,
@@ -1595,7 +1650,11 @@ impl VdafOps {
         }
     }
 
-    #[tracing::instrument(skip(self, datastore), fields(task_id = ?task.id()), err(level = Level::DEBUG))]
+    #[tracing::instrument(
+        skip(self, datastore),
+        fields(task_id = ?task.id()),
+        err(level = Level::DEBUG)
+    )]
     async fn handle_aggregate_get<C: Clock>(
         &self,
         datastore: Arc<Datastore<C>>,
@@ -1606,7 +1665,12 @@ impl VdafOps {
         match task.batch_mode() {
             task::BatchMode::TimeInterval => {
                 vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
-                    Self::handle_aggregate_get_generic::<VERIFY_KEY_LENGTH, TimeInterval, VdafType, _>(
+                    Self::handle_aggregate_get_generic::<
+                        VERIFY_KEY_LENGTH,
+                        TimeInterval,
+                        VdafType,
+                        _,
+                    >(
                         datastore,
                         Arc::clone(vdaf),
                         task,
@@ -1618,7 +1682,12 @@ impl VdafOps {
 
             task::BatchMode::LeaderSelected { .. } => {
                 vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
-                    Self::handle_aggregate_get_generic::<VERIFY_KEY_LENGTH, LeaderSelected, VdafType, _>(
+                    Self::handle_aggregate_get_generic::<
+                        VERIFY_KEY_LENGTH,
+                        LeaderSelected,
+                        VdafType,
+                        _,
+                    >(
                         datastore,
                         Arc::clone(vdaf),
                         task,
@@ -1630,7 +1699,11 @@ impl VdafOps {
         }
     }
 
-    #[tracing::instrument(skip(self, datastore), fields(task_id = ?task.id()), err(level = Level::DEBUG))]
+    #[tracing::instrument(
+        skip(self, datastore),
+        fields(task_id = ?task.id()),
+        err(level = Level::DEBUG)
+    )]
     async fn handle_aggregate_delete<C: Clock>(
         &self,
         datastore: &Datastore<C>,
@@ -1640,7 +1713,12 @@ impl VdafOps {
         match task.batch_mode() {
             task::BatchMode::TimeInterval => {
                 vdaf_ops_dispatch!(self, (_, VdafType, VERIFY_KEY_LENGTH) => {
-                    Self::handle_aggregate_delete_generic::<VERIFY_KEY_LENGTH, TimeInterval, VdafType, _>(
+                    Self::handle_aggregate_delete_generic::<
+                        VERIFY_KEY_LENGTH,
+                        TimeInterval,
+                        VdafType,
+                        _,
+                    >(
                         datastore,
                         task,
                         aggregation_job_id,
@@ -1649,7 +1727,12 @@ impl VdafOps {
             }
             task::BatchMode::LeaderSelected { .. } => {
                 vdaf_ops_dispatch!(self, (_, VdafType, VERIFY_KEY_LENGTH) => {
-                    Self::handle_aggregate_delete_generic::<VERIFY_KEY_LENGTH, LeaderSelected, VdafType, _>(
+                    Self::handle_aggregate_delete_generic::<
+                        VERIFY_KEY_LENGTH,
+                        LeaderSelected,
+                        VdafType,
+                        _,
+                    >(
                         datastore,
                         task,
                         aggregation_job_id,
@@ -2601,14 +2684,14 @@ impl VdafOps {
                                         .cloned()
                                         .collect(),
                                 })
-                            },
-                            Some(AggregationMode::Asynchronous) =>
-                                AggregationJobContinueResult::Async(aggregation_job.step()),
+                            }
+                            Some(AggregationMode::Asynchronous) => {
+                                AggregationJobContinueResult::Async(aggregation_job.step())
+                            }
                             None => {
                                 return Err(datastore::Error::User(
-                                    Error::Internal("task has no aggregation mode".into())
-                                        .into(),
-                                ))
+                                    Error::Internal("task has no aggregation mode".into()).into(),
+                                ));
                             }
                         };
 
@@ -2631,20 +2714,23 @@ impl VdafOps {
 
                     // Pair incoming verification continuation messages with existing report
                     // aggregations.
-                    let mut report_aggregations_to_write = Vec::with_capacity(report_aggregations.len());
+                    let mut report_aggregations_to_write =
+                        Vec::with_capacity(report_aggregations.len());
                     let mut report_aggregations_iter = report_aggregations.into_iter();
                     let mut report_aggregations = Vec::with_capacity(req.verify_continues().len());
                     for verify_continue in req.verify_continues() {
                         let report_aggregation = loop {
-                            let report_aggregation = report_aggregations_iter.next().ok_or_else(|| {
-                                datastore::Error::User(
-                                    Error::InvalidMessage(
-                                        Some(*task.id()),
-                                        "leader sent unexpected, duplicate, or out-of-order verify steps",
+                            let report_aggregation =
+                                report_aggregations_iter.next().ok_or_else(|| {
+                                    datastore::Error::User(
+                                        Error::InvalidMessage(
+                                            Some(*task.id()),
+                                            "leader sent unexpected, duplicate, or out-of-order \
+                                             verify steps",
+                                        )
+                                        .into(),
                                     )
-                                    .into(),
-                                )
-                            })?;
+                                })?;
                             if report_aggregation.report_id() != verify_continue.report_id() {
                                 // This report was omitted by the leader because of a prior failure.
                                 // Note that the report was dropped (if it's not already in an error
@@ -2653,38 +2739,45 @@ impl VdafOps {
                                     report_aggregation.state(),
                                     ReportAggregationState::HelperContinue { .. }
                                 ) {
-                                    report_aggregations_to_write.push(WritableReportAggregation::new(
-                                        report_aggregation
-                                            .with_state(ReportAggregationState::Failed {
-                                                report_error: ReportError::ReportDropped,
-                                            })
-                                            .with_last_verify_resp(None),
-                                        None,
-                                    ));
+                                    report_aggregations_to_write.push(
+                                        WritableReportAggregation::new(
+                                            report_aggregation
+                                                .with_state(ReportAggregationState::Failed {
+                                                    report_error: ReportError::ReportDropped,
+                                                })
+                                                .with_last_verify_resp(None),
+                                            None,
+                                        ),
+                                    );
                                 }
                                 continue;
                             }
                             break report_aggregation;
                         };
 
-                        let verify_state = if let ReportAggregationState::HelperContinue{ verify_state } = report_aggregation.state() {
-                            verify_state.clone()
-                        } else {
-                            return Err(datastore::Error::User(
-                                Error::InvalidMessage(
-                                    Some(*task.id()),
-                                    "leader sent verify step for non-CONTINUE report aggregation",
-                                )
-                                .into(),
-                            ))
+                        let verify_state = match report_aggregation.state() {
+                            ReportAggregationState::HelperContinue { verify_state } => {
+                                verify_state.clone()
+                            }
+                            _ => {
+                                return Err(datastore::Error::User(
+                                    Error::InvalidMessage(
+                                        Some(*task.id()),
+                                        "leader sent verify step for non-CONTINUE report \
+                                         aggregation",
+                                    )
+                                    .into(),
+                                ));
+                            }
                         };
 
-                        report_aggregations.push(report_aggregation
-                            .with_state(ReportAggregationState::HelperContinueProcessing {
-                                verify_state,
-                                verify_continue: verify_continue.clone(),
-                            })
-                            .with_last_verify_resp(None)
+                        report_aggregations.push(
+                            report_aggregation
+                                .with_state(ReportAggregationState::HelperContinueProcessing {
+                                    verify_state,
+                                    verify_continue: verify_continue.clone(),
+                                })
+                                .with_last_verify_resp(None),
                         );
                     }
 
@@ -2712,32 +2805,39 @@ impl VdafOps {
                         .with_last_request_hash(request_hash);
 
                     match task.aggregation_mode() {
-                        Some(AggregationMode::Synchronous) => Self::handle_aggregate_continue_generic_sync(
-                            tx,
-                            task,
-                            vdaf,
-                            batch_aggregation_shard_count,
-                            &metrics,
-                            task_aggregation_counters,
-                            report_aggregations_to_write,
-                            aggregation_job,
-                            report_aggregations,
-                        ).await,
+                        Some(AggregationMode::Synchronous) => {
+                            Self::handle_aggregate_continue_generic_sync(
+                                tx,
+                                task,
+                                vdaf,
+                                batch_aggregation_shard_count,
+                                &metrics,
+                                task_aggregation_counters,
+                                report_aggregations_to_write,
+                                aggregation_job,
+                                report_aggregations,
+                            )
+                            .await
+                        }
 
-                        Some(AggregationMode::Asynchronous) => Self::handle_aggregate_continue_generic_async(
-                            tx,
-                            task,
-                            vdaf,
-                            batch_aggregation_shard_count,
-                            &metrics,
-                            task_aggregation_counters,
-                            report_aggregations_to_write,
-                            aggregation_job,
-                            report_aggregations,
-                        ).await,
+                        Some(AggregationMode::Asynchronous) => {
+                            Self::handle_aggregate_continue_generic_async(
+                                tx,
+                                task,
+                                vdaf,
+                                batch_aggregation_shard_count,
+                                &metrics,
+                                task_aggregation_counters,
+                                report_aggregations_to_write,
+                                aggregation_job,
+                                report_aggregations,
+                            )
+                            .await
+                        }
 
                         None => Err(Error::Internal("task has no aggregation mode".into())),
-                    }.map_err(|err| datastore::Error::User(err.into()))
+                    }
+                    .map_err(|err| datastore::Error::User(err.into()))
                 })
             })
             .await?;
@@ -3176,7 +3276,11 @@ impl VdafOps {
     /// Handle GET requests to the leader's `tasks/{task-id}/collection_jobs/{collection-job-id}`
     /// endpoint. The return value is an encoded `CollectResp<Q>`.
     /// <https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#name-collecting-results>
-    #[tracing::instrument(skip(self, datastore, task), fields(task_id = ?task.id()), err(level = Level::DEBUG))]
+    #[tracing::instrument(
+        skip(self, datastore, task),
+        fields(task_id = ?task.id()),
+        err(level = Level::DEBUG)
+    )]
     async fn handle_get_collection_job<C: Clock>(
         &self,
         datastore: &Datastore<C>,
@@ -3240,12 +3344,20 @@ impl VdafOps {
 
         match collection_job.state() {
             CollectionJobState::Start => {
-                debug!(%collection_job_id, task_id = %task.id(), "collection job has not run yet");
+                debug!(
+                    %collection_job_id,
+                    task_id = %task.id(),
+                    "collection job has not run yet"
+                );
                 Ok(vec![0; 0])
             }
 
             CollectionJobState::Poll => {
-                debug!(%collection_job_id, task_id = %task.id(), "collection job has not completed yet");
+                debug!(
+                    %collection_job_id,
+                    task_id = %task.id(),
+                    "collection job has not completed yet"
+                );
                 Ok(vec![0; 0])
             }
 
@@ -3319,7 +3431,11 @@ impl VdafOps {
         }
     }
 
-    #[tracing::instrument(skip(self, datastore, task), fields(task_id = ?task.id()), err(level = Level::DEBUG))]
+    #[tracing::instrument(
+        skip(self, datastore, task),
+        fields(task_id = ?task.id()),
+        err(level = Level::DEBUG)
+    )]
     async fn handle_delete_collection_job<C: Clock>(
         &self,
         datastore: &Datastore<C>,
@@ -3410,38 +3526,56 @@ impl VdafOps {
     ) -> Result<AggregateShare, Error> {
         match task.batch_mode() {
             task::BatchMode::TimeInterval => {
-                vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH, _dp_strategy, DpStrategyType) => {
-                    Self::handle_get_aggregate_share_generic::<
-                        VERIFY_KEY_LENGTH,
-                        TimeInterval,
-                        DpStrategyType,
+                vdaf_ops_dispatch!(
+                    self,
+                    (
+                        vdaf,
                         VdafType,
-                        _,
-                    >(
-                        datastore,
-                        task,
-                        Arc::clone(vdaf),
-                        collector_hpke_config,
-                        aggregate_share_id
-                    ).await
-                })
+                        VERIFY_KEY_LENGTH,
+                        _dp_strategy,
+                        DpStrategyType
+                    ) => {
+                        Self::handle_get_aggregate_share_generic::<
+                            VERIFY_KEY_LENGTH,
+                            TimeInterval,
+                            DpStrategyType,
+                            VdafType,
+                            _,
+                        >(
+                            datastore,
+                            task,
+                            Arc::clone(vdaf),
+                            collector_hpke_config,
+                            aggregate_share_id
+                        ).await
+                    }
+                )
             }
             task::BatchMode::LeaderSelected { .. } => {
-                vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH, _dp_strategy, DpStrategyType) => {
-                    Self::handle_get_aggregate_share_generic::<
-                        VERIFY_KEY_LENGTH,
-                        LeaderSelected,
-                        DpStrategyType,
+                vdaf_ops_dispatch!(
+                    self,
+                    (
+                        vdaf,
                         VdafType,
-                        _,
-                    >(
-                        datastore,
-                        task,
-                        Arc::clone(vdaf),
-                        collector_hpke_config,
-                        aggregate_share_id,
-                    ).await
-                })
+                        VERIFY_KEY_LENGTH,
+                        _dp_strategy,
+                        DpStrategyType
+                    ) => {
+                        Self::handle_get_aggregate_share_generic::<
+                            VERIFY_KEY_LENGTH,
+                            LeaderSelected,
+                            DpStrategyType,
+                            VdafType,
+                            _,
+                        >(
+                            datastore,
+                            task,
+                            Arc::clone(vdaf),
+                            collector_hpke_config,
+                            aggregate_share_id,
+                        ).await
+                    }
+                )
             }
         }
     }
@@ -3525,48 +3659,66 @@ impl VdafOps {
     ) -> Result<AggregateShare, Error> {
         match task.batch_mode() {
             task::BatchMode::TimeInterval => {
-                vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH, dp_strategy, DpStrategyType) => {
-                    Self::handle_aggregate_share_generic::<
-                        VERIFY_KEY_LENGTH,
-                        TimeInterval,
-                        DpStrategyType,
+                vdaf_ops_dispatch!(
+                    self,
+                    (
+                        vdaf,
                         VdafType,
-                        _,
-                    >(
-                        datastore,
-                        clock,
-                        task,
-                        Arc::clone(vdaf),
-                        req_bytes,
-                        batch_aggregation_shard_count,
-                        max_future_concurrency,
-                        collector_hpke_config,
-                        aggregate_share_id,
-                        Arc::clone(dp_strategy)
-                    ).await
-                })
+                        VERIFY_KEY_LENGTH,
+                        dp_strategy,
+                        DpStrategyType
+                    ) => {
+                        Self::handle_aggregate_share_generic::<
+                            VERIFY_KEY_LENGTH,
+                            TimeInterval,
+                            DpStrategyType,
+                            VdafType,
+                            _,
+                        >(
+                            datastore,
+                            clock,
+                            task,
+                            Arc::clone(vdaf),
+                            req_bytes,
+                            batch_aggregation_shard_count,
+                            max_future_concurrency,
+                            collector_hpke_config,
+                            aggregate_share_id,
+                            Arc::clone(dp_strategy)
+                        ).await
+                    }
+                )
             }
             task::BatchMode::LeaderSelected { .. } => {
-                vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH, dp_strategy, DpStrategyType) => {
-                    Self::handle_aggregate_share_generic::<
-                        VERIFY_KEY_LENGTH,
-                        LeaderSelected,
-                        DpStrategyType,
+                vdaf_ops_dispatch!(
+                    self,
+                    (
+                        vdaf,
                         VdafType,
-                        _,
-                    >(
-                        datastore,
-                        clock,
-                        task,
-                        Arc::clone(vdaf),
-                        req_bytes,
-                        batch_aggregation_shard_count,
-                        max_future_concurrency,
-                        collector_hpke_config,
-                        aggregate_share_id,
-                        Arc::clone(dp_strategy)
-                    ).await
-                })
+                        VERIFY_KEY_LENGTH,
+                        dp_strategy,
+                        DpStrategyType
+                    ) => {
+                        Self::handle_aggregate_share_generic::<
+                            VERIFY_KEY_LENGTH,
+                            LeaderSelected,
+                            DpStrategyType,
+                            VdafType,
+                            _,
+                        >(
+                            datastore,
+                            clock,
+                            task,
+                            Arc::clone(vdaf),
+                            req_bytes,
+                            batch_aggregation_shard_count,
+                            max_future_concurrency,
+                            collector_hpke_config,
+                            aggregate_share_id,
+                            Arc::clone(dp_strategy)
+                        ).await
+                    }
+                )
             }
         }
     }

@@ -1940,7 +1940,12 @@ mod tests {
             ),
             Ok(BatchMode::LeaderSelected {
                 batch_time_window_size: Some(duration),
-            }) => assert_eq!(duration, Duration::from_seconds(3600, &TimePrecision::from_seconds(1)))
+            }) => {
+                assert_eq!(
+                    duration,
+                    Duration::from_seconds(3600, &TimePrecision::from_seconds(1))
+                );
+            }
         );
     }
 }
