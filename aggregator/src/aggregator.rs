@@ -3383,7 +3383,7 @@ impl VdafOps {
     async fn handle_aggregate_share_generic<
         const SEED_SIZE: usize,
         Q: CollectableQueryType,
-        S: DifferentialPrivacyStrategy + Send + Clone + Send + Sync + 'static,
+        S: DifferentialPrivacyStrategy + Clone + Send + Sync + 'static,
         A: vdaf::AggregatorWithNoise<SEED_SIZE, 16, S> + Send + Sync + 'static,
         C: Clock,
     >(
