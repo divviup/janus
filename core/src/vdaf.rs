@@ -133,6 +133,67 @@ impl VdafInstance {
             _ => VERIFY_KEY_LENGTH_PRIO3,
         }
     }
+
+    /// Returns the [`VdafConfig`] message representation of this VDAF instance, for inclusion in a
+    /// [`TaskConfiguration`](janus_messages::TaskConfiguration).
+    ///
+    /// This is the inverse of [`VdafInstance::try_from(&VdafConfig)`](TryFrom). It is an inherent
+    /// method rather than a `From`/`TryFrom` impl because the orphan rules forbid implementing a
+    /// foreign trait to produce the foreign [`VdafConfig`] type from this crate.
+    ///
+    /// The differential privacy strategy is **not** representable in [`VdafConfig`] and is silently
+    /// dropped. It is anticipated that future task extensions will allow for agreement on
+    /// differential privacy mechanisms.
+    pub fn to_vdaf_config(&self) -> Result<VdafConfig, &'static str> {
+        // VDAF length parameters are `usize` here but `u32` on the wire.
+        fn to_u32(value: usize) -> Result<u32, &'static str> {
+            u32::try_from(value).map_err(|_| "VDAF length parameter exceeds u32::MAX")
+        }
+
+        Ok(match self {
+            VdafInstance::Prio3Count => VdafConfig::Prio3Count,
+            VdafInstance::Prio3Sum { max_measurement } => VdafConfig::Prio3Sum {
+                max_measurement: *max_measurement,
+            },
+            VdafInstance::Prio3SumVec {
+                max_measurement,
+                length,
+                chunk_length,
+                dp_strategy: _,
+            } => VdafConfig::Prio3SumVec {
+                length: to_u32(*length)?,
+                max_measurement: *max_measurement,
+                chunk_length: to_u32(*chunk_length)?,
+            },
+            VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+                proofs,
+                max_measurement,
+                length,
+                chunk_length,
+                dp_strategy: _,
+            } => VdafConfig::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+                length: to_u32(*length)?,
+                max_measurement: *max_measurement,
+                chunk_length: to_u32(*chunk_length)?,
+                proofs: *proofs,
+            },
+            VdafInstance::Prio3Histogram {
+                length,
+                chunk_length,
+                dp_strategy: _,
+            } => VdafConfig::Prio3Histogram {
+                length: to_u32(*length)?,
+                chunk_length: to_u32(*chunk_length)?,
+            },
+
+            #[cfg(feature = "test-util")]
+            VdafInstance::Fake { rounds } => VdafConfig::Fake { rounds: *rounds },
+            #[cfg(feature = "test-util")]
+            VdafInstance::FakeFailsVerifyInit | VdafInstance::FakeFailsVerifyStep => {
+                return Err("VDAF instance has no VdafConfig representation");
+            }
+        })
+    }
 }
 
 impl TryFrom<&VdafConfig> for VdafInstance {
@@ -460,6 +521,7 @@ macro_rules! vdaf_dispatch {
 #[cfg(test)]
 mod tests {
     use assert_matches::assert_matches;
+    use janus_messages::VdafConfig;
     use prio::dp::{
         DifferentialPrivacyStrategy, PureDpBudget, Rational,
         distributions::{DiscreteLaplaceDpStrategy, PureDpDiscreteLaplace},
@@ -467,6 +529,108 @@ mod tests {
     use serde_test::{Token, assert_tokens};
 
     use crate::vdaf::{VdafInstance, vdaf_dp_strategies};
+
+    #[test]
+    fn vdaf_instance_to_vdaf_config() {
+        // Simple variants.
+        assert_eq!(
+            VdafInstance::Prio3Count.to_vdaf_config().unwrap(),
+            VdafConfig::Prio3Count
+        );
+        assert_eq!(
+            VdafInstance::Prio3Sum {
+                max_measurement: 4096
+            }
+            .to_vdaf_config()
+            .unwrap(),
+            VdafConfig::Prio3Sum {
+                max_measurement: 4096
+            }
+        );
+        assert_eq!(
+            VdafInstance::Prio3Histogram {
+                length: 6,
+                chunk_length: 2,
+                dp_strategy: vdaf_dp_strategies::Prio3Histogram::NoDifferentialPrivacy,
+            }
+            .to_vdaf_config()
+            .unwrap(),
+            VdafConfig::Prio3Histogram {
+                length: 6,
+                chunk_length: 2,
+            }
+        );
+        assert_eq!(
+            VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+                proofs: 2,
+                max_measurement: 7,
+                length: 8,
+                chunk_length: 3,
+                dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
+            }
+            .to_vdaf_config()
+            .unwrap(),
+            VdafConfig::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+                length: 8,
+                max_measurement: 7,
+                chunk_length: 3,
+                proofs: 2,
+            }
+        );
+
+        // The differential privacy strategy is dropped: a DP and a non-DP instance map to the same
+        // VdafConfig.
+        let with_dp = VdafInstance::Prio3SumVec {
+            max_measurement: 1,
+            length: 8,
+            chunk_length: 3,
+            dp_strategy: vdaf_dp_strategies::Prio3SumVec::PureDpDiscreteLaplace(
+                prio::dp::distributions::PureDpDiscreteLaplace::from_budget(
+                    prio::dp::PureDpBudget::new(
+                        prio::dp::Rational::from_unsigned(2u128, 1u128).unwrap(),
+                    )
+                    .unwrap(),
+                ),
+            ),
+        };
+        let without_dp = VdafInstance::Prio3SumVec {
+            max_measurement: 1,
+            length: 8,
+            chunk_length: 3,
+            dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
+        };
+        assert_eq!(
+            with_dp.to_vdaf_config().unwrap(),
+            without_dp.to_vdaf_config().unwrap()
+        );
+        assert_eq!(
+            without_dp.to_vdaf_config().unwrap(),
+            VdafConfig::Prio3SumVec {
+                length: 8,
+                max_measurement: 1,
+                chunk_length: 3,
+            }
+        );
+
+        // Length parameters that overflow u32 are rejected.
+        assert!(
+            VdafInstance::Prio3Histogram {
+                length: (u32::MAX as usize) + 1,
+                chunk_length: 2,
+                dp_strategy: vdaf_dp_strategies::Prio3Histogram::NoDifferentialPrivacy,
+            }
+            .to_vdaf_config()
+            .is_err()
+        );
+
+        // The fake-failure VDAFs have no VdafConfig representation.
+        assert!(VdafInstance::FakeFailsVerifyInit.to_vdaf_config().is_err());
+        assert!(VdafInstance::FakeFailsVerifyStep.to_vdaf_config().is_err());
+        assert_eq!(
+            VdafInstance::Fake { rounds: 3 }.to_vdaf_config().unwrap(),
+            VdafConfig::Fake { rounds: 3 }
+        );
+    }
 
     #[test]
     fn vdaf_serialization() {

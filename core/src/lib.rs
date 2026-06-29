@@ -12,6 +12,7 @@ pub mod hpke;
 pub mod http;
 pub mod report_id;
 pub mod retries;
+pub mod task_config;
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util;

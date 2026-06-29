@@ -54,6 +54,22 @@ pub enum BatchMode {
     },
 }
 
+impl BatchMode {
+    /// Returns the [`BatchConfig`] message representation of this batch mode, for inclusion in a
+    /// [`TaskConfiguration`](janus_messages::TaskConfiguration).
+    ///
+    /// This is the inverse of [`BatchMode::try_from(&BatchConfig)`](TryFrom). The
+    /// `batch_time_window_size` of [`BatchMode::LeaderSelected`] is a Janus-specific parameter that
+    /// is not part of the DAP batch configuration, and is silently dropped. Therefore, the HPKE AAD
+    /// does not force the aggregators to agree on the `batch_time_window_size`.
+    pub fn to_batch_config(&self) -> BatchConfig {
+        match self {
+            BatchMode::TimeInterval => BatchConfig::TimeInterval,
+            BatchMode::LeaderSelected { .. } => BatchConfig::LeaderSelected,
+        }
+    }
+}
+
 impl TryFrom<batch_mode::Code> for BatchMode {
     type Error = Error;
 
@@ -1392,8 +1408,8 @@ mod tests {
         vdaf::vdaf_dp_strategies,
     };
     use janus_messages::{
-        Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey,
-        TaskId, Time, TimePrecision,
+        BatchConfig, Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId,
+        HpkePublicKey, TaskId, Time, TimePrecision,
     };
     use rand::random;
     use serde_json::json;
@@ -1406,6 +1422,33 @@ mod tests {
             test_util::TaskBuilder,
         },
     };
+
+    #[test]
+    fn batch_mode_to_batch_config() {
+        assert_eq!(
+            BatchMode::TimeInterval.to_batch_config(),
+            BatchConfig::TimeInterval
+        );
+        // The Janus-specific batch_time_window_size is dropped, so both leader-selected variants
+        // map to the same BatchConfig.
+        assert_eq!(
+            BatchMode::LeaderSelected {
+                batch_time_window_size: None,
+            }
+            .to_batch_config(),
+            BatchConfig::LeaderSelected
+        );
+        assert_eq!(
+            BatchMode::LeaderSelected {
+                batch_time_window_size: Some(Duration::from_seconds(
+                    3600,
+                    &TimePrecision::from_seconds(3600)
+                )),
+            }
+            .to_batch_config(),
+            BatchConfig::LeaderSelected
+        );
+    }
 
     #[test]
     fn leader_task_serialization() {
