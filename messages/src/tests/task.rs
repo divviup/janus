@@ -129,46 +129,45 @@ fn roundtrip_task_configuration() {
         ),
     ]);
 
-    // Empty task_info.
-    assert_matches!(
-        TaskConfiguration::get_decoded(
-            &hex::decode(concat!(
-                concat!(
-                    // task_info
-                    "00", // length
-                    ""    // opaque data
-                ),
-                concat!(
-                    // leader_aggregator_url
-                    "0014",                                     // length
-                    "68747470733A2F2F6578616D706C652E636F6D2F"  // contents
-                ),
-                concat!(
-                    // helper_aggregator_url
-                    "001C",                                                     // length
-                    "68747470733A2F2F616E6F746865722E6578616D706C652E636F6D2F"  // contents
-                ),
-                "0000000000000E10", // time_precision
-                "0000000000002710", // min_batch_size (u64)
-                "01",               // batch_mode
-                concat!(
-                    // batch_config
-                    "0000", // length
-                ),
-                "00000001", // vdaf_type
-                concat!(
-                    // vdaf_config
-                    "0000", // length
-                ),
-                concat!(
-                    // extensions
-                    "0000", // length
-                ),
-            ))
-            .unwrap(),
-        ),
-        Err(CodecError::Other(_))
-    );
+    // Empty task_info is allowed (DAP-19, draft-ietf-ppm-dap#787).
+    let config = TaskConfiguration::get_decoded(
+        &hex::decode(concat!(
+            concat!(
+                // task_info
+                "00", // length
+                ""    // opaque data
+            ),
+            concat!(
+                // leader_aggregator_url
+                "0014",                                     // length
+                "68747470733A2F2F6578616D706C652E636F6D2F"  // contents
+            ),
+            concat!(
+                // helper_aggregator_url
+                "001C",                                                     // length
+                "68747470733A2F2F616E6F746865722E6578616D706C652E636F6D2F"  // contents
+            ),
+            "0000000000000E10", // time_precision
+            "0000000000002710", // min_batch_size (u64)
+            "01",               // batch_mode
+            concat!(
+                // batch_config
+                "0000", // length
+            ),
+            "00000001", // vdaf_type
+            concat!(
+                // vdaf_config
+                "0000", // length
+            ),
+            concat!(
+                // extensions
+                "0000", // length
+            ),
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(config.task_info().is_empty());
 }
 
 #[test]
