@@ -62,6 +62,16 @@ pub fn url_ensure_trailing_slash(mut url: Url) -> Url {
     url
 }
 
+/// Converts a [`janus_messages::Url`] into a [`url::Url`] ready for [`Url::join`], ensuring a
+/// trailing slash so `join` does not drop the last path component.
+///
+/// The trailing-slash fixup applies only to this routing copy, never to the stored
+/// [`janus_messages::Url`] — its exact bytes are bound into HPKE AADs and must not be re-encoded
+/// (DAP-18 §4.1).
+pub fn url_for_join(url: &janus_messages::Url) -> Result<Url, url::ParseError> {
+    Ok(url_ensure_trailing_slash(Url::try_from(url)?))
+}
+
 /// Choose aws-lc-rs as the default rustls crypto provider. This is what's currently enabled by the
 /// default Cargo feature. Specifying a default provider here prevents runtime errors if another
 /// dependency also enables the ring feature.
