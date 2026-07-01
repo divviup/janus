@@ -153,7 +153,7 @@ struct CommonTaskParameters {
     /// farther than this duration into the future will be rejected.
     tolerable_clock_skew: Duration,
     /// The `task_info` byte string from a `TaskConfiguration` struct, used to distinguish tasks
-    /// with otherwise equivalent DAP task parameters. Must be non-empty and at most 255 bytes.
+    /// with otherwise equivalent DAP task parameters. Must be at most 255 bytes.
     task_info: Vec<u8>,
 }
 

@@ -141,7 +141,7 @@ pub(super) async fn post_task<C: Clock>(
 
     let task_info = URL_SAFE_NO_PAD
         .decode(&req.task_info)
-        .context("Invalid base64 value for task_info")
+        .context("Invalid base64url value for task_info")
         .map_err(|err| Error::BadRequest(err.into()))?;
 
     let (aggregator_auth_token, aggregator_parameters) = match req.role {
