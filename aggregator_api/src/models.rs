@@ -1,4 +1,5 @@
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use chrono::{DateTime, Utc};
 use educe::Educe;
 use janus_aggregator_core::{
     datastore::{
@@ -79,7 +80,7 @@ pub(crate) struct PostTaskReq {
     /// derived from the verify key.
     pub(crate) vdaf_verify_key: String,
     /// The `task_info` byte string from the task's `TaskConfiguration`, as unpadded base64url.
-    /// Must be non-empty and at most 255 bytes.
+    /// Must be at most 255 bytes.
     pub(crate) task_info: String,
     /// The start of the task's validity interval. Must be set together with `task_duration` (both
     /// present or both absent); a half-open interval is rejected.
@@ -104,8 +105,11 @@ pub(crate) struct PostTaskReq {
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct PatchTaskReq {
+    /// The task's operational deactivation instant. `Some(Some(_))` sets it, `Some(None)`
+    /// clears it, and an absent field leaves it unchanged. This is Janus-specific state, not
+    /// part of the task's `TaskConfiguration`, so changing it does not affect HPKE AADs.
     #[serde(default, deserialize_with = "deserialize_some")]
-    pub(crate) task_end: Option<Option<Time>>,
+    pub(crate) deactivate_at: Option<Option<DateTime<Utc>>>,
 }
 
 #[derive(Clone, Educe, PartialEq, Eq, Serialize, Deserialize)]
@@ -149,6 +153,9 @@ pub(crate) struct TaskResp {
     pub(crate) aggregator_auth_token: Option<AuthenticationToken>,
     /// HPKE configuration used by the collector to decrypt aggregate shares.
     pub(crate) collector_hpke_config: HpkeConfig,
+    /// The task's operational deactivation instant, if set. Janus-specific state, not part of
+    /// the `TaskConfiguration`.
+    pub(crate) deactivate_at: Option<DateTime<Utc>>,
 }
 
 impl TryFrom<&AggregatorTask> for TaskResp {
@@ -174,6 +181,7 @@ impl TryFrom<&AggregatorTask> for TaskResp {
                 .collector_hpke_config()
                 .ok_or("collector_hpke_config is required")?
                 .clone(),
+            deactivate_at: task.deactivate_at(),
         })
     }
 }

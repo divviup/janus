@@ -3,6 +3,7 @@ use std::{iter, sync::Arc};
 use assert_matches::assert_matches;
 use axum::body::Body;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use chrono::{DateTime, Utc};
 use futures::future::try_join_all;
 use http::{Request, StatusCode};
 use janus_aggregator_core::{
@@ -912,8 +913,8 @@ async fn patch_task(#[case] role: Role) {
         VdafInstance::Fake { rounds: 1 },
     )
     .with_time_precision(time_precision)
-    // The task starts at the epoch and ends at 10 time-precision units; patching the end recomputes
-    // the duration against this start.
+    // The task has a fixed validity interval. PATCH only changes the deactivation
+    // instant, which is independent of (and does not mutate!) this interval.
     .with_task_interval(Some(
         Interval::new(
             Time::from_time_precision_units(0),
@@ -954,13 +955,16 @@ async fn patch_task(#[case] role: Role) {
         .run_unnamed_tx(|tx| Box::pin(async move { tx.get_aggregator_task(&task_id).await }))
         .await
         .unwrap();
+    let unwrapped = task.unwrap();
     assert_eq!(
-        task.unwrap().task_end(),
+        unwrapped.task_end(),
         Some(Time::from_seconds_since_epoch(1000, &time_precision))
     );
+    assert_eq!(unwrapped.deactivate_at(), None);
 
-    // Verify: patching the task with a new task end time recomputes the duration against the
-    // existing start (still the epoch).
+    // Verify: patching the task with a deactivation instant disables it, leaving the
+    // validity interval untouched.
+    let deactivate_at = DateTime::<Utc>::from_timestamp(1_700_000_000, 0).unwrap();
     let response = handler
         .clone()
         .oneshot(
@@ -968,7 +972,10 @@ async fn patch_task(#[case] role: Role) {
                 .header("authorization", format!("Bearer {AUTH_TOKEN}"))
                 .header("accept", CONTENT_TYPE)
                 .header("content-type", CONTENT_TYPE)
-                .body(Body::from(r#"{"task_end": 20}"#))
+                .body(Body::from(format!(
+                    r#"{{"deactivate_at": "{}"}}"#,
+                    deactivate_at.to_rfc3339()
+                )))
                 .unwrap(),
         )
         .await
@@ -980,24 +987,24 @@ async fn patch_task(#[case] role: Role) {
             .unwrap(),
     )
     .unwrap();
+    assert_eq!(got_task_resp.deactivate_at, Some(deactivate_at));
+    // The validity interval is unchanged.
     assert_eq!(
         got_task_resp.task_start,
         Some(Time::from_time_precision_units(0))
     );
     assert_eq!(
         got_task_resp.task_duration,
-        Some(Duration::from_time_precision_units(20))
+        Some(Duration::from_time_precision_units(10))
     );
     let task = ds
         .run_unnamed_tx(|tx| Box::pin(async move { tx.get_aggregator_task(&task_id).await }))
         .await
         .unwrap();
-    assert_eq!(
-        task.unwrap().task_end(),
-        Some(Time::from_seconds_since_epoch(2000, &time_precision))
-    );
+    assert_eq!(task.unwrap().deactivate_at(), Some(deactivate_at));
 
-    // Verify: patching the task with a null task end time clears the whole validity interval.
+    // Verify: patching the task with a null deactivation clears it, still leaving the
+    // validity interval untouched.
     let response = handler
         .clone()
         .oneshot(
@@ -1005,7 +1012,7 @@ async fn patch_task(#[case] role: Role) {
                 .header("authorization", format!("Bearer {AUTH_TOKEN}"))
                 .header("accept", CONTENT_TYPE)
                 .header("content-type", CONTENT_TYPE)
-                .body(Body::from(r#"{"task_end": null}"#))
+                .body(Body::from(r#"{"deactivate_at": null}"#))
                 .unwrap(),
         )
         .await
@@ -1017,13 +1024,16 @@ async fn patch_task(#[case] role: Role) {
             .unwrap(),
     )
     .unwrap();
-    assert_eq!(got_task_resp.task_start, None);
-    assert_eq!(got_task_resp.task_duration, None);
+    assert_eq!(got_task_resp.deactivate_at, None);
+    assert_eq!(
+        got_task_resp.task_start,
+        Some(Time::from_time_precision_units(0))
+    );
     let task = ds
         .run_unnamed_tx(|tx| Box::pin(async move { tx.get_aggregator_task(&task_id).await }))
         .await
         .unwrap();
-    assert_eq!(task.unwrap().task_end(), None);
+    assert_eq!(task.unwrap().deactivate_at(), None);
 
     // Verify: patching a nonexistent task returns NotFound.
     let response = handler
@@ -1056,56 +1066,11 @@ async fn patch_task(#[case] role: Role) {
 }
 
 #[tokio::test]
-async fn patch_task_rejects_end_before_start() {
+async fn patch_task_deactivate_at_without_interval() {
     let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
-    // A task whose validity interval starts at 100 time-precision units.
-    let task = TaskBuilder::new(
-        BatchMode::TimeInterval,
-        AggregationMode::Synchronous,
-        VdafInstance::Fake { rounds: 1 },
-    )
-    .with_task_interval(Some(
-        Interval::new(
-            Time::from_time_precision_units(100),
-            Duration::from_time_precision_units(10),
-        )
-        .unwrap(),
-    ))
-    .build()
-    .leader_view()
-    .unwrap();
-    ds.put_aggregator_task(&task).await.unwrap();
-
-    // Patching an end earlier than the start must be rejected, not stored as a negative duration.
-    let response = handler
-        .oneshot(
-            Request::patch(format!("/tasks/{}", task.id()))
-                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
-                .header("accept", CONTENT_TYPE)
-                .header("content-type", CONTENT_TYPE)
-                .body(Body::from(r#"{"task_end": 50}"#))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-
-    // The stored task is unchanged.
-    let task_id = *task.id();
-    let stored = ds
-        .run_unnamed_tx(|tx| Box::pin(async move { tx.get_aggregator_task(&task_id).await }))
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(stored.task_interval(), task.task_interval());
-}
-
-#[tokio::test]
-async fn patch_task_rejects_end_without_start() {
-    let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
-
-    // A task with no validity interval at all.
+    // A task with no validity interval at all: deactivation is independent of the interval,
+    // so it can still be set.
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,
@@ -1117,19 +1082,32 @@ async fn patch_task_rejects_end_without_start() {
     .unwrap();
     ds.put_aggregator_task(&task).await.unwrap();
 
-    // Setting an end is rejected: PATCH cannot create a half-open interval (it has no start).
+    let deactivate_at = DateTime::<Utc>::from_timestamp(1_700_000_000, 0).unwrap();
     let response = handler
         .oneshot(
             Request::patch(format!("/tasks/{}", task.id()))
                 .header("authorization", format!("Bearer {AUTH_TOKEN}"))
                 .header("accept", CONTENT_TYPE)
                 .header("content-type", CONTENT_TYPE)
-                .body(Body::from(r#"{"task_end": 50}"#))
+                .body(Body::from(format!(
+                    r#"{{"deactivate_at": "{}"}}"#,
+                    deactivate_at.to_rfc3339()
+                )))
                 .unwrap(),
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let task_id = *task.id();
+    let stored = ds
+        .run_unnamed_tx(|tx| Box::pin(async move { tx.get_aggregator_task(&task_id).await }))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.deactivate_at(), Some(deactivate_at));
+    // The (absent) validity interval is unchanged.
+    assert_eq!(stored.task_interval(), task.task_interval());
 }
 
 #[tokio::test]
@@ -2449,7 +2427,7 @@ fn task_resp_serialization() {
         &[
             Token::Struct {
                 name: "TaskResp",
-                len: 15,
+                len: 16,
             },
             Token::Str("task_id"),
             Token::Str("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
@@ -2540,6 +2518,8 @@ fn task_resp_serialization() {
             Token::Str("public_key"),
             Token::Str("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
             Token::StructEnd,
+            Token::Str("deactivate_at"),
+            Token::None,
             Token::StructEnd,
         ],
     );

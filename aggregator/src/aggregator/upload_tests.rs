@@ -677,6 +677,87 @@ async fn upload_report_task_ended() {
 }
 
 #[tokio::test]
+async fn upload_report_task_deactivated() {
+    let mut runtime_manager = TestRuntimeManager::new();
+    let UploadTest {
+        aggregator,
+        clock,
+        datastore,
+        ephemeral_datastore: _ephemeral_datastore,
+        hpke_keypair,
+        ..
+    } = UploadTest::new_with_runtime(
+        default_aggregator_config(),
+        runtime_manager.with_label("aggregator"),
+    )
+    .await;
+
+    let precision = TimePrecision::from_seconds(100);
+    let report_time = clock.now().to_time(&precision);
+
+    // A task with no validity interval; only its deactivation will stop uploads.
+    let task = TaskBuilder::new(
+        BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
+        VdafInstance::Prio3Count,
+    )
+    .with_time_precision(precision)
+    .with_task_interval(None)
+    .build()
+    .leader_view()
+    .unwrap();
+    datastore.put_aggregator_task(&task).await.unwrap();
+
+    // Deactivate the task as of now.
+    let task_id = *task.id();
+    let deactivate_at = clock.now();
+    datastore
+        .run_unnamed_tx(|tx| {
+            Box::pin(async move {
+                tx.set_task_deactivate_at(&task_id, Some(&deactivate_at))
+                    .await
+            })
+        })
+        .await
+        .unwrap();
+
+    let report = create_report(&task, &hpke_keypair, report_time);
+
+    // Try to upload the report; verify that the deactivated task rejects it.
+    let upload_result = aggregator
+        .handle_upload(task.id(), report_stream(report.clone()))
+        .await
+        .unwrap();
+    let result_upload_status = &upload_result.status()[0];
+    assert_matches!(
+        result_upload_status.error(),
+        ReportError::TaskExpired => {
+            assert_eq!(report.metadata().id(), &result_upload_status.report_id());
+        }
+    );
+
+    // Wait for the report writer to have completed one write task.
+    runtime_manager
+        .wait_for_completed_tasks("aggregator", 1)
+        .await;
+
+    // Deactivation reuses the "task ended" upload counter.
+    let got_counters = datastore
+        .run_unnamed_tx(|tx| {
+            let task_id = *task.id();
+            Box::pin(async move { TaskUploadCounter::load(tx, &task_id).await })
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        got_counters,
+        Some(TaskUploadCounter::new_with_values(
+            0, 0, 0, 0, 0, 0, 0, 0, 1, 0
+        ))
+    )
+}
+
+#[tokio::test]
 async fn upload_report_report_expired() {
     let mut runtime_manager = TestRuntimeManager::new();
     let UploadTest {

@@ -343,7 +343,7 @@ async fn roundtrip_task(ephemeral_datastore: EphemeralDatastore) {
 
 #[rstest_reuse::apply(schema_versions_template)]
 #[tokio::test]
-async fn update_task_end(ephemeral_datastore: EphemeralDatastore) {
+async fn set_task_deactivate_at(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
     let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
@@ -369,33 +369,28 @@ async fn update_task_end(ephemeral_datastore: EphemeralDatastore) {
         let task_id = *task.id();
         Box::pin(async move {
             let task = tx.get_aggregator_task(&task_id).await.unwrap().unwrap();
-            assert_eq!(
-                task.task_end(),
-                Some(Time::from_seconds_since_epoch(1000, &TIME_PRECISION))
-            );
+            assert_eq!(task.deactivate_at(), None);
+            let task_end = task.task_end();
 
-            tx.update_task_end(
-                &task_id,
-                Some(&Time::from_seconds_since_epoch(2000, &TIME_PRECISION)),
-            )
-            .await
-            .unwrap();
+            let deactivate_at = DateTime::<Utc>::from_timestamp(2000, 0).unwrap();
+            tx.set_task_deactivate_at(&task_id, Some(&deactivate_at))
+                .await
+                .unwrap();
 
             let task = tx.get_aggregator_task(&task_id).await.unwrap().unwrap();
-            assert_eq!(
-                task.task_end(),
-                Some(Time::from_seconds_since_epoch(2000, &TIME_PRECISION))
-            );
+            assert_eq!(task.deactivate_at(), Some(deactivate_at));
+            // Deactivation is independent of the (immutable) validity interval.
+            assert_eq!(task.task_end(), task_end);
 
-            tx.update_task_end(&task_id, None).await.unwrap();
+            tx.set_task_deactivate_at(&task_id, None).await.unwrap();
 
             let task = tx.get_aggregator_task(&task_id).await.unwrap().unwrap();
-            assert_eq!(task.task_end(), None);
+            assert_eq!(task.deactivate_at(), None);
 
             let result = tx
-                .update_task_end(
+                .set_task_deactivate_at(
                     &random(),
-                    Some(&Time::from_seconds_since_epoch(2000, &TIME_PRECISION)),
+                    Some(&DateTime::<Utc>::from_timestamp(2000, 0).unwrap()),
                 )
                 .await;
             assert_matches!(result, Err(Error::MutationTargetNotFound));

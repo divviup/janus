@@ -428,6 +428,18 @@ where
                         Ok(shares)
                     });
 
+                    // Reject reports once the task has been deactivated. This is Janus-specific
+                    // (not part of the task's TaskConfiguration/AAD) and is compared against
+                    // theaggregator's current clock, not the report timestamp.
+                    let shares = shares.and_then(|shares| {
+                        if let Some(deactivate_at) = task.deactivate_at() {
+                            if now >= deactivate_at {
+                                return Err(ReportError::TaskExpired);
+                            }
+                        }
+                        Ok(shares)
+                    });
+
                     // Next, the aggregator runs the verification-state initialization algorithm
                     // for the VDAF associated with the task and computes the first state
                     // transition. [...] If either step fails, then the aggregator MUST fail

@@ -316,25 +316,11 @@ pub(super) async fn patch_task<C: Clock>(
         .datastore
         .run_tx("patch_task", |tx| {
             Box::pin(async move {
-                if let Some(task_end) = req.task_end {
-                    // Setting a concrete end requires an existing task_start that is not after the
-                    // new end. PATCH cannot create a half-open interval, and an end before the start
-                    // would be a negative (unrepresentable) duration.
-                    if let Some(end) = task_end {
-                        if let Some(existing) = tx.get_aggregator_task(&task_id).await? {
-                            if existing.task_start().is_none_or(|start| start > end) {
-                                return Err(datastore::Error::User(
-                                    Error::BadRequest(
-                                        "task_end requires an existing task_start that is not after \
-                                         it"
-                                        .into(),
-                                    )
-                                    .into(),
-                                ));
-                            }
-                        }
-                    }
-                    tx.update_task_end(&task_id, task_end.as_ref()).await?;
+                // deactivate_at is Janus-specific operational state flag (not part of the
+                // task's TaskConfiguration/AAD), so we can set (or clear) it at any time.
+                if let Some(deactivate_at) = req.deactivate_at {
+                    tx.set_task_deactivate_at(&task_id, deactivate_at.as_ref())
+                        .await?;
                 }
                 tx.get_aggregator_task(&task_id).await
             })

@@ -1892,6 +1892,15 @@ impl VdafOps {
             }
         }
 
+        // Reject reports once the task has been deactivated. This is Janus-specific
+        // (not part of the task's TaskConfiguration/AAD) and is compared against the
+        // aggregator's current clock, not the report timestamp.
+        if let Some(deactivate_at) = task.deactivate_at() {
+            if now >= deactivate_at {
+                return Err(reject_report(ReportRejectionReason::TaskDeactivated).await?);
+            }
+        }
+
         // Reject reports that would be eligible for garbage collection, to prevent replay attacks.
         if let Some(report_expiry_age) = task.report_expiry_age() {
             let report_expiry_time = report
@@ -1899,10 +1908,7 @@ impl VdafOps {
                 .time()
                 .add_duration(report_expiry_age)
                 .map_err(|err| UploadError::Internal(Arc::new(Error::from(err))))?;
-            if clock
-                .now()
-                .is_after(&report_expiry_time, task.time_precision())
-            {
+            if now.is_after(&report_expiry_time, task.time_precision()) {
                 return Err(reject_report(ReportRejectionReason::Expired).await?);
             }
         }

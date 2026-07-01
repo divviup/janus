@@ -4,6 +4,7 @@ use std::{array::TryFromSliceError, str::FromStr};
 
 use anyhow::anyhow;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use chrono::{DateTime, Utc};
 use educe::Educe;
 use janus_core::{
     auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
@@ -254,6 +255,9 @@ pub struct AggregatorTask {
     peer_aggregator_endpoint: Url,
     /// Parameters specific to either aggregator role
     aggregator_parameters: AggregatorTaskParameters,
+    /// Deactivation instant. When set and reached (per the aggregator's clock), the
+    /// aggregator stops accepting reports for this task. This is Janus-specific state.
+    deactivate_at: Option<DateTime<Utc>>,
 }
 
 impl AggregatorTask {
@@ -318,6 +322,7 @@ impl AggregatorTask {
             common_parameters,
             peer_aggregator_endpoint,
             aggregator_parameters,
+            deactivate_at: None,
         })
     }
 
@@ -369,6 +374,17 @@ impl AggregatorTask {
     /// Retrieves the task end time (the end of the validity interval), if any.
     pub fn task_end(&self) -> Option<Time> {
         self.common_parameters.task_interval.map(|i| i.end())
+    }
+
+    /// Retrieves the deactivation instant, if set. (Janus-specific)
+    pub fn deactivate_at(&self) -> Option<DateTime<Utc>> {
+        self.deactivate_at
+    }
+
+    /// Returns this task with its deactivation instant set. (Janus-specific)
+    pub fn with_deactivate_at(mut self, deactivate_at: Option<DateTime<Utc>>) -> Self {
+        self.deactivate_at = deactivate_at;
+        self
     }
 
     /// Retrieves the report expiry age associated with this task.
