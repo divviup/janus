@@ -24,7 +24,7 @@ use janus_core::{
 };
 use janus_messages::{
     BatchId, Duration, HpkeConfig, Interval, PartialBatchSelector, Query, TaskId, Time,
-    TimePrecision, batch_mode::BatchMode,
+    TimePrecision, Url as DapUrl, batch_mode::BatchMode,
 };
 use prio::{
     codec::{Decode, Encode},
@@ -32,7 +32,6 @@ use prio::{
     vdaf::{self, prio3::Prio3},
 };
 use rand::{RngExt, distr::StandardUniform, prelude::Distribution, random};
-use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use tokio::{net::TcpListener, runtime::Runtime, sync::Mutex, task::JoinHandle};
 
@@ -46,7 +45,7 @@ use crate::{
 struct AddTaskRequest {
     task_id: String,
     #[educe(Debug(method(std::fmt::Display::fmt)))]
-    leader: Url,
+    leader: DapUrl,
     vdaf: VdafObject,
     collector_authentication_token: String,
     #[serde(rename = "batch_mode")]
@@ -127,7 +126,7 @@ struct CollectPollResponse {
 struct TaskState {
     task_id: TaskId,
     keypair: HpkeKeypair,
-    leader_url: Url,
+    leader_url: DapUrl,
     vdaf: VdafObject,
     auth_token: AuthenticationToken,
     time_precision: TimePrecision,

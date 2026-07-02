@@ -253,7 +253,7 @@ where
         .leader_endpoint_for_host(leader_port);
     let collector = Collector::builder(
         task_parameters.task_id,
-        leader_endpoint,
+        leader_endpoint.as_str().try_into().unwrap(),
         task_parameters.collector_auth_token.clone(),
         task_parameters.collector_hpke_keypair.clone(),
         vdaf,

@@ -271,8 +271,8 @@ where
             .endpoints_for_host_client(leader_port, helper_port);
         let mut builder = Client::builder(
             task_parameters.task_id,
-            leader_aggregator_endpoint,
-            helper_aggregator_endpoint,
+            leader_aggregator_endpoint.as_str().try_into().unwrap(),
+            helper_aggregator_endpoint.as_str().try_into().unwrap(),
             task_parameters.time_precision,
             vdaf,
         );

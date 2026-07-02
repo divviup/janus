@@ -12,9 +12,8 @@
 //! use std::{fs::File, str::FromStr};
 //!
 //! use janus_collector::{Collector, PrivateCollectorCredential};
-//! use janus_messages::{Duration, Interval, Query, TaskId, Time, TimePrecision};
+//! use janus_messages::{Duration, Interval, Query, TaskId, Time, TimePrecision, Url};
 //! use prio::vdaf::prio3::Prio3;
-//! use url::Url;
 //!
 //! # async fn run() {
 //! # const TIME_PRECISION: u64 = 3600;
@@ -83,11 +82,11 @@ use janus_core::{
         ExponentialWithTotalDelayBuilder, http_request_exponential_backoff, retry_http_request,
     },
     time::TimeExt,
-    url_ensure_trailing_slash,
+    url_for_join,
 };
 use janus_messages::{
     AggregateShareAad, BatchSelector, CollectionJobId, CollectionJobReq, CollectionJobResp,
-    MediaType, PartialBatchSelector, Query, Role, TaskId, TimePrecision,
+    MediaType, PartialBatchSelector, Query, Role, TaskId, TimePrecision, Url as DapUrl,
     batch_mode::{BatchMode, TimeInterval},
 };
 use prio::{
@@ -290,7 +289,7 @@ pub struct CollectorBuilder<V: vdaf::Collector> {
     /// Unique identifier for the task.
     task_id: TaskId,
     /// The base URL of the leader's aggregator API endpoints.
-    leader_endpoint: Url,
+    leader_endpoint: DapUrl,
     /// The authentication information needed to communicate with the leader aggregator.
     authentication: AuthenticationToken,
     /// HPKE keypair used for decryption of aggregate shares.
@@ -313,7 +312,7 @@ impl<V: vdaf::Collector> CollectorBuilder<V> {
     /// the task's VDAF.
     pub fn new(
         task_id: TaskId,
-        leader_endpoint: Url,
+        leader_endpoint: DapUrl,
         authentication: AuthenticationToken,
         hpke_keypair: HpkeKeypair,
         vdaf: V,
@@ -344,7 +343,9 @@ impl<V: vdaf::Collector> CollectorBuilder<V> {
         };
         Ok(Collector {
             task_id: self.task_id,
-            leader_endpoint: url_ensure_trailing_slash(self.leader_endpoint),
+            // Stored verbatim; the trailing slash is applied at join time via `url_for_join`, so
+            // the bytes bound into HPKE AADs stay exactly as provisioned (DAP §4.1).
+            leader_endpoint: self.leader_endpoint,
             authentication: self.authentication,
             hpke_keypair: self.hpke_keypair,
             vdaf: self.vdaf,
@@ -382,7 +383,7 @@ pub struct Collector<V: vdaf::Collector> {
     task_id: TaskId,
     /// The base URL of the leader's aggregator API endpoints.
     #[educe(Debug(method(std::fmt::Display::fmt)))]
-    leader_endpoint: Url,
+    leader_endpoint: DapUrl,
     /// The authentication information needed to communicate with the leader aggregator.
     authentication: AuthenticationToken,
     /// HPKE keypair used for decryption of aggregate shares.
@@ -407,7 +408,7 @@ impl<V: vdaf::Collector> Collector<V> {
     /// implementation of the task's VDAF.
     pub fn new(
         task_id: TaskId,
-        leader_endpoint: Url,
+        leader_endpoint: DapUrl,
         authentication: AuthenticationToken,
         hpke_keypair: HpkeKeypair,
         vdaf: V,
@@ -428,7 +429,7 @@ impl<V: vdaf::Collector> Collector<V> {
     /// the task's VDAF.
     pub fn builder(
         task_id: TaskId,
-        leader_endpoint: Url,
+        leader_endpoint: DapUrl,
         authentication: AuthenticationToken,
         hpke_keypair: HpkeKeypair,
         vdaf: V,
@@ -446,7 +447,7 @@ impl<V: vdaf::Collector> Collector<V> {
 
     /// Construct a URI for a collection.
     fn collection_job_uri(&self, collection_job_id: CollectionJobId) -> Result<Url, Error> {
-        Ok(self.leader_endpoint.join(&format!(
+        Ok(url_for_join(&self.leader_endpoint)?.join(&format!(
             "tasks/{}/collection_jobs/{collection_job_id}",
             self.task_id
         ))?)
@@ -785,7 +786,7 @@ mod tests {
     use janus_messages::{
         AggregateShareAad, BatchId, BatchSelector, CollectionJobId, CollectionJobReq,
         CollectionJobResp, Duration, HpkeCiphertext, Interval, MediaType, PartialBatchSelector,
-        Query, Role, TaskId, Time, TimePrecision,
+        Query, Role, TaskId, Time, TimePrecision, Url as DapUrl,
         batch_mode::{LeaderSelected, TimeInterval},
         problem_type::DapProblemType,
     };
@@ -797,7 +798,7 @@ mod tests {
     };
     use rand::random;
     use reqwest::{
-        StatusCode, Url,
+        StatusCode,
         header::{AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE},
     };
     use retry_after::RetryAfter;
@@ -807,7 +808,7 @@ mod tests {
     const TEST_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(100);
 
     fn setup_collector<V: vdaf::Collector>(server: &mut mockito::Server, vdaf: V) -> Collector<V> {
-        let server_url = Url::parse(&server.url()).unwrap();
+        let server_url = DapUrl::try_from(server.url().as_str()).unwrap();
         let hpke_keypair = HpkeKeypair::test();
         Collector::builder(
             random(),
@@ -904,36 +905,40 @@ mod tests {
     }
 
     #[test]
-    fn leader_endpoint_end_in_slash() {
+    fn leader_endpoint_preserved_and_joined() {
         install_test_trace_subscriber();
         initialize_rustls();
         let hpke_keypair = HpkeKeypair::test();
-        let collector = Collector::new(
-            random(),
-            "http://example.com/dap".parse().unwrap(),
-            AuthenticationToken::new_bearer_token_from_string("Y29sbGVjdG9yIHRva2Vu").unwrap(),
-            hpke_keypair.clone(),
-            dummy::Vdaf::new(1),
-            TEST_TIME_PRECISION,
-        )
-        .unwrap();
+        let collection_job_id: CollectionJobId = random();
 
-        assert_eq!(
-            collector.leader_endpoint.as_str(),
-            "http://example.com/dap/",
-        );
+        for (endpoint, joined_base) in [
+            ("http://example.com/dap", "http://example.com/dap/"),
+            ("http://example.com", "http://example.com/"),
+        ] {
+            let collector = Collector::new(
+                random(),
+                endpoint.try_into().unwrap(),
+                AuthenticationToken::new_bearer_token_from_string("Y29sbGVjdG9yIHRva2Vu").unwrap(),
+                hpke_keypair.clone(),
+                dummy::Vdaf::new(1),
+                TEST_TIME_PRECISION,
+            )
+            .unwrap();
 
-        let collector = Collector::new(
-            random(),
-            "http://example.com".parse().unwrap(),
-            AuthenticationToken::new_bearer_token_from_string("Y29sbGVjdG9yIHRva2Vu").unwrap(),
-            hpke_keypair,
-            dummy::Vdaf::new(1),
-            TEST_TIME_PRECISION,
-        )
-        .unwrap();
-
-        assert_eq!(collector.leader_endpoint.as_str(), "http://example.com/");
+            // Stored verbatim (no trailing slash added) for byte-identical HPKE AADs (DAP §4.1),
+            // while the request URI is still joined against a slash-terminated base.
+            assert_eq!(collector.leader_endpoint.as_str(), endpoint);
+            assert_eq!(
+                collector
+                    .collection_job_uri(collection_job_id)
+                    .unwrap()
+                    .as_str(),
+                format!(
+                    "{joined_base}tasks/{}/collection_jobs/{collection_job_id}",
+                    collector.task_id
+                ),
+            );
+        }
     }
 
     #[tokio::test]
@@ -1247,7 +1252,7 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let vdaf = Prio3::new_count(2).unwrap();
         let transcript = run_vdaf(&vdaf, &random(), &random(), &(), &random(), &true);
-        let server_url = Url::parse(&server.url()).unwrap();
+        let server_url = DapUrl::try_from(server.url().as_str()).unwrap();
         let hpke_keypair = HpkeKeypair::test();
         let collector = Collector::builder(
             random(),

@@ -8,14 +8,13 @@ use janus_core::{
 };
 use janus_messages::{
     HpkeConfigList, MediaType, ReportError, ReportUploadStatus, Role, Time, TimePrecision,
-    UploadErrors, UploadRequest,
+    UploadErrors, UploadRequest, Url as DapUrl,
 };
 use prio::{
     codec::Encode,
     vdaf::{self, prio3::Prio3},
 };
 use rand::random;
-use url::Url;
 
 use crate::{Client, ClientParameters, Error, HpkeConfiguration, UploadStats, default_http_client};
 
@@ -23,7 +22,7 @@ use crate::{Client, ClientParameters, Error, HpkeConfiguration, UploadStats, def
 mod ohttp;
 
 async fn setup_client<V: vdaf::Client<16>>(server: &mockito::Server, vdaf: V) -> Client<V> {
-    let server_url = Url::parse(&server.url()).unwrap();
+    let server_url = DapUrl::try_from(server.url().as_str()).unwrap();
     Client::builder(
         random(),
         server_url.clone(),
@@ -40,21 +39,40 @@ async fn setup_client<V: vdaf::Client<16>>(server: &mockito::Server, vdaf: V) ->
 }
 
 #[test]
-fn aggregator_endpoints_end_in_slash() {
+fn endpoints_preserved_and_joined() {
+    let task_id = random();
     let client_parameters = ClientParameters::new(
-        random(),
-        "http://leader_endpoint/foo/bar".parse().unwrap(),
-        "http://helper_endpoint".parse().unwrap(),
+        task_id,
+        "http://leader_endpoint/foo/bar".try_into().unwrap(),
+        "http://helper_endpoint".try_into().unwrap(),
         TimePrecision::from_seconds(100),
     );
 
+    // Endpoints are stored verbatim (no trailing slash added), so the bytes bound into HPKE AADs
+    // match what was provisioned (DAP §4.1).
     assert_eq!(
-        client_parameters.leader_aggregator_endpoint,
-        "http://leader_endpoint/foo/bar/".parse().unwrap()
+        client_parameters.leader_aggregator_endpoint.as_str(),
+        "http://leader_endpoint/foo/bar"
     );
     assert_eq!(
-        client_parameters.helper_aggregator_endpoint,
-        "http://helper_endpoint/".parse().unwrap()
+        client_parameters.helper_aggregator_endpoint.as_str(),
+        "http://helper_endpoint"
+    );
+
+    // Joining for requests still applies the trailing slash.
+    assert_eq!(
+        client_parameters
+            .hpke_config_endpoint(&Role::Helper)
+            .unwrap()
+            .as_str(),
+        "http://helper_endpoint/hpke_config"
+    );
+    assert_eq!(
+        client_parameters
+            .reports_resource_uri(&task_id)
+            .unwrap()
+            .as_str(),
+        format!("http://leader_endpoint/foo/bar/tasks/{task_id}/reports")
     );
 }
 
@@ -223,7 +241,7 @@ async fn unsupported_hpke_algorithms() {
     initialize_rustls();
 
     let mut server = mockito::Server::new_async().await;
-    let server_url = Url::parse(&server.url()).unwrap();
+    let server_url = DapUrl::try_from(server.url().as_str()).unwrap();
     let http_client = default_http_client().unwrap();
     let mut client_parameters = ClientParameters::new(
         random(),
