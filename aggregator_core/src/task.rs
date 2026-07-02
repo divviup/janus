@@ -302,6 +302,10 @@ impl AggregatorTask {
         peer_aggregator_endpoint: DapUrl,
         aggregator_parameters: AggregatorTaskParameters,
     ) -> Result<Self, Error> {
+        // Reject an unparseable endpoint at construction. Without this check a
+        // malformed endpoint would persist and never surface a user-visible error.
+        Url::try_from(&peer_aggregator_endpoint)?;
+
         if let BatchMode::LeaderSelected {
             batch_time_window_size: Some(batch_time_window_size),
             ..
@@ -1452,7 +1456,7 @@ mod tests {
     };
     use janus_messages::{
         BatchConfig, Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId,
-        HpkePublicKey, Interval, TaskId, Time, TimePrecision,
+        HpkePublicKey, Interval, TaskId, Time, TimePrecision, Url as DapUrl,
     };
     use rand::random;
     use serde_json::json;
@@ -1628,10 +1632,19 @@ mod tests {
     /// (which validates `task_info`), with a caller-supplied `task_info` and otherwise fixed
     /// values.
     fn aggregator_task_with_task_info(task_info: Vec<u8>) -> Result<AggregatorTask, Error> {
+        aggregator_task_with_endpoint("https://example.net/".parse().unwrap(), task_info)
+    }
+
+    /// Builds an [`AggregatorTask`] through the production [`AggregatorTask::new`] constructor,
+    /// with a caller-supplied peer endpoint and `task_info` and otherwise fixed values.
+    fn aggregator_task_with_endpoint(
+        peer_aggregator_endpoint: DapUrl,
+        task_info: Vec<u8>,
+    ) -> Result<AggregatorTask, Error> {
         let time_precision = TimePrecision::from_seconds(60);
         AggregatorTask::new(
             TaskId::from([0; 32]),
-            "https://example.net/".parse().unwrap(),
+            peer_aggregator_endpoint,
             BatchMode::TimeInterval,
             VdafInstance::Prio3Count,
             SecretBytes::new(b"1234567812345678".to_vec()),
@@ -1671,6 +1684,21 @@ mod tests {
         );
         aggregator_task_with_task_info(vec![b'a'; 255]).unwrap();
         aggregator_task_with_task_info(b"x".to_vec()).unwrap();
+    }
+
+    #[test]
+    fn rejects_unparseable_peer_endpoint() {
+        // The endpoint is ASCII (so it is a valid `DapUrl`) but not a parseable URL; construction
+        // must reject it rather than persist it to surface only at request time.
+        assert_matches!(
+            aggregator_task_with_endpoint("not a url".try_into().unwrap(), b"task-info".to_vec()),
+            Err(Error::Url(_))
+        );
+        aggregator_task_with_endpoint(
+            "https://example.net/".try_into().unwrap(),
+            b"task-info".to_vec(),
+        )
+        .unwrap();
     }
 
     #[test]
