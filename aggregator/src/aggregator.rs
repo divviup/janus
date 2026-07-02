@@ -862,16 +862,9 @@ impl<C: Clock> Aggregator<C> {
 
         let vdaf_verify_key = peer_aggregator.derive_vdaf_verify_key(task_id, &vdaf_instance);
 
-        let (task_start, task_end) = match task_config.task_interval() {
-            Some(interval) => {
-                let start = interval.start();
-                (Some(start), Some(start.add_duration(&interval.duration())?))
-            }
-            // task_interval is optional per DAP-18 §4.2.3; when absent the task has no time
-            // bounds, so time-based report rejection is skipped (the same behavior as
-            // API-provisioned tasks created without task_start/task_end).
-            None => (None, None),
-        };
+        // task_interval is optional per DAP-18 §4.2.3; when absent the task has no time bounds, so
+        // time-based report rejection is skipped.
+        let task_interval = task_config.task_interval();
 
         let report_expiry_age = peer_aggregator
             .report_expiry_age()
@@ -884,13 +877,13 @@ impl<C: Clock> Aggregator<C> {
                 BatchMode::try_from(task_config.batch_config())?,
                 vdaf_instance,
                 vdaf_verify_key,
-                task_start,
-                task_end,
+                task_interval,
                 report_expiry_age,
                 task_config.min_batch_size(),
                 *task_config.time_precision(),
                 /* tolerable clock skew */
                 Duration::ONE,
+                task_config.task_info().to_vec(),
                 task::AggregatorTaskParameters::TaskprovHelper {
                     aggregation_mode: peer_aggregator.aggregation_mode().copied().ok_or_else(
                         || {
@@ -901,8 +894,7 @@ impl<C: Clock> Aggregator<C> {
                     )?,
                 },
             )
-            .map_err(|err| Error::InvalidTask(*task_id, OptOutReason::TaskParameters(err)))?
-            .with_task_info(task_config.task_info().to_vec()),
+            .map_err(|err| Error::InvalidTask(*task_id, OptOutReason::TaskParameters(err)))?,
         );
         self.datastore
             .run_tx("taskprov_put_task", |tx| {
@@ -1888,15 +1880,24 @@ impl VdafOps {
 
         // Reject reports before a task has started. (§4.6.2.4 step 3 [dap-16])
         if let Some(task_start) = task.task_start() {
-            if report.metadata().time().is_before(task_start) {
+            if report.metadata().time().is_before(&task_start) {
                 return Err(reject_report(ReportRejectionReason::TaskNotStarted).await?);
             }
         }
 
         // Reject reports after a task has ended. (§4.6.2.4 step 4 [dap-16])
         if let Some(task_end) = task.task_end() {
-            if report.metadata().time().ge(task_end) {
+            if report.metadata().time().ge(&task_end) {
                 return Err(reject_report(ReportRejectionReason::TaskEnded).await?);
+            }
+        }
+
+        // Reject reports once the task has been deactivated. This is Janus-specific
+        // (not part of the task's TaskConfiguration/AAD) and is compared against the
+        // aggregator's current clock, not the report timestamp.
+        if let Some(deactivate_at) = task.deactivate_at() {
+            if now >= deactivate_at {
+                return Err(reject_report(ReportRejectionReason::TaskDeactivated).await?);
             }
         }
 
@@ -1907,10 +1908,7 @@ impl VdafOps {
                 .time()
                 .add_duration(report_expiry_age)
                 .map_err(|err| UploadError::Internal(Arc::new(Error::from(err))))?;
-            if clock
-                .now()
-                .is_after(&report_expiry_time, task.time_precision())
-            {
+            if now.is_after(&report_expiry_time, task.time_precision()) {
                 return Err(reject_report(ReportRejectionReason::Expired).await?);
             }
         }

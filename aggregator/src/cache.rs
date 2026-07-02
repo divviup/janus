@@ -296,6 +296,7 @@ impl<C: Clock> TaskAggregatorCache<C> {
 mod tests {
     use std::{sync::Arc, time::Duration};
 
+    use chrono::{DateTime, Utc};
     use janus_aggregator_core::{
         datastore::{models::HpkeKeyState, test_util::ephemeral_datastore},
         task::{AggregationMode, BatchMode, test_util::TaskBuilder},
@@ -307,7 +308,7 @@ mod tests {
         time::MockClock,
         vdaf::VdafInstance,
     };
-    use janus_messages::{Time, TimePrecision};
+    use janus_messages::{Interval, TimePrecision};
     use tokio::time::sleep;
 
     use crate::{
@@ -387,6 +388,7 @@ mod tests {
             VdafInstance::Prio3Count,
         )
         .with_time_precision(TimePrecision::from_seconds(100))
+        .with_task_interval(Some(Interval::EMPTY))
         .build()
         .leader_view()
         .unwrap();
@@ -401,12 +403,14 @@ mod tests {
         assert_eq!(task_aggregator.task.id(), task.id());
 
         // Modify the task.
-        let new_end = Time::from_seconds_since_epoch(100, task.time_precision());
+        let deactivate_at = DateTime::<Utc>::from_timestamp(100, 0).unwrap();
         datastore
             .run_unnamed_tx(|tx| {
                 let task_id = *task.id();
                 Box::pin(async move {
-                    tx.update_task_end(&task_id, Some(&new_end)).await.unwrap();
+                    tx.set_task_deactivate_at(&task_id, Some(&deactivate_at))
+                        .await
+                        .unwrap();
                     Ok(())
                 })
             })
@@ -417,8 +421,8 @@ mod tests {
         // previous task.
         let task_aggregator = task_aggregators.get(task.id()).await.unwrap().unwrap();
         assert!(
-            (task_aggregator.task.task_end() == task.task_end())
-                || (task_aggregator.task.task_end() == Some(&new_end))
+            (task_aggregator.task.deactivate_at() == task.deactivate_at())
+                || (task_aggregator.task.deactivate_at() == Some(deactivate_at))
         );
 
         // Unfortunately, because moka doesn't provide any facility for a fake clock, we have to
@@ -426,7 +430,7 @@ mod tests {
         sleep(Duration::from_secs(1)).await;
 
         let task_aggregator = task_aggregators.get(task.id()).await.unwrap().unwrap();
-        assert_eq!(task_aggregator.task.task_end(), Some(&new_end));
+        assert_eq!(task_aggregator.task.deactivate_at(), Some(deactivate_at));
     }
 
     #[tokio::test]
@@ -457,6 +461,7 @@ mod tests {
             VdafInstance::Prio3Count,
         )
         .with_time_precision(TimePrecision::from_seconds(100))
+        .with_task_interval(Some(Interval::EMPTY))
         .build()
         .leader_view()
         .unwrap();
@@ -475,12 +480,14 @@ mod tests {
         assert_eq!(task_aggregator.task.id(), task.id());
 
         // Modify the task.
-        let new_end = Time::from_seconds_since_epoch(100, task.time_precision());
+        let deactivate_at = DateTime::<Utc>::from_timestamp(100, 0).unwrap();
         datastore
             .run_unnamed_tx(|tx| {
                 let task_id = *task.id();
                 Box::pin(async move {
-                    tx.update_task_end(&task_id, Some(&new_end)).await.unwrap();
+                    tx.set_task_deactivate_at(&task_id, Some(&deactivate_at))
+                        .await
+                        .unwrap();
                     Ok(())
                 })
             })
@@ -491,13 +498,13 @@ mod tests {
         // previous value.
         let task_aggregator = task_aggregators.get(task.id()).await.unwrap().unwrap();
         assert!(
-            (task_aggregator.task.task_end() == task.task_end())
-                || (task_aggregator.task.task_end() == Some(&new_end))
+            (task_aggregator.task.deactivate_at() == task.deactivate_at())
+                || (task_aggregator.task.deactivate_at() == Some(deactivate_at))
         );
 
         sleep(Duration::from_secs(1)).await;
 
         let task_aggregator = task_aggregators.get(task.id()).await.unwrap().unwrap();
-        assert_eq!(task_aggregator.task.task_end(), Some(&new_end));
+        assert_eq!(task_aggregator.task.deactivate_at(), Some(deactivate_at));
     }
 }

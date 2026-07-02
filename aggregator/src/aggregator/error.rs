@@ -246,6 +246,9 @@ pub enum ReportRejectionReason {
     OutdatedHpkeConfig(HpkeConfigId),
     TaskNotStarted,
     DuplicateExtension,
+    /// The task has been operationally deactivated (implementation-specific state, distinct from
+    /// the DAP validity interval ending).
+    TaskDeactivated,
 }
 
 impl ReportRejectionReason {
@@ -260,6 +263,7 @@ impl ReportRejectionReason {
             ReportRejectionReason::OutdatedHpkeConfig(_) => ReportError::HpkeUnknownConfigId,
             ReportRejectionReason::TaskNotStarted => ReportError::TaskNotStarted,
             ReportRejectionReason::DuplicateExtension => ReportError::InvalidMessage,
+            ReportRejectionReason::TaskDeactivated => ReportError::TaskExpired,
         }
     }
 }

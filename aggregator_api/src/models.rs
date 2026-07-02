@@ -1,4 +1,5 @@
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use chrono::{DateTime, Utc};
 use educe::Educe;
 use janus_aggregator_core::{
     datastore::{
@@ -78,10 +79,14 @@ pub(crate) struct PostTaskReq {
     /// The VDAF verification key used for this DAP task, as Base64 encoded bytes. Task ID is
     /// derived from the verify key.
     pub(crate) vdaf_verify_key: String,
-    /// The time before which the task is considered invalid.
+    /// The `task_info` byte string from the task's `TaskConfiguration`, as unpadded base64url.
+    /// Must be at most 255 bytes.
+    pub(crate) task_info: String,
+    /// The start of the task's validity interval. Must be set together with `task_duration` (both
+    /// present or both absent); a half-open interval is rejected.
     pub(crate) task_start: Option<Time>,
-    /// The time after which the task is considered invalid.
-    pub(crate) task_end: Option<Time>,
+    /// The length of the task's validity interval. Must be set together with `task_start`.
+    pub(crate) task_duration: Option<Duration>,
     /// The minimum number of reports in a batch to allow it to be collected.
     pub(crate) min_batch_size: u64,
     /// The duration to which clients should round their reported timestamps, as seconds since
@@ -100,8 +105,11 @@ pub(crate) struct PostTaskReq {
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct PatchTaskReq {
+    /// The task's operational deactivation instant. `Some(Some(_))` sets it, `Some(None)`
+    /// clears it, and an absent field leaves it unchanged. This is Janus-specific state, not
+    /// part of the task's `TaskConfiguration`, so changing it does not affect HPKE AADs.
     #[serde(default, deserialize_with = "deserialize_some")]
-    pub(crate) task_end: Option<Option<Time>>,
+    pub(crate) deactivate_at: Option<Option<DateTime<Utc>>>,
 }
 
 #[derive(Clone, Educe, PartialEq, Eq, Serialize, Deserialize)]
@@ -122,10 +130,13 @@ pub(crate) struct TaskResp {
     /// The VDAF verification key used for this DAP task, as Base64 encoded bytes. Task ID is
     /// derived from the verify key.
     pub(crate) vdaf_verify_key: String,
-    /// The time before which the task is considered invalid.
+    /// The `task_info` byte string from the task's `TaskConfiguration`, as unpadded base64url.
+    pub(crate) task_info: String,
+    /// The start of the task's validity interval. Set together with `task_duration` (both present
+    /// or both absent).
     pub(crate) task_start: Option<Time>,
-    /// The time after which the task is considered invalid.
-    pub(crate) task_end: Option<Time>,
+    /// The length of the task's validity interval. Set together with `task_start`.
+    pub(crate) task_duration: Option<Duration>,
     /// The age after which a report is considered to be "expired" and will be considered a
     /// candidate for garbage collection.
     pub(crate) report_expiry_age: Option<Duration>,
@@ -142,6 +153,9 @@ pub(crate) struct TaskResp {
     pub(crate) aggregator_auth_token: Option<AuthenticationToken>,
     /// HPKE configuration used by the collector to decrypt aggregate shares.
     pub(crate) collector_hpke_config: HpkeConfig,
+    /// The task's operational deactivation instant, if set. Janus-specific state, not part of
+    /// the `TaskConfiguration`.
+    pub(crate) deactivate_at: Option<DateTime<Utc>>,
 }
 
 impl TryFrom<&AggregatorTask> for TaskResp {
@@ -155,8 +169,9 @@ impl TryFrom<&AggregatorTask> for TaskResp {
             vdaf: task.vdaf().clone(),
             role: *task.role(),
             vdaf_verify_key: URL_SAFE_NO_PAD.encode(task.opaque_vdaf_verify_key().as_ref()),
-            task_start: task.task_start().copied(),
-            task_end: task.task_end().copied(),
+            task_info: URL_SAFE_NO_PAD.encode(task.task_info()),
+            task_start: task.task_start(),
+            task_duration: task.task_interval().map(|i| i.duration()),
             report_expiry_age: task.report_expiry_age().cloned(),
             min_batch_size: task.min_batch_size(),
             time_precision: task.time_precision().to_owned(),
@@ -166,6 +181,7 @@ impl TryFrom<&AggregatorTask> for TaskResp {
                 .collector_hpke_config()
                 .ok_or("collector_hpke_config is required")?
                 .clone(),
+            deactivate_at: task.deactivate_at(),
         })
     }
 }

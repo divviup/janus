@@ -370,6 +370,14 @@ impl Interval {
     pub fn duration(&self) -> Duration {
         self.duration
     }
+
+    /// Returns a [`Time`] representing the excluded end of this interval (`start + duration`).
+    ///
+    /// This is infallible because [`Interval::new`] already guaranteed that `start + duration` does
+    /// not overflow.
+    pub fn end(&self) -> Time {
+        Time::from_time_precision_units(self.start.0 + self.duration.0)
+    }
 }
 
 impl Encode for Interval {

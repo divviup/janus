@@ -17,12 +17,12 @@ use std::{
 };
 
 use aws_lc_rs::aead::{self, AES_128_GCM, LessSafeKey};
-use chrono::{DateTime, TimeDelta, Utc};
+use chrono::{DateTime, NaiveDateTime, TimeDelta, Utc};
 use futures::future::try_join_all;
 use janus_core::{
     auth_tokens::AuthenticationToken,
     hpke::{self, HpkePrivateKey},
-    time::{Clock, IntervalExt, TimeExt},
+    time::{Clock, TimeExt},
     vdaf::VdafInstance,
 };
 use janus_messages::{
@@ -713,15 +713,15 @@ WHERE success = TRUE ORDER BY version DESC LIMIT(1)",
                 "-- put_aggregator_task()
 INSERT INTO tasks (
     task_id, aggregator_role, aggregation_mode, peer_aggregator_endpoint,
-    batch_mode, vdaf, task_start, task_end, report_expiry_age, min_batch_size,
+    batch_mode, vdaf, task_start, task_duration, report_expiry_age, min_batch_size,
     time_precision, tolerable_clock_skew, collector_hpke_config,
-    vdaf_verify_key, task_info, aggregator_auth_token_type,
+    vdaf_verify_key, task_info, deactivate_at, aggregator_auth_token_type,
     aggregator_auth_token, aggregator_auth_token_hash,
     collector_auth_token_type, collector_auth_token_hash, created_at,
     updated_at, updated_by)
 VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
-    $19, $20, $21, $22, $23
+    $19, $20, $21, $22, $23, $24
 )
 ON CONFLICT DO NOTHING",
             )
@@ -742,10 +742,10 @@ ON CONFLICT DO NOTHING",
                         .task_start()
                         .map(|t| t.as_signed_time_precision_units())
                         .transpose()?,
-                    /* task_end */
+                    /* task_duration */
                     &task
-                        .task_end()
-                        .map(|t| t.as_signed_time_precision_units())
+                        .task_interval()
+                        .map(|i| i.duration().as_signed_time_precision_units())
                         .transpose()?,
                     /* report_expiry_age */
                     &task
@@ -775,6 +775,9 @@ ON CONFLICT DO NOTHING",
                     )?,
                     /* task_info */
                     &task.task_info(),
+                    /* deactivate_at */
+                    // Stored as a naive UTC timestamp.
+                    &task.deactivate_at().map(|dt| dt.naive_utc()),
                     /* aggregator_auth_token_type */
                     &task
                         .aggregator_auth_token()
@@ -836,29 +839,36 @@ DELETE FROM tasks WHERE task_id = $1",
         Ok(())
     }
 
-    /// Sets or unsets the end date of a task.
+    /// Sets or clears a task's operational deactivation instant.
+    ///
+    /// This is implementation-specific state and is deliberately *not* part of the task's
+    /// `TaskConfiguration`, so (unlike the validity interval) changing it does not affect HPKE
+    /// AADs. When set and reached (per the aggregator's clock), the aggregator stops accepting
+    /// reports for the task; `None` clears the deactivation.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
-    pub async fn update_task_end(
+    pub async fn set_task_deactivate_at(
         &self,
         task_id: &TaskId,
-        task_end: Option<&Time>,
+        deactivate_at: Option<&DateTime<Utc>>,
     ) -> Result<(), Error> {
         let stmt = self
             .prepare_cached(
-                "-- update_task_end()
-UPDATE tasks SET task_end = $1, updated_at = $2, updated_by = $3
+                "-- set_task_deactivate_at()
+UPDATE tasks SET
+    deactivate_at = $1,
+    updated_at = $2,
+    updated_by = $3
    WHERE task_id = $4",
             )
             .await?;
 
+        // Stored as a naive UTC timestamp.
+        let deactivate_at = deactivate_at.map(|dt| dt.naive_utc());
         check_single_row_mutation(
             self.execute(
                 &stmt,
                 &[
-                    /* task_end */
-                    &task_end
-                        .map(|t| t.as_signed_time_precision_units())
-                        .transpose()?,
+                    /* deactivate_at */ &deactivate_at,
                     /* updated_at */ &self.clock.now(),
                     /* updated_by */ &self.name,
                     /* task_id */ &task_id.as_ref(),
@@ -880,9 +890,9 @@ UPDATE tasks SET task_end = $1, updated_at = $2, updated_by = $3
                 "-- get_aggregator_task()
 SELECT
     aggregator_role, aggregation_mode, peer_aggregator_endpoint, batch_mode,
-    vdaf, task_start, task_end, report_expiry_age, min_batch_size,
+    vdaf, task_start, task_duration, report_expiry_age, min_batch_size,
     time_precision, tolerable_clock_skew, collector_hpke_config,
-    vdaf_verify_key, task_info, aggregator_auth_token_type,
+    vdaf_verify_key, task_info, deactivate_at, aggregator_auth_token_type,
     aggregator_auth_token, aggregator_auth_token_hash,
     collector_auth_token_type, collector_auth_token_hash
 FROM tasks WHERE task_id = $1",
@@ -903,9 +913,9 @@ FROM tasks WHERE task_id = $1",
                 "-- get_aggregator_tasks()
 SELECT
     task_id, aggregator_role, aggregation_mode, peer_aggregator_endpoint,
-    batch_mode, vdaf, task_start, task_end, report_expiry_age, min_batch_size,
+    batch_mode, vdaf, task_start, task_duration, report_expiry_age, min_batch_size,
     time_precision, tolerable_clock_skew, collector_hpke_config,
-    vdaf_verify_key, task_info, aggregator_auth_token_type,
+    vdaf_verify_key, task_info, deactivate_at, aggregator_auth_token_type,
     aggregator_auth_token, aggregator_auth_token_hash,
     collector_auth_token_type, collector_auth_token_hash
 FROM tasks",
@@ -932,9 +942,11 @@ FROM tasks",
         let task_start = row
             .get_nullable_bigint_and_convert("task_start")?
             .map(Time::from_time_precision_units);
-        let task_end = row
-            .get_nullable_bigint_and_convert("task_end")?
-            .map(Time::from_time_precision_units);
+        let task_duration = row
+            .get_nullable_bigint_and_convert("task_duration")?
+            .map(Duration::from_time_precision_units);
+        let task_interval = task::reconstruct_task_interval(task_start, task_duration)
+            .map_err(|e| Error::DbState(format!("task row has invalid validity interval: {e}")))?;
         let report_expiry_age = row
             .get_nullable_bigint_and_convert("report_expiry_age")?
             .map(|s| Duration::from_seconds(s, &time_precision));
@@ -957,7 +969,11 @@ FROM tasks",
                 &encrypted_vdaf_verify_key,
             )
             .map(SecretBytes::new)?;
-        let task_info: Option<Vec<u8>> = row.get("task_info");
+        let task_info: Vec<u8> = row.get("task_info");
+        // Stored as a naive UTC timestamp.
+        let deactivate_at = row
+            .get::<_, Option<NaiveDateTime>>("deactivate_at")
+            .map(|dt| dt.and_utc());
 
         let aggregator_auth_token_type: Option<AuthenticationTokenType> =
             row.get("aggregator_auth_token_type");
@@ -1029,23 +1045,21 @@ FROM tasks",
             }
         };
 
-        let mut task = AggregatorTask::new(
+        let task = AggregatorTask::new(
             *task_id,
             peer_aggregator_endpoint,
             batch_mode,
             vdaf,
             vdaf_verify_key,
-            task_start,
-            task_end,
+            task_interval,
             report_expiry_age,
             min_batch_size,
             time_precision,
             tolerable_clock_skew,
+            task_info,
             aggregator_parameters,
-        )?;
-        if let Some(task_info) = task_info {
-            task = task.with_task_info(task_info);
-        }
+        )?
+        .with_deactivate_at(deactivate_at);
         Ok(task)
     }
 

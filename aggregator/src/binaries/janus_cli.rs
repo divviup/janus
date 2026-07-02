@@ -1624,7 +1624,9 @@ mod tests {
     max_measurement: 4096
   role: Leader
   vdaf_verify_key:
-  task_end: 9000000000
+  task_info: dGFzay1pbmZv
+  task_start: 0
+  task_duration: 9000000000
   min_batch_size: 10
   time_precision: 300
   tolerable_clock_skew: 600
@@ -1648,7 +1650,9 @@ mod tests {
     max_measurement: 4096
   role: Helper
   vdaf_verify_key:
-  task_end: 9000000000
+  task_info: dGFzay1pbmZv
+  task_start: 0
+  task_duration: 9000000000
   min_batch_size: 10
   time_precision: 300
   tolerable_clock_skew: 600

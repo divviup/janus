@@ -57,9 +57,7 @@ impl TaskConfiguration {
         vdaf_config: VdafConfig,
         extensions: Vec<TaskExtension>,
     ) -> Result<Self, Error> {
-        if task_info.is_empty() {
-            return Err(Error::InvalidParameter("task_info must not be empty"));
-        }
+        // task_info may be empty: DAP-19 (draft-ietf-ppm-dap#787) relaxes the bound to <0..255>.
         if task_info.len() > u8::MAX as usize {
             return Err(Error::InvalidParameter(
                 "task_info must not exceed 255 bytes",
@@ -155,12 +153,8 @@ impl Encode for TaskConfiguration {
 
 impl Decode for TaskConfiguration {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        // task_info may be empty: DAP-19 (draft-ietf-ppm-dap#787) relaxes the bound to <0..255>.
         let task_info = decode_u8_items(&(), bytes)?;
-        if task_info.is_empty() {
-            return Err(CodecError::Other(
-                anyhow!("task_info must not be empty").into(),
-            ));
-        }
         let leader_aggregator_endpoint = Url::decode(bytes)?;
         let helper_aggregator_endpoint = Url::decode(bytes)?;
         let time_precision = TimePrecision::decode(bytes)?;

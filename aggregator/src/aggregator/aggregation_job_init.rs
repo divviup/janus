@@ -409,7 +409,7 @@ where
                                 .report_share()
                                 .metadata()
                                 .time()
-                                .is_before(task_start)
+                                .is_before(&task_start)
                             {
                                 return Err(ReportError::TaskNotStarted);
                             }
@@ -421,7 +421,19 @@ where
                     // of the task_end time. (§4.6.2.4 step 4 [dap-16])
                     let shares = shares.and_then(|shares| {
                         if let Some(task_end) = task.task_end() {
-                            if verify_init.report_share().metadata().time().ge(task_end) {
+                            if verify_init.report_share().metadata().time().ge(&task_end) {
+                                return Err(ReportError::TaskExpired);
+                            }
+                        }
+                        Ok(shares)
+                    });
+
+                    // Reject reports once the task has been deactivated. This is Janus-specific
+                    // (not part of the task's TaskConfiguration/AAD) and is compared against
+                    // the aggregator's current clock, not the report timestamp.
+                    let shares = shares.and_then(|shares| {
+                        if let Some(deactivate_at) = task.deactivate_at() {
+                            if now >= deactivate_at {
                                 return Err(ReportError::TaskExpired);
                             }
                         }
@@ -723,8 +735,8 @@ mod tests {
     };
     use janus_messages::{
         AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, Duration, Extension,
-        ExtensionType, MediaType, PartialBatchSelector, ReportError, ReportMetadata, TimePrecision,
-        VerifyResp, VerifyStepResult, batch_mode::TimeInterval,
+        ExtensionType, Interval, MediaType, PartialBatchSelector, ReportError, ReportMetadata,
+        TimePrecision, VerifyResp, VerifyStepResult, batch_mode::TimeInterval,
     };
     use prio::{
         codec::Encode,
@@ -1225,7 +1237,15 @@ mod tests {
         .with_time_precision(time_precision)
         .with_tolerable_clock_skew(Duration::from_seconds(500, &time_precision))
         .with_aggregator_auth_token(AuthenticationToken::Bearer(random()))
-        .with_task_end(Some(task_end_time))
+        .with_task_interval(Some(
+            Interval::new(
+                task_end_time
+                    .sub_duration(&Duration::from_seconds(1000, &time_precision))
+                    .unwrap(),
+                Duration::from_seconds(1000, &time_precision),
+            )
+            .unwrap(),
+        ))
         .build();
         let helper_task = task.helper_view().unwrap();
         let ephemeral_datastore = ephemeral_datastore().await;
@@ -1367,7 +1387,13 @@ mod tests {
         .with_time_precision(time_precision)
         .with_tolerable_clock_skew(Duration::from_seconds(500, &time_precision))
         .with_aggregator_auth_token(AuthenticationToken::Bearer(random()))
-        .with_task_start(Some(task_start_time))
+        .with_task_interval(Some(
+            Interval::new(
+                task_start_time,
+                Duration::from_seconds(2000, &time_precision),
+            )
+            .unwrap(),
+        ))
         .build();
         let helper_task = task.helper_view().unwrap();
         let ephemeral_datastore = ephemeral_datastore().await;

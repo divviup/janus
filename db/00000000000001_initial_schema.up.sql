@@ -107,15 +107,19 @@ CREATE TABLE tasks(
     batch_mode                  JSONB NOT NULL,            -- the batch mode in use for this task, along with its parameters
     aggregation_mode            AGGREGATION_MODE,          -- the aggregation mode in use for this task (populated for Helper only)
     vdaf                        JSON NOT NULL,             -- the VDAF instance in use for this task, along with its parameters
+    -- The task's validity interval, stored as a start instant and a duration, both in time
+    -- precision increments. A half-open interval is not representable: task_start and task_duration
+    -- are either both NULL (no time bounds) or both set.
     task_start                  BIGINT,                    -- the time before which client reports are not accepted, in time precision increments
-    task_end                    BIGINT,                    -- the time after which client reports are no longer accepted, in time precision increments
+    task_duration               BIGINT,                    -- the length of the task's validity interval, in time precision increments
     report_expiry_age           BIGINT,                    -- the maximum age of a report before it is considered expired (and acceptable for garbage collection), in seconds. NULL means that GC is disabled.
     min_batch_size              BIGINT NOT NULL,           -- the minimum number of reports in a batch to allow it to be collected
     time_precision              BIGINT NOT NULL,           -- the duration to which clients are expected to round their report timestamps, in seconds
     tolerable_clock_skew        BIGINT NOT NULL,           -- the maximum acceptable clock skew to allow between client and aggregator, in seconds
     collector_hpke_config       BYTEA,                     -- the HPKE config of the collector (encoded HpkeConfig message)
     vdaf_verify_key             BYTEA NOT NULL,            -- the VDAF verification key (encrypted)
-    task_info                   BYTEA,                     -- the task_info field of a TaskConfiguration structure; NULL for API-provisioned tasks, which have no TaskConfiguration
+    task_info                   BYTEA NOT NULL,            -- the task_info field of a TaskConfiguration structure; at most 255 bytes
+    deactivate_at               TIMESTAMP,                 -- stop accepting reports at this time (or null). (Janus-specific)
 
     -- Authentication token used to authenticate messages to/from the other aggregator.
     -- These columns are NULL if the task was provisioned by taskprov.
@@ -137,6 +141,13 @@ CREATE TABLE tasks(
     collector_auth_token_hash   BYTEA,              -- hash of the token
     -- The collector_auth_token columns must either both be NULL or both be non-NULL
     CONSTRAINT collector_auth_token_null CHECK ((collector_auth_token_type IS NULL) = (collector_auth_token_hash IS NULL)),
+
+    -- The task's validity interval is all-or-nothing, and its duration is non-negative.
+    CONSTRAINT task_interval_null CHECK ((task_start IS NULL) = (task_duration IS NULL)),
+    CONSTRAINT task_duration_non_negative CHECK (task_duration IS NULL OR task_duration >= 0),
+    -- task_info is the at-most-255-byte task_info field of a TaskConfiguration; it may be empty
+    -- (DAP-19, draft-ietf-ppm-dap#787 relaxes the bound to <0..255>).
+    CONSTRAINT task_info_length CHECK (octet_length(task_info) <= 255),
 
     -- creation/update records
     created_at TIMESTAMP WITH TIME ZONE NOT NULL,  -- when the row was created

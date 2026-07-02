@@ -28,7 +28,7 @@ use janus_core::{
     auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
     time::RealClock,
 };
-use janus_messages::{Duration, HpkeConfig, Time, TimePrecision};
+use janus_messages::{Duration, HpkeConfig, Interval, Time, TimePrecision};
 use prio::codec::Decode;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -120,23 +120,41 @@ async fn handle_add_task(
         }
     };
 
+    // The interop API supplies task_start and task_end (both seconds since the epoch); a task is
+    // valid only if both or neither are present, mirroring the all-or-nothing validity interval.
+    let task_interval = match (request.task_start, request.task_end) {
+        (Some(start), Some(end)) => {
+            let start = Time::from_seconds_since_epoch(start, &time_precision);
+            let end = Time::from_seconds_since_epoch(end, &time_precision);
+            let duration = Duration::from_time_precision_units(
+                end.as_time_precision_units()
+                    .checked_sub(start.as_time_precision_units())
+                    .context("task_end must not be before task_start")?,
+            );
+            Some(Interval::new(start, duration).context("error constructing task interval")?)
+        }
+        (None, None) => None,
+        _ => {
+            return Err(anyhow::anyhow!(
+                "task_start and task_end must both be set or both be unset"
+            ));
+        }
+    };
+
     let task = AggregatorTask::new(
         request.task_id,
         peer_aggregator_endpoint,
         batch_mode,
         vdaf,
         vdaf_verify_key,
-        request
-            .task_start
-            .map(|t| Time::from_seconds_since_epoch(t, &time_precision)),
-        request
-            .task_end
-            .map(|t| Time::from_seconds_since_epoch(t, &time_precision)),
-        None,
+        task_interval,
+        /* report_expiry_age */ None,
         request.min_batch_size,
         time_precision,
         /* tolerable clock skew */
         Duration::ONE, // Since the clock skew must be a multiple of the precision, start at 1x
+        // The interop test API has no task_info concept, so use a fixed non-empty placeholder.
+        b"task-info".to_vec(),
         aggregator_parameters,
     )
     .context("error constructing task")?;

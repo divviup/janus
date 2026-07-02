@@ -23,7 +23,7 @@ use janus_core::{
         install_test_trace_subscriber,
         runtime::{TestRuntime, TestRuntimeManager},
     },
-    time::{Clock, DateTimeExt, MockClock},
+    time::{Clock, DateTimeExt, MockClock, TimeExt},
     vdaf::{VERIFY_KEY_LENGTH_PRIO3, VdafInstance},
 };
 use janus_messages::{
@@ -544,24 +544,21 @@ async fn upload_report_task_not_started() {
     )
     .await;
 
-    // Set the task start time to the future, and generate & upload a report from before that time.
+    // Task starts an hour from now; report is from before then.
     let time_precision = TimePrecision::from_seconds(100);
+    let hour = Duration::from_seconds(3600, &time_precision);
+    let task_start = clock
+        .now()
+        .add_duration(&hour, &time_precision)
+        .unwrap()
+        .to_time(&time_precision);
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     )
     .with_time_precision(time_precision)
-    .with_task_start(Some(
-        clock
-            .now()
-            .add_duration(
-                &Duration::from_seconds(3600, &time_precision),
-                &time_precision,
-            )
-            .unwrap()
-            .to_time(&time_precision),
-    ))
+    .with_task_interval(Some(Interval::new(task_start, hour).unwrap()))
     .build()
     .leader_view()
     .unwrap();
@@ -623,15 +620,19 @@ async fn upload_report_task_ended() {
     .await;
 
     let precision = TimePrecision::from_seconds(100);
+    let hour = Duration::from_seconds(3600, &precision);
     let task_end_time = clock.now().to_time(&precision);
 
+    // Task started an hour ago and has just ended.
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     )
     .with_time_precision(precision)
-    .with_task_end(Some(task_end_time))
+    .with_task_interval(Some(
+        Interval::new(task_end_time.sub_duration(&hour).unwrap(), hour).unwrap(),
+    ))
     .build()
     .leader_view()
     .unwrap();
@@ -660,6 +661,87 @@ async fn upload_report_task_ended() {
         .wait_for_completed_tasks("aggregator", 1)
         .await;
 
+    let got_counters = datastore
+        .run_unnamed_tx(|tx| {
+            let task_id = *task.id();
+            Box::pin(async move { TaskUploadCounter::load(tx, &task_id).await })
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        got_counters,
+        Some(TaskUploadCounter::new_with_values(
+            0, 0, 0, 0, 0, 0, 0, 0, 1, 0
+        ))
+    )
+}
+
+#[tokio::test]
+async fn upload_report_task_deactivated() {
+    let mut runtime_manager = TestRuntimeManager::new();
+    let UploadTest {
+        aggregator,
+        clock,
+        datastore,
+        ephemeral_datastore: _ephemeral_datastore,
+        hpke_keypair,
+        ..
+    } = UploadTest::new_with_runtime(
+        default_aggregator_config(),
+        runtime_manager.with_label("aggregator"),
+    )
+    .await;
+
+    let precision = TimePrecision::from_seconds(100);
+    let report_time = clock.now().to_time(&precision);
+
+    // A task with no validity interval; only its deactivation will stop uploads.
+    let task = TaskBuilder::new(
+        BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
+        VdafInstance::Prio3Count,
+    )
+    .with_time_precision(precision)
+    .with_task_interval(None)
+    .build()
+    .leader_view()
+    .unwrap();
+    datastore.put_aggregator_task(&task).await.unwrap();
+
+    // Deactivate the task as of now.
+    let task_id = *task.id();
+    let deactivate_at = clock.now();
+    datastore
+        .run_unnamed_tx(|tx| {
+            Box::pin(async move {
+                tx.set_task_deactivate_at(&task_id, Some(&deactivate_at))
+                    .await
+            })
+        })
+        .await
+        .unwrap();
+
+    let report = create_report(&task, &hpke_keypair, report_time);
+
+    // Try to upload the report; verify that the deactivated task rejects it.
+    let upload_result = aggregator
+        .handle_upload(task.id(), report_stream(report.clone()))
+        .await
+        .unwrap();
+    let result_upload_status = &upload_result.status()[0];
+    assert_matches!(
+        result_upload_status.error(),
+        ReportError::TaskExpired => {
+            assert_eq!(report.metadata().id(), &result_upload_status.report_id());
+        }
+    );
+
+    // Wait for the report writer to have completed one write task.
+    runtime_manager
+        .wait_for_completed_tasks("aggregator", 1)
+        .await;
+
+    // Deactivation reuses the "task ended" upload counter.
     let got_counters = datastore
         .run_unnamed_tx(|tx| {
             let task_id = *task.id();
@@ -995,7 +1077,6 @@ async fn upload_report_duplicate_extensions() {
         VdafInstance::Prio3Count,
     )
     .with_time_precision(time_precision)
-    .with_task_start(None)
     .with_report_expiry_age(Some(Duration::from_seconds(60, &time_precision)))
     .build()
     .leader_view()
@@ -1069,7 +1150,6 @@ async fn upload_report_unsorted_extensions() {
         VdafInstance::Prio3Count,
     )
     .with_time_precision(time_precision)
-    .with_task_start(None)
     .with_report_expiry_age(Some(Duration::from_seconds(60, &time_precision)))
     .build()
     .leader_view()
@@ -1151,7 +1231,6 @@ async fn upload_report_unrecognized_extension() {
             VdafInstance::Prio3Count,
         )
         .with_time_precision(time_precision)
-        .with_task_start(None)
         .with_report_expiry_age(Some(Duration::from_seconds(60, &time_precision)))
         .build()
         .leader_view()

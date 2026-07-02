@@ -4,6 +4,7 @@ use std::{array::TryFromSliceError, str::FromStr};
 
 use anyhow::anyhow;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use chrono::{DateTime, Utc};
 use educe::Educe;
 use janus_core::{
     auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
@@ -11,7 +12,7 @@ use janus_core::{
 };
 use janus_messages::{
     AggregateShareId, AggregationJobId, AggregationJobStep, BatchConfig, Duration, HpkeConfig,
-    Role, TaskId, Time, TimePrecision, batch_mode,
+    Interval, Role, TaskId, Time, TimePrecision, batch_mode,
 };
 use postgres_types::{FromSql, ToSql};
 use rand::{RngExt, distr::StandardUniform, random, rng};
@@ -136,10 +137,10 @@ struct CommonTaskParameters {
     vdaf: VdafInstance,
     /// Secret verification key shared by the aggregators.
     vdaf_verify_key: SecretBytes,
-    /// The time before which the task is considered invalid.
-    task_start: Option<Time>,
-    /// The time after which the task is considered invalid.
-    task_end: Option<Time>,
+    /// The interval of time during which the task is valid. Reports with timestamps before the
+    /// interval's start or at-or-after its end are rejected. `None` indicates that the task has no
+    /// time bounds.
+    task_interval: Option<Interval>,
     /// The age after which a report is considered to be "expired" and will be considered a
     /// candidate for garbage collection. A value of `None` indicates that garbage collection is
     /// disabled.
@@ -152,10 +153,9 @@ struct CommonTaskParameters {
     /// How much clock skew to allow between client and aggregator. Reports from
     /// farther than this duration into the future will be rejected.
     tolerable_clock_skew: Duration,
-    /// The `task_info` byte string from a `TaskConfiguration` struct. `None` for API-provisioned
-    /// tasks, which have no `TaskConfiguration`; used to distinguish tasks with otherwise
-    /// equivalent DAP task parameters.
-    task_info: Option<Vec<u8>>,
+    /// The `task_info` byte string from a `TaskConfiguration` struct, used to distinguish tasks
+    /// with otherwise equivalent DAP task parameters. Must be at most 255 bytes.
+    task_info: Vec<u8>,
 }
 
 impl CommonTaskParameters {
@@ -166,15 +166,22 @@ impl CommonTaskParameters {
         batch_mode: BatchMode,
         vdaf: VdafInstance,
         vdaf_verify_key: SecretBytes,
-        task_start: Option<Time>,
-        task_end: Option<Time>,
+        task_interval: Option<Interval>,
         report_expiry_age: Option<Duration>,
         min_batch_size: u64,
         time_precision: TimePrecision,
         tolerable_clock_skew: Duration,
+        task_info: Vec<u8>,
     ) -> Result<Self, Error> {
         if min_batch_size == 0 {
             return Err(Error::InvalidParameter("min_batch_size"));
+        }
+
+        // task_info may be empty: DAP-19 (draft-ietf-ppm-dap#787) relaxes the bound to <0..255>.
+        if task_info.len() > u8::MAX as usize {
+            return Err(Error::InvalidParameter(
+                "task_info must not exceed 255 bytes",
+            ));
         }
 
         if let BatchMode::LeaderSelected {
@@ -194,20 +201,17 @@ impl CommonTaskParameters {
                 .as_signed_time_precision_units()
                 .map_err(|_| Error::InvalidParameter("report_expiry_age too large"))?;
         }
-        if let Some(task_start) = task_start {
-            task_start
+        // The interval's ordering and half-open-ness are already enforced by `Interval` itself; we
+        // only need to range-check that the start and duration fit in the signed 64-bit DB columns.
+        if let Some(task_interval) = task_interval {
+            task_interval
+                .start()
                 .as_signed_time_precision_units()
-                .map_err(|_| Error::InvalidParameter("task_start out of range"))?;
-        }
-        if let Some(task_end) = task_end {
-            task_end
+                .map_err(|_| Error::InvalidParameter("task_interval start out of range"))?;
+            task_interval
+                .duration()
                 .as_signed_time_precision_units()
-                .map_err(|_| Error::InvalidParameter("task_end out of range"))?;
-        }
-        if let (Some(task_start), Some(task_end)) = (task_start, task_end) {
-            if task_end < task_start {
-                return Err(Error::InvalidParameter("task_end before task_start"));
-            }
+                .map_err(|_| Error::InvalidParameter("task_interval duration out of range"))?;
         }
 
         if time_precision.as_seconds() == 0 {
@@ -219,13 +223,12 @@ impl CommonTaskParameters {
             batch_mode,
             vdaf,
             vdaf_verify_key,
-            task_start,
-            task_end,
+            task_interval,
             report_expiry_age,
             min_batch_size,
             time_precision,
             tolerable_clock_skew,
-            task_info: None,
+            task_info,
         })
     }
 
@@ -252,6 +255,9 @@ pub struct AggregatorTask {
     peer_aggregator_endpoint: Url,
     /// Parameters specific to either aggregator role
     aggregator_parameters: AggregatorTaskParameters,
+    /// Deactivation instant. When set and reached (per the aggregator's clock), the
+    /// aggregator stops accepting reports for this task. This is Janus-specific state.
+    deactivate_at: Option<DateTime<Utc>>,
 }
 
 impl AggregatorTask {
@@ -263,12 +269,12 @@ impl AggregatorTask {
         batch_mode: BatchMode,
         vdaf: VdafInstance,
         vdaf_verify_key: SecretBytes,
-        task_start: Option<Time>,
-        task_end: Option<Time>,
+        task_interval: Option<Interval>,
         report_expiry_age: Option<Duration>,
         min_batch_size: u64,
         time_precision: TimePrecision,
         tolerable_clock_skew: Duration,
+        task_info: Vec<u8>,
         aggregator_parameters: AggregatorTaskParameters,
     ) -> Result<Self, Error> {
         let common_parameters = CommonTaskParameters::new(
@@ -276,12 +282,12 @@ impl AggregatorTask {
             batch_mode,
             vdaf,
             vdaf_verify_key,
-            task_start,
-            task_end,
+            task_interval,
             report_expiry_age,
             min_batch_size,
             time_precision,
             tolerable_clock_skew,
+            task_info,
         )?;
         Self::new_with_common_parameters(
             common_parameters,
@@ -316,6 +322,7 @@ impl AggregatorTask {
             common_parameters,
             peer_aggregator_endpoint,
             aggregator_parameters,
+            deactivate_at: None,
         })
     }
 
@@ -354,14 +361,30 @@ impl AggregatorTask {
         &self.common_parameters.vdaf_verify_key
     }
 
-    /// Retrieves the task start time associated with this task.
-    pub fn task_start(&self) -> Option<&Time> {
-        self.common_parameters.task_start.as_ref()
+    /// Retrieves the validity interval associated with this task, if any.
+    pub fn task_interval(&self) -> Option<&Interval> {
+        self.common_parameters.task_interval.as_ref()
     }
 
-    /// Retrieves the task end time associated with this task.
-    pub fn task_end(&self) -> Option<&Time> {
-        self.common_parameters.task_end.as_ref()
+    /// Retrieves the task start time (the start of the validity interval), if any.
+    pub fn task_start(&self) -> Option<Time> {
+        self.common_parameters.task_interval.map(|i| i.start())
+    }
+
+    /// Retrieves the task end time (the end of the validity interval), if any.
+    pub fn task_end(&self) -> Option<Time> {
+        self.common_parameters.task_interval.map(|i| i.end())
+    }
+
+    /// Retrieves the deactivation instant, if set. (Janus-specific)
+    pub fn deactivate_at(&self) -> Option<DateTime<Utc>> {
+        self.deactivate_at
+    }
+
+    /// Returns this task with its deactivation instant set. (Janus-specific)
+    pub fn with_deactivate_at(mut self, deactivate_at: Option<DateTime<Utc>>) -> Self {
+        self.deactivate_at = deactivate_at;
+        self
     }
 
     /// Retrieves the report expiry age associated with this task.
@@ -507,15 +530,9 @@ impl AggregatorTask {
             .unwrap_or(false)
     }
 
-    /// Set the `task_info` field for this task.
-    pub fn with_task_info(mut self, task_info: Vec<u8>) -> Self {
-        self.common_parameters.task_info = Some(task_info);
-        self
-    }
-
     /// Return the `task_info` field for this task.
-    pub fn task_info(&self) -> Option<&[u8]> {
-        self.common_parameters.task_info.as_deref()
+    pub fn task_info(&self) -> &[u8] {
+        &self.common_parameters.task_info
     }
 }
 
@@ -664,8 +681,9 @@ pub struct SerializedAggregatorTask {
     vdaf: VdafInstance,
     role: Role,
     vdaf_verify_key: Option<String>, // in unpadded base64url
+    task_info: String,               // in unpadded base64url
     task_start: Option<Time>,
-    task_end: Option<Time>,
+    task_duration: Option<Duration>,
     report_expiry_age: Option<Duration>,
     min_batch_size: u64,
     time_precision: TimePrecision,
@@ -723,8 +741,9 @@ impl Serialize for AggregatorTask {
             vdaf: self.vdaf().clone(),
             role: *self.role(),
             vdaf_verify_key: Some(URL_SAFE_NO_PAD.encode(self.opaque_vdaf_verify_key())),
-            task_start: self.task_start().copied(),
-            task_end: self.task_end().copied(),
+            task_info: URL_SAFE_NO_PAD.encode(self.task_info()),
+            task_start: self.task_start(),
+            task_duration: self.task_interval().map(|i| i.duration()),
             report_expiry_age: self.report_expiry_age().copied(),
             min_batch_size: self.min_batch_size(),
             time_precision: *self.time_precision(),
@@ -745,6 +764,27 @@ impl Serialize for AggregatorTask {
                 .cloned(),
         }
         .serialize(serializer)
+    }
+}
+
+/// Reconstructs an optional task validity [`Interval`] from a separately-stored start and duration.
+///
+/// Both must be present (yielding `Some(Interval)`) or both absent (yielding `None`); a lone bound
+/// is rejected, as a half-open task interval is not representable.
+pub fn reconstruct_task_interval(
+    task_start: Option<Time>,
+    task_duration: Option<Duration>,
+) -> Result<Option<Interval>, Error> {
+    match (task_start, task_duration) {
+        (Some(start), Some(duration)) => {
+            Ok(Some(Interval::new(start, duration).map_err(|_| {
+                Error::InvalidParameter("task interval start + duration overflows")
+            })?))
+        }
+        (None, None) => Ok(None),
+        _ => Err(Error::InvalidParameter(
+            "task_start and task_duration must both be set or both be unset",
+        )),
     }
 }
 
@@ -784,18 +824,21 @@ impl TryFrom<SerializedAggregatorTask> for AggregatorTask {
             _ => return Err(Error::InvalidParameter("unexpected role")),
         };
 
+        let task_interval =
+            reconstruct_task_interval(serialized_task.task_start, serialized_task.task_duration)?;
+
         AggregatorTask::new(
             task_id,
             serialized_task.peer_aggregator_endpoint,
             serialized_task.batch_mode,
             serialized_task.vdaf,
             SecretBytes::new(URL_SAFE_NO_PAD.decode(vdaf_verify_key)?),
-            serialized_task.task_start,
-            serialized_task.task_end,
+            task_interval,
             serialized_task.report_expiry_age,
             serialized_task.min_batch_size,
             serialized_task.time_precision,
             serialized_task.tolerable_clock_skew,
+            URL_SAFE_NO_PAD.decode(serialized_task.task_info)?,
             aggregator_parameters,
         )
     }
@@ -823,7 +866,7 @@ pub mod test_util {
     };
     use janus_messages::{
         AggregateShareId, AggregationJobId, AggregationJobStep, CollectionJobId, Duration,
-        HpkeConfigId, Role, TaskId, Time, TimePrecision,
+        HpkeConfigId, Interval, Role, TaskId, Time, TimePrecision,
     };
     use rand::{RngExt, distr::StandardUniform, random, rng};
     use url::Url;
@@ -875,8 +918,7 @@ pub mod test_util {
             helper_aggregation_mode: AggregationMode,
             vdaf: VdafInstance,
             vdaf_verify_key: SecretBytes,
-            task_start: Option<Time>,
-            task_end: Option<Time>,
+            task_interval: Option<Interval>,
             report_expiry_age: Option<Duration>,
             min_batch_size: u64,
             time_precision: TimePrecision,
@@ -904,13 +946,12 @@ pub mod test_util {
                     batch_mode,
                     vdaf,
                     vdaf_verify_key,
-                    task_start,
-                    task_end,
+                    task_interval,
                     report_expiry_age,
                     min_batch_size,
                     time_precision,
                     tolerable_clock_skew,
-                    task_info: None,
+                    task_info: b"task-info".to_vec(),
                 },
                 // Ensure provided aggregator endpoints end with a slash, as we will be joining
                 // additional path segments into these endpoints & the Url::join implementation is
@@ -960,14 +1001,19 @@ pub mod test_util {
             &self.common_parameters.vdaf_verify_key
         }
 
-        /// Retrieves the task start time associated with this task.
-        pub fn task_start(&self) -> Option<&Time> {
-            self.common_parameters.task_start.as_ref()
+        /// Retrieves the validity interval associated with this task, if any.
+        pub fn task_interval(&self) -> Option<&Interval> {
+            self.common_parameters.task_interval.as_ref()
         }
 
-        /// Retrieves the task end time associated with this task.
-        pub fn task_end(&self) -> Option<&Time> {
-            self.common_parameters.task_end.as_ref()
+        /// Retrieves the task start time (the start of the validity interval), if any.
+        pub fn task_start(&self) -> Option<Time> {
+            self.common_parameters.task_interval.map(|i| i.start())
+        }
+
+        /// Retrieves the task end time (the end of the validity interval), if any.
+        pub fn task_end(&self) -> Option<Time> {
+            self.common_parameters.task_interval.map(|i| i.end())
         }
 
         /// Retrieves the report expiry age associated with this task.
@@ -1168,9 +1214,8 @@ pub mod test_util {
                 helper_aggregation_mode,
                 vdaf,
                 vdaf_verify_key,
-                None,
-                None,
-                None,
+                /* task_interval */ None,
+                /* report_expiry_age */ None,
                 /* Min batch size */ 1,
                 /* Time precision */
                 TimePrecision::from_hours(8),
@@ -1337,22 +1382,11 @@ pub mod test_util {
             })
         }
 
-        /// Sets the task start time.
-        pub fn with_task_start(self, task_start: Option<Time>) -> Self {
+        /// Sets the task validity interval.
+        pub fn with_task_interval(self, task_interval: Option<Interval>) -> Self {
             Self(Task {
                 common_parameters: CommonTaskParameters {
-                    task_start,
-                    ..self.0.common_parameters
-                },
-                ..self.0
-            })
-        }
-
-        /// Sets the task end time.
-        pub fn with_task_end(self, task_end: Option<Time>) -> Self {
-            Self(Task {
-                common_parameters: CommonTaskParameters {
-                    task_end,
+                    task_interval,
                     ..self.0.common_parameters
                 },
                 ..self.0
@@ -1372,7 +1406,7 @@ pub mod test_util {
 
         /// Set the `task_info` field for this task.
         pub fn with_task_info(mut self, task_info: Vec<u8>) -> Self {
-            self.0.common_parameters.task_info = Some(task_info);
+            self.0.common_parameters.task_info = task_info;
             self
         }
 
@@ -1409,7 +1443,7 @@ mod tests {
     };
     use janus_messages::{
         BatchConfig, Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId,
-        HpkePublicKey, TaskId, Time, TimePrecision,
+        HpkePublicKey, Interval, TaskId, Time, TimePrecision,
     };
     use rand::random;
     use serde_json::json;
@@ -1418,8 +1452,8 @@ mod tests {
     use crate::{
         SecretBytes,
         task::{
-            AggregationMode, AggregatorTask, AggregatorTaskParameters, BatchMode, VdafInstance,
-            test_util::TaskBuilder,
+            AggregationMode, AggregatorTask, AggregatorTaskParameters, BatchMode, Error,
+            VdafInstance, test_util::TaskBuilder,
         },
     };
 
@@ -1581,45 +1615,64 @@ mod tests {
         assert!(!helper_task.check_aggregator_auth_token(Some(&incorrect_auth_token)));
     }
 
+    /// Builds an [`AggregatorTask`] through the production [`AggregatorTask::new`] constructor
+    /// (which validates `task_info`), with a caller-supplied `task_info` and otherwise fixed
+    /// values.
+    fn aggregator_task_with_task_info(task_info: Vec<u8>) -> Result<AggregatorTask, Error> {
+        let time_precision = TimePrecision::from_seconds(60);
+        AggregatorTask::new(
+            TaskId::from([0; 32]),
+            "https://example.net/".parse().unwrap(),
+            BatchMode::TimeInterval,
+            VdafInstance::Prio3Count,
+            SecretBytes::new(b"1234567812345678".to_vec()),
+            None,
+            None,
+            10,
+            time_precision,
+            Duration::from_seconds(60, &time_precision),
+            task_info,
+            AggregatorTaskParameters::Leader {
+                aggregator_auth_token: AuthenticationToken::new_dap_auth_token_from_string(
+                    "YWdncmVnYXRvciB0b2tlbg",
+                )
+                .unwrap(),
+                collector_auth_token_hash: AuthenticationTokenHash::from(
+                    &AuthenticationToken::new_bearer_token_from_string("Y29sbGVjdG9yIHRva2Vu")
+                        .unwrap(),
+                ),
+                collector_hpke_config: HpkeConfig::new(
+                    HpkeConfigId::from(8),
+                    HpkeKemId::X25519HkdfSha256,
+                    HpkeKdfId::HkdfSha256,
+                    HpkeAeadId::Aes128Gcm,
+                    HpkePublicKey::from(b"collector hpke public key".to_vec()),
+                ),
+            },
+        )
+    }
+
+    #[test]
+    fn task_info_validation() {
+        // Empty is accepted (DAP-19, draft-ietf-ppm-dap#787); oversized rejected; boundaries OK.
+        aggregator_task_with_task_info(Vec::new()).unwrap();
+        assert_matches!(
+            aggregator_task_with_task_info(vec![b'a'; 256]),
+            Err(Error::InvalidParameter(_))
+        );
+        aggregator_task_with_task_info(vec![b'a'; 255]).unwrap();
+        aggregator_task_with_task_info(b"x".to_vec()).unwrap();
+    }
+
     #[test]
     fn aggregator_task_serde() {
         let time_precision = TimePrecision::from_seconds(60);
         assert_tokens(
-            &AggregatorTask::new(
-                TaskId::from([0; 32]),
-                "https://example.net/".parse().unwrap(),
-                BatchMode::TimeInterval,
-                VdafInstance::Prio3Count,
-                SecretBytes::new(b"1234567812345678".to_vec()),
-                None,
-                None,
-                None,
-                10,
-                time_precision,
-                Duration::from_seconds(60, &time_precision),
-                AggregatorTaskParameters::Leader {
-                    aggregator_auth_token: AuthenticationToken::new_dap_auth_token_from_string(
-                        "YWdncmVnYXRvciB0b2tlbg",
-                    )
-                    .unwrap(),
-                    collector_auth_token_hash: AuthenticationTokenHash::from(
-                        &AuthenticationToken::new_bearer_token_from_string("Y29sbGVjdG9yIHRva2Vu")
-                            .unwrap(),
-                    ),
-                    collector_hpke_config: HpkeConfig::new(
-                        HpkeConfigId::from(8),
-                        HpkeKemId::X25519HkdfSha256,
-                        HpkeKdfId::HkdfSha256,
-                        HpkeAeadId::Aes128Gcm,
-                        HpkePublicKey::from(b"collector hpke public key".to_vec()),
-                    ),
-                },
-            )
-            .unwrap(),
+            &aggregator_task_with_task_info(b"task-info".to_vec()).unwrap(),
             &[
                 Token::Struct {
                     name: "SerializedAggregatorTask",
-                    len: 17,
+                    len: 18,
                 },
                 Token::Str("task_id"),
                 Token::Some,
@@ -1646,9 +1699,11 @@ mod tests {
                 Token::Str("vdaf_verify_key"),
                 Token::Some,
                 Token::Str("MTIzNDU2NzgxMjM0NTY3OA"),
+                Token::Str("task_info"),
+                Token::Str("dGFzay1pbmZv"),
                 Token::Str("task_start"),
                 Token::None,
-                Token::Str("task_end"),
+                Token::Str("task_duration"),
                 Token::None,
                 Token::Str("report_expiry_age"),
                 Token::None,
@@ -1738,12 +1793,18 @@ mod tests {
                     dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
                 },
                 SecretBytes::new(b"1234567812345678".to_vec()),
-                Some(Time::from_seconds_since_epoch(1000, &time_precision)),
-                Some(Time::from_seconds_since_epoch(2000, &time_precision)),
+                Some(
+                    Interval::new(
+                        Time::from_seconds_since_epoch(1000, &time_precision),
+                        Duration::from_time_precision_units(17),
+                    )
+                    .unwrap(),
+                ),
                 Some(Duration::from_seconds(1800, &time_precision)),
                 10,
                 time_precision,
                 Duration::from_seconds(60, &time_precision),
+                b"task-info".to_vec(),
                 AggregatorTaskParameters::Helper {
                     aggregator_auth_token_hash: AuthenticationTokenHash::from(
                         &AuthenticationToken::new_bearer_token_from_string(
@@ -1765,7 +1826,7 @@ mod tests {
             &[
                 Token::Struct {
                     name: "SerializedAggregatorTask",
-                    len: 17,
+                    len: 18,
                 },
                 Token::Str("task_id"),
                 Token::Some,
@@ -1816,14 +1877,16 @@ mod tests {
                 Token::Str("vdaf_verify_key"),
                 Token::Some,
                 Token::Str("MTIzNDU2NzgxMjM0NTY3OA"),
+                Token::Str("task_info"),
+                Token::Str("dGFzay1pbmZv"),
                 Token::Str("task_start"),
                 Token::Some,
                 Token::NewtypeStruct { name: "Time" },
                 Token::U64(16),
-                Token::Str("task_end"),
+                Token::Str("task_duration"),
                 Token::Some,
-                Token::NewtypeStruct { name: "Time" },
-                Token::U64(33),
+                Token::NewtypeStruct { name: "Duration" },
+                Token::U64(17),
                 Token::Str("report_expiry_age"),
                 Token::Some,
                 Token::NewtypeStruct { name: "Duration" },

@@ -348,6 +348,9 @@ impl TaskUploadCounters {
             ReportRejectionReason::OutdatedHpkeConfig(_) => entry.increment_report_outdated_key(),
             ReportRejectionReason::TaskNotStarted => entry.increment_task_not_started(),
             ReportRejectionReason::DuplicateExtension => entry.increment_duplicate_extension(),
+            // Operational deactivation reuses the "task ended" counter; it is the same outcome
+            // (the task is no longer accepting reports) from an operator's perspective.
+            ReportRejectionReason::TaskDeactivated => entry.increment_task_ended(),
         }
     }
 
