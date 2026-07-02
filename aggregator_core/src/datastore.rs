@@ -17,7 +17,7 @@ use std::{
 };
 
 use aws_lc_rs::aead::{self, AES_128_GCM, LessSafeKey};
-use chrono::{DateTime, TimeDelta, Utc};
+use chrono::{DateTime, NaiveDateTime, TimeDelta, Utc};
 use futures::future::try_join_all;
 use janus_core::{
     auth_tokens::AuthenticationToken,
@@ -776,7 +776,8 @@ ON CONFLICT DO NOTHING",
                     /* task_info */
                     &task.task_info(),
                     /* deactivate_at */
-                    &task.deactivate_at(),
+                    // Stored as a naive UTC timestamp.
+                    &task.deactivate_at().map(|dt| dt.naive_utc()),
                     /* aggregator_auth_token_type */
                     &task
                         .aggregator_auth_token()
@@ -861,6 +862,8 @@ UPDATE tasks SET
             )
             .await?;
 
+        // Stored as a naive UTC timestamp.
+        let deactivate_at = deactivate_at.map(|dt| dt.naive_utc());
         check_single_row_mutation(
             self.execute(
                 &stmt,
@@ -967,7 +970,10 @@ FROM tasks",
             )
             .map(SecretBytes::new)?;
         let task_info: Vec<u8> = row.get("task_info");
-        let deactivate_at: Option<DateTime<Utc>> = row.get("deactivate_at");
+        // Stored as a naive UTC timestamp.
+        let deactivate_at = row
+            .get::<_, Option<NaiveDateTime>>("deactivate_at")
+            .map(|dt| dt.and_utc());
 
         let aggregator_auth_token_type: Option<AuthenticationTokenType> =
             row.get("aggregator_auth_token_type");

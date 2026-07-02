@@ -119,7 +119,7 @@ CREATE TABLE tasks(
     collector_hpke_config       BYTEA,                     -- the HPKE config of the collector (encoded HpkeConfig message)
     vdaf_verify_key             BYTEA NOT NULL,            -- the VDAF verification key (encrypted)
     task_info                   BYTEA NOT NULL,            -- the task_info field of a TaskConfiguration structure; at most 255 bytes
-    deactivate_at               TIMESTAMP WITH TIME ZONE,  -- stop accepting reports at this time (or null). (Janus-specific)
+    deactivate_at               TIMESTAMP,                 -- stop accepting reports at this time (or null). (Janus-specific)
 
     -- Authentication token used to authenticate messages to/from the other aggregator.
     -- These columns are NULL if the task was provisioned by taskprov.
