@@ -137,6 +137,14 @@ impl TryFrom<&[u8]> for Url {
     }
 }
 
+impl TryFrom<&str> for Url {
+    type Error = CodecError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        Url::try_from(value.as_bytes())
+    }
+}
+
 impl FromStr for Url {
     type Err = CodecError;
 

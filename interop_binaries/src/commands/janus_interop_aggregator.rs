@@ -28,7 +28,7 @@ use janus_core::{
     auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
     time::RealClock,
 };
-use janus_messages::{Duration, HpkeConfig, Interval, Time, TimePrecision};
+use janus_messages::{Duration, HpkeConfig, Interval, Time, TimePrecision, Url as DapUrl};
 use prio::codec::Decode;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -62,10 +62,13 @@ async fn handle_add_task(
     datastore: &Datastore<RealClock>,
     request: AggregatorAddTaskRequest,
 ) -> anyhow::Result<()> {
-    let peer_aggregator_endpoint = match request.role {
+    let peer_aggregator_endpoint: DapUrl = match request.role {
         AggregatorRole::Leader => request.helper,
         AggregatorRole::Helper => request.leader,
-    };
+    }
+    .as_str()
+    .parse()
+    .context("invalid peer aggregator endpoint")?;
     let vdaf = request.vdaf.into();
     let leader_authentication_token =
         AuthenticationToken::new_dap_auth_token_from_string(request.leader_authentication_token)

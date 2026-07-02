@@ -8,11 +8,12 @@ use chrono::{DateTime, Utc};
 use educe::Educe;
 use janus_core::{
     auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
+    url_for_join,
     vdaf::VdafInstance,
 };
 use janus_messages::{
     AggregateShareId, AggregationJobId, AggregationJobStep, BatchConfig, Duration, HpkeConfig,
-    Interval, Role, TaskId, Time, TimePrecision, batch_mode,
+    Interval, Role, TaskId, Time, TimePrecision, Url as DapUrl, batch_mode,
 };
 use postgres_types::{FromSql, ToSql};
 use rand::{RngExt, distr::StandardUniform, random, rng};
@@ -252,7 +253,7 @@ pub struct AggregatorTask {
     common_parameters: CommonTaskParameters,
     /// URL relative to which the peer aggregator's API endpoints are found.
     #[educe(Debug(method(std::fmt::Display::fmt)))]
-    peer_aggregator_endpoint: Url,
+    peer_aggregator_endpoint: DapUrl,
     /// Parameters specific to either aggregator role
     aggregator_parameters: AggregatorTaskParameters,
     /// Deactivation instant. When set and reached (per the aggregator's clock), the
@@ -265,7 +266,7 @@ impl AggregatorTask {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         task_id: TaskId,
-        peer_aggregator_endpoint: Url,
+        peer_aggregator_endpoint: DapUrl,
         batch_mode: BatchMode,
         vdaf: VdafInstance,
         vdaf_verify_key: SecretBytes,
@@ -298,7 +299,7 @@ impl AggregatorTask {
 
     fn new_with_common_parameters(
         common_parameters: CommonTaskParameters,
-        peer_aggregator_endpoint: Url,
+        peer_aggregator_endpoint: DapUrl,
         aggregator_parameters: AggregatorTaskParameters,
     ) -> Result<Self, Error> {
         if let BatchMode::LeaderSelected {
@@ -342,7 +343,7 @@ impl AggregatorTask {
     }
 
     /// Retrieves the peer aggregator endpoint associated with this task.
-    pub fn peer_aggregator_endpoint(&self) -> &Url {
+    pub fn peer_aggregator_endpoint(&self) -> &DapUrl {
         &self.peer_aggregator_endpoint
     }
 
@@ -446,7 +447,7 @@ impl AggregatorTask {
             self.aggregator_parameters,
             AggregatorTaskParameters::Leader { .. }
         ) {
-            let mut uri = self.peer_aggregator_endpoint().join(&format!(
+            let mut uri = url_for_join(self.peer_aggregator_endpoint())?.join(&format!(
                 "{}/aggregation_jobs/{aggregation_job_id}",
                 self.tasks_path()
             ))?;
@@ -471,11 +472,13 @@ impl AggregatorTask {
             self.aggregator_parameters,
             AggregatorTaskParameters::Leader { .. }
         ) {
-            Ok(Some(self.peer_aggregator_endpoint().join(&format!(
-                "{}/aggregate_shares/{}",
-                self.tasks_path(),
-                aggregate_share_id,
-            ))?))
+            Ok(Some(url_for_join(self.peer_aggregator_endpoint())?.join(
+                &format!(
+                    "{}/aggregate_shares/{}",
+                    self.tasks_path(),
+                    aggregate_share_id,
+                ),
+            )?))
         } else {
             Ok(None)
         }
@@ -675,7 +678,7 @@ impl AggregatorTaskParameters {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SerializedAggregatorTask {
     task_id: Option<TaskId>,
-    peer_aggregator_endpoint: Url,
+    peer_aggregator_endpoint: DapUrl,
     batch_mode: BatchMode,
     aggregation_mode: Option<AggregationMode>,
     vdaf: VdafInstance,
@@ -866,7 +869,7 @@ pub mod test_util {
     };
     use janus_messages::{
         AggregateShareId, AggregationJobId, AggregationJobStep, CollectionJobId, Duration,
-        HpkeConfigId, Interval, Role, TaskId, Time, TimePrecision,
+        HpkeConfigId, Interval, Role, TaskId, Time, TimePrecision, Url as DapUrl,
     };
     use rand::{RngExt, distr::StandardUniform, random, rng};
     use url::Url;
@@ -878,6 +881,12 @@ pub mod test_util {
             CommonTaskParameters, Error, VerifyKey,
         },
     };
+
+    /// Converts a routing [`url::Url`] into the [`janus_messages::Url`] the aggregator view stores.
+    /// Test-only: a `url::Url` always serializes to non-empty ASCII, so this cannot fail here.
+    fn to_dap_url(url: &Url) -> DapUrl {
+        DapUrl::try_from(url.as_str().as_bytes()).unwrap()
+    }
 
     /// All parameters and secrets for a task, for all participants.
     #[derive(Clone, Educe, PartialEq, Eq)]
@@ -1124,7 +1133,7 @@ pub mod test_util {
         pub fn leader_view(&self) -> Result<AggregatorTask, Error> {
             AggregatorTask::new_with_common_parameters(
                 self.common_parameters.clone(),
-                self.helper_aggregator_endpoint.clone(),
+                to_dap_url(&self.helper_aggregator_endpoint),
                 AggregatorTaskParameters::Leader {
                     aggregator_auth_token: self.aggregator_auth_token.clone(),
                     collector_auth_token_hash: AuthenticationTokenHash::from(
@@ -1139,7 +1148,7 @@ pub mod test_util {
         pub fn helper_view(&self) -> Result<AggregatorTask, Error> {
             AggregatorTask::new_with_common_parameters(
                 self.common_parameters.clone(),
-                self.leader_aggregator_endpoint.clone(),
+                to_dap_url(&self.leader_aggregator_endpoint),
                 AggregatorTaskParameters::Helper {
                     aggregator_auth_token_hash: AuthenticationTokenHash::from(
                         &self.aggregator_auth_token,
@@ -1154,7 +1163,7 @@ pub mod test_util {
         pub fn taskprov_helper_view(&self) -> Result<AggregatorTask, Error> {
             AggregatorTask::new_with_common_parameters(
                 self.common_parameters.clone(),
-                self.leader_aggregator_endpoint.clone(),
+                to_dap_url(&self.leader_aggregator_endpoint),
                 AggregatorTaskParameters::TaskprovHelper {
                     aggregation_mode: self.helper_aggregation_mode,
                 },
