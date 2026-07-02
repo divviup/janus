@@ -430,7 +430,7 @@ where
 
                     // Reject reports once the task has been deactivated. This is Janus-specific
                     // (not part of the task's TaskConfiguration/AAD) and is compared against
-                    // theaggregator's current clock, not the report timestamp.
+                    // the aggregator's current clock, not the report timestamp.
                     let shares = shares.and_then(|shares| {
                         if let Some(deactivate_at) = task.deactivate_at() {
                             if now >= deactivate_at {
