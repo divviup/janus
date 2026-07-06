@@ -866,9 +866,9 @@ pub mod test_util {
 
     use educe::Educe;
     use janus_core::{
+        UrlExt,
         auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
         hpke::HpkeKeypair,
-        url_ensure_trailing_slash,
         vdaf::VdafInstance,
     };
     use janus_messages::{
@@ -969,8 +969,8 @@ pub mod test_util {
                 // Ensure provided aggregator endpoints end with a slash, as we will be joining
                 // additional path segments into these endpoints & the Url::join implementation is
                 // persnickety about the slash at the end of the path.
-                leader_aggregator_endpoint: url_ensure_trailing_slash(leader_aggregator_endpoint),
-                helper_aggregator_endpoint: url_ensure_trailing_slash(helper_aggregator_endpoint),
+                leader_aggregator_endpoint: leader_aggregator_endpoint.ensure_trailing_slash(),
+                helper_aggregator_endpoint: helper_aggregator_endpoint.ensure_trailing_slash(),
                 helper_aggregation_mode,
                 aggregator_auth_token,
                 collector_auth_token,
@@ -1286,7 +1286,7 @@ pub mod test_util {
         /// Associates the eventual task with the given aggregator endpoint for the Leader.
         pub fn with_leader_aggregator_endpoint(self, leader_aggregator_endpoint: Url) -> Self {
             Self(Task {
-                leader_aggregator_endpoint: url_ensure_trailing_slash(leader_aggregator_endpoint),
+                leader_aggregator_endpoint: leader_aggregator_endpoint.ensure_trailing_slash(),
                 ..self.0
             })
         }
@@ -1294,7 +1294,7 @@ pub mod test_util {
         /// Associates the eventual task with the given aggregator endpoint for the Helper.
         pub fn with_helper_aggregator_endpoint(self, helper_aggregator_endpoint: Url) -> Self {
             Self(Task {
-                helper_aggregator_endpoint: url_ensure_trailing_slash(helper_aggregator_endpoint),
+                helper_aggregator_endpoint: helper_aggregator_endpoint.ensure_trailing_slash(),
                 ..self.0
             })
         }

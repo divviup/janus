@@ -50,16 +50,21 @@ pub mod taskprov {
 /// implemented.
 const DAP_VERSION_IDENTIFIER: &str = "dap-18";
 
-/// Returns the given [`Url`], possibly modified to end with a slash.
-///
-/// Aggregator endpoint URLs should end with a slash if they will be used with [`Url::join`],
-/// because that method will drop the last path component of the base URL if it does not end with a
-/// slash.
-pub fn url_ensure_trailing_slash(mut url: Url) -> Url {
-    if !url.as_str().ends_with('/') {
-        url.set_path(&format!("{}/", url.path()));
+/// Extends [`Url`] with a helper for making a URL safe to use as a [`Url::join`] base.
+pub trait UrlExt {
+    /// Returns this URL, modified to end with a slash if it does not already.
+    ///
+    /// A base URL must end with a slash for [`Url::join`] to preserve its last path component.
+    fn ensure_trailing_slash(self) -> Self;
+}
+
+impl UrlExt for Url {
+    fn ensure_trailing_slash(mut self) -> Self {
+        if !self.as_str().ends_with('/') {
+            self.set_path(&format!("{}/", self.path()));
+        }
+        self
     }
-    url
 }
 
 /// Converts a [`janus_messages::Url`] into a [`url::Url`] ready for [`Url::join`], ensuring a
@@ -69,7 +74,7 @@ pub fn url_ensure_trailing_slash(mut url: Url) -> Url {
 /// [`janus_messages::Url`] — its exact bytes are bound into HPKE AADs and must not be re-encoded
 /// (DAP-18 §4.1).
 pub fn url_for_join(url: &janus_messages::Url) -> Result<Url, url::ParseError> {
-    Ok(url_ensure_trailing_slash(Url::try_from(url)?))
+    Ok(Url::try_from(url)?.ensure_trailing_slash())
 }
 
 /// Choose aws-lc-rs as the default rustls crypto provider. This is what's currently enabled by the
