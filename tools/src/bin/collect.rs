@@ -27,6 +27,7 @@ use prio::{
 use rand::random;
 use tracing_log::LogTracer;
 use tracing_subscriber::{EnvFilter, Registry, prelude::*};
+use url::Url;
 
 /// Enum to propagate errors through this program. Clap errors are handled separately from all
 /// others because [`clap::Error::exit`] takes care of its own error formatting, command-line help,
@@ -135,6 +136,14 @@ fn private_collector_credential_parser(
     s: &str,
 ) -> Result<PrivateCollectorCredential, serde_json::Error> {
     serde_json::from_str(s)
+}
+
+/// Parses an endpoint into a byte-preserving [`DapUrl`], rejecting a value that is not a parseable
+/// URL. The exact bytes are kept for later HPKE AAD binding (`DapUrl` alone only checks ASCII); the
+/// `url::Url` parse is a discarded validity gate.
+fn leader_endpoint_parser(s: &str) -> Result<DapUrl, anyhow::Error> {
+    Url::parse(s)?;
+    Ok(DapUrl::try_from(s)?)
 }
 
 #[derive(Debug, Args, PartialEq, Eq)]
@@ -286,7 +295,12 @@ struct Options {
     #[clap(long, help_heading = "DAP Task Parameters", display_order = 0)]
     task_id: TaskId,
     /// The leader aggregator's endpoint URL
-    #[clap(long, help_heading = "DAP Task Parameters", display_order = 1)]
+    #[clap(
+        long,
+        value_parser = leader_endpoint_parser,
+        help_heading = "DAP Task Parameters",
+        display_order = 1
+    )]
     leader: DapUrl,
     /// The task's time precision, in seconds
     #[clap(long, help_heading = "DAP Task Parameters", display_order = 2)]
