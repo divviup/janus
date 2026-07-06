@@ -233,7 +233,7 @@ where
     .build()?;
     let agg_param = V::AggregationParam::get_decoded(agg_param_encoded)?;
     let handle = tokio::spawn(async move {
-        let collect_result = collector.collect(query, &agg_param).await?;
+        let collect_result = collector.collection(query, &agg_param).collect().await?;
         let (interval_start, interval_duration) = collect_result.interval();
         Ok(CollectResult {
             partial_batch_selector: batch_convert_fn(collect_result.partial_batch_selector()),

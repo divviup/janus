@@ -544,7 +544,8 @@ where
     V::AggregateResult: Debug,
 {
     let collection = new_collector(options, vdaf, http_client)?
-        .collect(query, agg_param)
+        .collection(query, agg_param)
+        .collect()
         .await
         .map_err(|err| Error::Anyhow(err.into()))?;
     print_collection::<V, B>(collection)?;
@@ -563,7 +564,9 @@ where
     V::AggregateResult: Debug,
 {
     let collection = new_collector(options, vdaf, http_client)?
-        .start_collection_with_id(collection_job_id, query, agg_param)
+        .collection(query, agg_param)
+        .with_id(collection_job_id)
+        .start()
         .await
         .map_err(|err| Error::Anyhow(err.into()))?;
     println!("Job ID: {}", collection.collection_job_id());

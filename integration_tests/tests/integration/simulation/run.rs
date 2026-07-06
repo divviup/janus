@@ -441,7 +441,9 @@ impl Simulation {
                 match self
                     .components
                     .collector
-                    .start_collection_with_id(*collection_job_id, query, &())
+                    .collection(query, &())
+                    .with_id(*collection_job_id)
+                    .start()
                     .await
                 {
                     Ok(collection_job) => {
@@ -457,7 +459,9 @@ impl Simulation {
                 match self
                     .components
                     .collector
-                    .start_collection_with_id(*collection_job_id, query, &())
+                    .collection(query, &())
+                    .with_id(*collection_job_id)
+                    .start()
                     .await
                 {
                     Ok(collection_job) => {

@@ -151,7 +151,8 @@ where
         let query = query.clone();
         async move {
             collector
-                .collect(query.clone(), aggregation_parameter)
+                .collection(query.clone(), aggregation_parameter)
+                .collect()
                 .await
         }
     })
