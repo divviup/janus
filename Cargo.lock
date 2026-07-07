@@ -2641,7 +2641,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "janus_aggregator"
-version = "0.7.128"
+version = "0.7.129"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -2666,7 +2666,7 @@ dependencies = [
  "janus_aggregator_api",
  "janus_aggregator_core",
  "janus_core",
- "janus_messages 0.7.128",
+ "janus_messages 0.7.129",
  "k8s-openapi",
  "kube",
  "mockito",
@@ -2727,7 +2727,7 @@ dependencies = [
 
 [[package]]
 name = "janus_aggregator_api"
-version = "0.7.128"
+version = "0.7.129"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -2739,7 +2739,7 @@ dependencies = [
  "git-version",
  "janus_aggregator_core",
  "janus_core",
- "janus_messages 0.7.128",
+ "janus_messages 0.7.129",
  "opentelemetry",
  "querystring",
  "rand 0.8.6",
@@ -2760,7 +2760,7 @@ dependencies = [
 
 [[package]]
 name = "janus_aggregator_core"
-version = "0.7.128"
+version = "0.7.129"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -2781,7 +2781,7 @@ dependencies = [
  "itertools 0.15.0",
  "janus_aggregator_core",
  "janus_core",
- "janus_messages 0.7.128",
+ "janus_messages 0.7.129",
  "k8s-openapi",
  "kube",
  "opentelemetry",
@@ -2814,7 +2814,7 @@ dependencies = [
 
 [[package]]
 name = "janus_client"
-version = "0.7.128"
+version = "0.7.129"
 dependencies = [
  "assert_matches",
  "backoff",
@@ -2824,7 +2824,7 @@ dependencies = [
  "http",
  "itertools 0.15.0",
  "janus_core",
- "janus_messages 0.7.128",
+ "janus_messages 0.7.129",
  "mockito",
  "ohttp",
  "prio",
@@ -2840,7 +2840,7 @@ dependencies = [
 
 [[package]]
 name = "janus_collector"
-version = "0.7.128"
+version = "0.7.129"
 dependencies = [
  "assert_matches",
  "backoff",
@@ -2851,7 +2851,7 @@ dependencies = [
  "hpke-dispatch",
  "janus_collector",
  "janus_core",
- "janus_messages 0.7.128",
+ "janus_messages 0.7.129",
  "mockito",
  "prio",
  "rand 0.8.6",
@@ -2867,7 +2867,7 @@ dependencies = [
 
 [[package]]
 name = "janus_core"
-version = "0.7.128"
+version = "0.7.129"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -2885,7 +2885,7 @@ dependencies = [
  "http",
  "http-api-problem",
  "janus_core",
- "janus_messages 0.7.128",
+ "janus_messages 0.7.129",
  "k8s-openapi",
  "kube",
  "mockito",
@@ -2916,7 +2916,7 @@ dependencies = [
 
 [[package]]
 name = "janus_integration_tests"
-version = "0.7.128"
+version = "0.7.129"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -2936,7 +2936,7 @@ dependencies = [
  "janus_collector",
  "janus_core",
  "janus_interop_binaries",
- "janus_messages 0.7.128",
+ "janus_messages 0.7.129",
  "k8s-openapi",
  "kube",
  "opentelemetry",
@@ -2962,7 +2962,7 @@ dependencies = [
 
 [[package]]
 name = "janus_interop_binaries"
-version = "0.7.128"
+version = "0.7.129"
 dependencies = [
  "anyhow",
  "backoff",
@@ -2978,7 +2978,7 @@ dependencies = [
  "janus_collector",
  "janus_core",
  "janus_interop_binaries",
- "janus_messages 0.7.128",
+ "janus_messages 0.7.129",
  "prio",
  "rand 0.8.6",
  "regex",
@@ -3018,7 +3018,7 @@ dependencies = [
 
 [[package]]
 name = "janus_messages"
-version = "0.7.128"
+version = "0.7.129"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -3037,7 +3037,7 @@ dependencies = [
 
 [[package]]
 name = "janus_tools"
-version = "0.7.128"
+version = "0.7.129"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -3047,7 +3047,7 @@ dependencies = [
  "fixed",
  "janus_collector",
  "janus_core",
- "janus_messages 0.7.128",
+ "janus_messages 0.7.129",
  "prio",
  "rand 0.8.6",
  "reqwest",
@@ -7251,7 +7251,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.7.128"
+version = "0.7.129"
 dependencies = [
  "anyhow",
  "clap",
