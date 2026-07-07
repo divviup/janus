@@ -163,8 +163,9 @@ fn roundtrip_collection_job_req() {
 }
 
 #[test]
-fn collection_job_req_rejects_unsorted_extensions() {
-    // extension_types 0x0002 then 0x0001 — not strictly increasing.
+fn collection_job_req_decode_is_lenient_about_extension_order() {
+    // Unsorted extension_types (0x0002 before 0x0001) must still decode; ordering is enforced by
+    // the Leader, not here.
     let encoded = hex::decode(concat!(
         concat!(
             "02",   // batch_mode (LeaderSelected)
@@ -180,8 +181,9 @@ fn collection_job_req_rejects_unsorted_extensions() {
     ))
     .unwrap();
 
-    CollectionJobReq::<LeaderSelected>::get_decoded(&encoded)
-        .expect_err("unsorted collection job extensions must be rejected");
+    let req = CollectionJobReq::<LeaderSelected>::get_decoded(&encoded)
+        .expect("structurally valid collection job request must decode");
+    assert_eq!(req.extensions().len(), 2);
 }
 
 #[test]

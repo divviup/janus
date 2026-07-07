@@ -1753,7 +1753,7 @@ impl Encode for CollectionJobExtension {
     }
 
     fn encoded_len(&self) -> Option<usize> {
-        // Type, length prefix, and extension data.
+        // Extra 2 bytes for the data length prefix.
         Some(self.extension_type.encoded_len()? + 2 + self.extension_data.len())
     }
 }
@@ -1889,18 +1889,12 @@ impl<B: BatchMode> Encode for CollectionJobReq<B> {
 
 impl<B: BatchMode> Decode for CollectionJobReq<B> {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        // Extension ordering and support are semantic checks the Leader performs while handling the
+        // request (producing the DAP `invalidExtension`/`unsupportedExtension` errors), so decoding
+        // here is purely structural.
         let query = Query::decode(bytes)?;
         let aggregation_parameter = decode_u32_items(&(), bytes)?;
-        let extensions: Vec<CollectionJobExtension> = decode_u16_items(&(), bytes)?;
-        if !extensions.is_sorted_by(|a, b| a.extension_type() < b.extension_type()) {
-            return Err(CodecError::Other(
-                anyhow!(
-                    "collection job extensions must be in strictly increasing order of \
-                     extension_type"
-                )
-                .into(),
-            ));
-        }
+        let extensions = decode_u16_items(&(), bytes)?;
 
         Ok(Self {
             query,

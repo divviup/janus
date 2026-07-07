@@ -53,10 +53,10 @@ use janus_core::{
 use janus_messages::{
     AggregateShare, AggregateShareAad, AggregateShareId, AggregateShareReq,
     AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq, AggregationJobResp,
-    AggregationJobStep, BatchSelector, CollectionJobId, CollectionJobReq, CollectionJobResp,
-    Duration, ExtensionType, HpkeConfig, HpkeConfigList, InputShareAad, Interval,
-    PartialBatchSelector, PlaintextInputShare, Report, ReportError, ReportUploadStatus, Role,
-    TaskConfiguration, TaskId, UploadErrors, Url as DapUrl, VerifyResp,
+    AggregationJobStep, BatchSelector, CollectionJobExtensionType, CollectionJobId,
+    CollectionJobReq, CollectionJobResp, Duration, ExtensionType, HpkeConfig, HpkeConfigList,
+    InputShareAad, Interval, PartialBatchSelector, PlaintextInputShare, Report, ReportError,
+    ReportUploadStatus, Role, TaskConfiguration, TaskId, UploadErrors, Url as DapUrl, VerifyResp,
     batch_mode::{LeaderSelected, TimeInterval},
     extensions_are_strictly_increasing,
 };
@@ -3169,6 +3169,28 @@ impl VdafOps {
         collection_job_id: &CollectionJobId,
         req: Arc<CollectionJobReq<B>>,
     ) -> Result<Vec<u8>, Error> {
+        // Collection job extensions must be in strictly increasing order of extension type, and
+        // every extension type must be supported (DAP-19 §4.2.2).
+        if !req
+            .extensions()
+            .is_sorted_by(|a, b| a.extension_type() < b.extension_type())
+        {
+            return Err(Error::InvalidExtension(
+                Some(*task.id()),
+                "collection job extensions are not in strictly increasing order of extension type",
+            ));
+        }
+        if req
+            .extensions()
+            .iter()
+            .any(|extension| !extension.extension_type().is_supported())
+        {
+            return Err(Error::UnsupportedExtension(
+                Some(*task.id()),
+                "collection job contains an unsupported extension type",
+            ));
+        }
+
         let aggregation_param = Arc::new(
             A::AggregationParam::get_decoded(req.aggregation_parameter())
                 .map_err(Error::MessageDecode)?,
@@ -4197,6 +4219,18 @@ trait ExtensionTypeExt {
 impl ExtensionTypeExt for ExtensionType {
     fn is_supported(&self) -> bool {
         matches!(self, ExtensionType::Taskbind)
+    }
+}
+
+trait CollectionJobExtensionTypeExt {
+    /// Determines whether a collection job extension type is supported by this implementation.
+    fn is_supported(&self) -> bool;
+}
+
+impl CollectionJobExtensionTypeExt for CollectionJobExtensionType {
+    fn is_supported(&self) -> bool {
+        // No collection job extension types are defined yet, so none are supported.
+        false
     }
 }
 

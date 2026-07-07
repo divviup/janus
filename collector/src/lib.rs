@@ -226,9 +226,6 @@ pub struct CollectionRequestBuilder<'a, V: vdaf::Collector, B: BatchMode> {
 
 impl<'a, V: vdaf::Collector, B: BatchMode> CollectionRequestBuilder<'a, V, B> {
     /// Use a caller-chosen collection job ID instead of a randomly generated one.
-    ///
-    /// Supplying a stable ID is recommended: a randomly generated ID is at risk of being lost if
-    /// the program crashes before [`Self::start`] or [`Self::collect`] returns.
     pub fn with_id(mut self, collection_job_id: CollectionJobId) -> Self {
         self.collection_job_id = Some(collection_job_id);
         self

@@ -51,6 +51,12 @@ pub enum Error {
     /// Corresponds to `invalidMessage` in DAP.
     #[error("task {0:?}: invalid message: {1}")]
     InvalidMessage(Option<TaskId>, &'static str),
+    /// Corresponds to `unsupportedExtension` in DAP.
+    #[error("task {0:?}: unsupported extension: {1}")]
+    UnsupportedExtension(Option<TaskId>, &'static str),
+    /// Corresponds to `invalidExtension` in DAP.
+    #[error("task {0:?}: invalid extension: {1}")]
+    InvalidExtension(Option<TaskId>, &'static str),
     /// Corresponds to `stepMismatch in DAP`
     #[error(
         "task {task_id}: unexpected step in aggregation job {aggregation_job_id} (expected \
@@ -314,6 +320,8 @@ impl Error {
                 _ => "report_rejected",
             },
             Error::InvalidMessage(_, _) => "unrecognized_message",
+            Error::UnsupportedExtension(_, _) => "unsupported_extension",
+            Error::InvalidExtension(_, _) => "invalid_extension",
             Error::StepMismatch { .. } => "step_mismatch",
             Error::UnrecognizedTask(_) => "unrecognized_task",
             Error::UnrecognizedAggregationJob(_, _) => "unrecognized_aggregation_job",

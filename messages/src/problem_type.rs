@@ -74,7 +74,9 @@ impl DapProblemType {
             DapProblemType::BatchOverlap => {
                 "The queried batch overlaps with a previously queried batch."
             }
-            DapProblemType::UnsupportedExtension => "The report includes an unsupported extension.",
+            DapProblemType::UnsupportedExtension => {
+                "The message includes an unsupported extension."
+            }
             DapProblemType::InvalidExtension => {
                 "An extensions list is out of order or contains an invalid extension encoding."
             }
