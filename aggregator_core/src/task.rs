@@ -8,11 +8,12 @@ use chrono::{DateTime, Utc};
 use educe::Educe;
 use janus_core::{
     auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
+    url_for_join,
     vdaf::VdafInstance,
 };
 use janus_messages::{
     AggregateShareId, AggregationJobId, AggregationJobStep, BatchConfig, Duration, HpkeConfig,
-    Interval, Role, TaskId, Time, TimePrecision, batch_mode,
+    Interval, Role, TaskId, Time, TimePrecision, Url as DapUrl, batch_mode,
 };
 use postgres_types::{FromSql, ToSql};
 use rand::{RngExt, distr::StandardUniform, random, rng};
@@ -252,7 +253,7 @@ pub struct AggregatorTask {
     common_parameters: CommonTaskParameters,
     /// URL relative to which the peer aggregator's API endpoints are found.
     #[educe(Debug(method(std::fmt::Display::fmt)))]
-    peer_aggregator_endpoint: Url,
+    peer_aggregator_endpoint: DapUrl,
     /// Parameters specific to either aggregator role
     aggregator_parameters: AggregatorTaskParameters,
     /// Deactivation instant. When set and reached (per the aggregator's clock), the
@@ -265,7 +266,7 @@ impl AggregatorTask {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         task_id: TaskId,
-        peer_aggregator_endpoint: Url,
+        peer_aggregator_endpoint: DapUrl,
         batch_mode: BatchMode,
         vdaf: VdafInstance,
         vdaf_verify_key: SecretBytes,
@@ -298,9 +299,13 @@ impl AggregatorTask {
 
     fn new_with_common_parameters(
         common_parameters: CommonTaskParameters,
-        peer_aggregator_endpoint: Url,
+        peer_aggregator_endpoint: DapUrl,
         aggregator_parameters: AggregatorTaskParameters,
     ) -> Result<Self, Error> {
+        // Reject an unparseable endpoint at construction. Without this check a
+        // malformed endpoint would persist and never surface a user-visible error.
+        Url::try_from(&peer_aggregator_endpoint)?;
+
         if let BatchMode::LeaderSelected {
             batch_time_window_size: Some(batch_time_window_size),
             ..
@@ -342,7 +347,7 @@ impl AggregatorTask {
     }
 
     /// Retrieves the peer aggregator endpoint associated with this task.
-    pub fn peer_aggregator_endpoint(&self) -> &Url {
+    pub fn peer_aggregator_endpoint(&self) -> &DapUrl {
         &self.peer_aggregator_endpoint
     }
 
@@ -446,7 +451,7 @@ impl AggregatorTask {
             self.aggregator_parameters,
             AggregatorTaskParameters::Leader { .. }
         ) {
-            let mut uri = self.peer_aggregator_endpoint().join(&format!(
+            let mut uri = url_for_join(self.peer_aggregator_endpoint())?.join(&format!(
                 "{}/aggregation_jobs/{aggregation_job_id}",
                 self.tasks_path()
             ))?;
@@ -471,11 +476,13 @@ impl AggregatorTask {
             self.aggregator_parameters,
             AggregatorTaskParameters::Leader { .. }
         ) {
-            Ok(Some(self.peer_aggregator_endpoint().join(&format!(
-                "{}/aggregate_shares/{}",
-                self.tasks_path(),
-                aggregate_share_id,
-            ))?))
+            Ok(Some(url_for_join(self.peer_aggregator_endpoint())?.join(
+                &format!(
+                    "{}/aggregate_shares/{}",
+                    self.tasks_path(),
+                    aggregate_share_id,
+                ),
+            )?))
         } else {
             Ok(None)
         }
@@ -675,7 +682,7 @@ impl AggregatorTaskParameters {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SerializedAggregatorTask {
     task_id: Option<TaskId>,
-    peer_aggregator_endpoint: Url,
+    peer_aggregator_endpoint: DapUrl,
     batch_mode: BatchMode,
     aggregation_mode: Option<AggregationMode>,
     vdaf: VdafInstance,
@@ -859,14 +866,14 @@ pub mod test_util {
 
     use educe::Educe;
     use janus_core::{
+        UrlExt,
         auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
         hpke::HpkeKeypair,
-        url_ensure_trailing_slash,
         vdaf::VdafInstance,
     };
     use janus_messages::{
         AggregateShareId, AggregationJobId, AggregationJobStep, CollectionJobId, Duration,
-        HpkeConfigId, Interval, Role, TaskId, Time, TimePrecision,
+        HpkeConfigId, Interval, Role, TaskId, Time, TimePrecision, Url as DapUrl,
     };
     use rand::{RngExt, distr::StandardUniform, random, rng};
     use url::Url;
@@ -878,6 +885,12 @@ pub mod test_util {
             CommonTaskParameters, Error, VerifyKey,
         },
     };
+
+    /// Converts a routing [`url::Url`] into the [`janus_messages::Url`] the aggregator view stores.
+    /// Test-only: a `url::Url` always serializes to non-empty ASCII, so this cannot fail here.
+    fn to_dap_url(url: &Url) -> DapUrl {
+        DapUrl::try_from(url.as_str().as_bytes()).unwrap()
+    }
 
     /// All parameters and secrets for a task, for all participants.
     #[derive(Clone, Educe, PartialEq, Eq)]
@@ -956,8 +969,8 @@ pub mod test_util {
                 // Ensure provided aggregator endpoints end with a slash, as we will be joining
                 // additional path segments into these endpoints & the Url::join implementation is
                 // persnickety about the slash at the end of the path.
-                leader_aggregator_endpoint: url_ensure_trailing_slash(leader_aggregator_endpoint),
-                helper_aggregator_endpoint: url_ensure_trailing_slash(helper_aggregator_endpoint),
+                leader_aggregator_endpoint: leader_aggregator_endpoint.ensure_trailing_slash(),
+                helper_aggregator_endpoint: helper_aggregator_endpoint.ensure_trailing_slash(),
                 helper_aggregation_mode,
                 aggregator_auth_token,
                 collector_auth_token,
@@ -1124,7 +1137,7 @@ pub mod test_util {
         pub fn leader_view(&self) -> Result<AggregatorTask, Error> {
             AggregatorTask::new_with_common_parameters(
                 self.common_parameters.clone(),
-                self.helper_aggregator_endpoint.clone(),
+                to_dap_url(&self.helper_aggregator_endpoint),
                 AggregatorTaskParameters::Leader {
                     aggregator_auth_token: self.aggregator_auth_token.clone(),
                     collector_auth_token_hash: AuthenticationTokenHash::from(
@@ -1139,7 +1152,7 @@ pub mod test_util {
         pub fn helper_view(&self) -> Result<AggregatorTask, Error> {
             AggregatorTask::new_with_common_parameters(
                 self.common_parameters.clone(),
-                self.leader_aggregator_endpoint.clone(),
+                to_dap_url(&self.leader_aggregator_endpoint),
                 AggregatorTaskParameters::Helper {
                     aggregator_auth_token_hash: AuthenticationTokenHash::from(
                         &self.aggregator_auth_token,
@@ -1154,7 +1167,7 @@ pub mod test_util {
         pub fn taskprov_helper_view(&self) -> Result<AggregatorTask, Error> {
             AggregatorTask::new_with_common_parameters(
                 self.common_parameters.clone(),
-                self.leader_aggregator_endpoint.clone(),
+                to_dap_url(&self.leader_aggregator_endpoint),
                 AggregatorTaskParameters::TaskprovHelper {
                     aggregation_mode: self.helper_aggregation_mode,
                 },
@@ -1273,7 +1286,7 @@ pub mod test_util {
         /// Associates the eventual task with the given aggregator endpoint for the Leader.
         pub fn with_leader_aggregator_endpoint(self, leader_aggregator_endpoint: Url) -> Self {
             Self(Task {
-                leader_aggregator_endpoint: url_ensure_trailing_slash(leader_aggregator_endpoint),
+                leader_aggregator_endpoint: leader_aggregator_endpoint.ensure_trailing_slash(),
                 ..self.0
             })
         }
@@ -1281,7 +1294,7 @@ pub mod test_util {
         /// Associates the eventual task with the given aggregator endpoint for the Helper.
         pub fn with_helper_aggregator_endpoint(self, helper_aggregator_endpoint: Url) -> Self {
             Self(Task {
-                helper_aggregator_endpoint: url_ensure_trailing_slash(helper_aggregator_endpoint),
+                helper_aggregator_endpoint: helper_aggregator_endpoint.ensure_trailing_slash(),
                 ..self.0
             })
         }
@@ -1443,7 +1456,7 @@ mod tests {
     };
     use janus_messages::{
         BatchConfig, Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId,
-        HpkePublicKey, Interval, TaskId, Time, TimePrecision,
+        HpkePublicKey, Interval, TaskId, Time, TimePrecision, Url as DapUrl,
     };
     use rand::random;
     use serde_json::json;
@@ -1619,10 +1632,19 @@ mod tests {
     /// (which validates `task_info`), with a caller-supplied `task_info` and otherwise fixed
     /// values.
     fn aggregator_task_with_task_info(task_info: Vec<u8>) -> Result<AggregatorTask, Error> {
+        aggregator_task_with_endpoint("https://example.net/".parse().unwrap(), task_info)
+    }
+
+    /// Builds an [`AggregatorTask`] through the production [`AggregatorTask::new`] constructor,
+    /// with a caller-supplied peer endpoint and `task_info` and otherwise fixed values.
+    fn aggregator_task_with_endpoint(
+        peer_aggregator_endpoint: DapUrl,
+        task_info: Vec<u8>,
+    ) -> Result<AggregatorTask, Error> {
         let time_precision = TimePrecision::from_seconds(60);
         AggregatorTask::new(
             TaskId::from([0; 32]),
-            "https://example.net/".parse().unwrap(),
+            peer_aggregator_endpoint,
             BatchMode::TimeInterval,
             VdafInstance::Prio3Count,
             SecretBytes::new(b"1234567812345678".to_vec()),
@@ -1662,6 +1684,21 @@ mod tests {
         );
         aggregator_task_with_task_info(vec![b'a'; 255]).unwrap();
         aggregator_task_with_task_info(b"x".to_vec()).unwrap();
+    }
+
+    #[test]
+    fn rejects_unparseable_peer_endpoint() {
+        // The endpoint is ASCII (so it is a valid `DapUrl`) but not a parseable URL; construction
+        // must reject it rather than persist it to surface only at request time.
+        assert_matches!(
+            aggregator_task_with_endpoint("not a url".try_into().unwrap(), b"task-info".to_vec()),
+            Err(Error::Url(_))
+        );
+        aggregator_task_with_endpoint(
+            "https://example.net/".try_into().unwrap(),
+            b"task-info".to_vec(),
+        )
+        .unwrap();
     }
 
     #[test]

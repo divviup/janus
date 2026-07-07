@@ -71,6 +71,12 @@ pub struct Url(Vec<u8>);
 
 impl Url {
     const MAX_LEN: usize = 2usize.pow(16) - 1;
+
+    /// Returns the URL as a string slice.
+    pub fn as_str(&self) -> &str {
+        // Unwrap safety: the constructor validates that the contents are ASCII.
+        str::from_utf8(&self.0).unwrap()
+    }
 }
 
 impl Encode for Url {
@@ -85,7 +91,7 @@ impl Encode for Url {
 
 impl Decode for Url {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        Url::try_from(decode_u16_items(&(), bytes)?.as_ref())
+        Url::try_from(decode_u16_items(&(), bytes)?.as_slice())
     }
 }
 
@@ -131,6 +137,22 @@ impl TryFrom<&[u8]> for Url {
     }
 }
 
+impl TryFrom<&str> for Url {
+    type Error = CodecError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        Url::try_from(value.as_bytes())
+    }
+}
+
+impl FromStr for Url {
+    type Err = CodecError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Url::try_from(s.as_bytes())
+    }
+}
+
 impl TryFrom<&Url> for url::Url {
     type Error = url::ParseError;
 
@@ -138,6 +160,43 @@ impl TryFrom<&Url> for url::Url {
         // Unwrap safety: this type can't be constructed without being validated
         // as consisting only of ASCII.
         url::Url::parse(str::from_utf8(&value.0).unwrap())
+    }
+}
+
+/// Serializes as the URL's ASCII string, so serde formats (e.g. the aggregator API's JSON) carry
+/// the exact bytes rather than a re-encoded form.
+impl Serialize for Url {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+struct UrlVisitor;
+
+impl Visitor<'_> for UrlVisitor {
+    type Value = Url;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("an ASCII-encoded URL string")
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<Url, E>
+    where
+        E: de::Error,
+    {
+        Url::try_from(value.as_bytes()).map_err(E::custom)
+    }
+}
+
+impl<'de> Deserialize<'de> for Url {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_str(UrlVisitor)
     }
 }
 

@@ -7,15 +7,14 @@
 //! # Examples
 //!
 //! ```no_run
-//! use url::Url;
 //! use prio::vdaf::prio3::Prio3Histogram;
-//! use janus_messages::{TimePrecision, TaskId};
+//! use janus_messages::{TimePrecision, TaskId, Url};
 //! use std::str::FromStr;
 //!
 //! #[tokio::main]
 //! async fn main() {
-//!     let leader_url = Url::parse("https://leader.example.com/").unwrap();
-//!     let helper_url = Url::parse("https://helper.example.com/").unwrap();
+//!     let leader_url = Url::try_from("https://leader.example.com/").unwrap();
+//!     let helper_url = Url::try_from("https://helper.example.com/").unwrap();
 //!     let vdaf = Prio3Histogram::new_histogram(
 //!         2,
 //!         12,
@@ -58,13 +57,13 @@ use janus_core::{
         ExponentialWithTotalDelayBuilder, http_request_exponential_backoff, retry_http_request,
     },
     time::{Clock, DateTimeExt, RealClock},
-    url_ensure_trailing_slash,
+    url_for_join,
     vdaf::vdaf_application_context,
 };
 use janus_messages::{
     HpkeConfig, HpkeConfigList, InputShareAad, MediaType, PlaintextInputShare, Report, ReportId,
     ReportMetadata, ReportUploadStatus, Role, TaskId, Time, TimePrecision, UploadErrors,
-    UploadRequest,
+    UploadRequest, Url as DapUrl,
 };
 #[cfg(feature = "ohttp")]
 use ohttp::{ClientRequest, KeyConfig};
@@ -163,10 +162,10 @@ struct ClientParameters {
     task_id: TaskId,
     /// URL relative to which the Leader's API endpoints are found.
     #[educe(Debug(method(std::fmt::Display::fmt)))]
-    leader_aggregator_endpoint: Url,
+    leader_aggregator_endpoint: DapUrl,
     /// URL relative to which the Helper's API endpoints are found.
     #[educe(Debug(method(std::fmt::Display::fmt)))]
-    helper_aggregator_endpoint: Url,
+    helper_aggregator_endpoint: DapUrl,
     /// The time precision of the task. This value is shared by all parties in the protocol, and is
     /// used to compute report timestamps.
     time_precision: TimePrecision,
@@ -178,14 +177,16 @@ impl ClientParameters {
     /// Creates a new set of client task parameters.
     pub fn new(
         task_id: TaskId,
-        leader_aggregator_endpoint: Url,
-        helper_aggregator_endpoint: Url,
+        leader_aggregator_endpoint: DapUrl,
+        helper_aggregator_endpoint: DapUrl,
         time_precision: TimePrecision,
     ) -> Self {
+        // Store the endpoints byte-for-byte; trailing-slash normalization happens at join time via
+        // `url_for_join`, so the bytes bound into HPKE AADs stay exactly as provisioned (DAP §4.1).
         Self {
             task_id,
-            leader_aggregator_endpoint: url_ensure_trailing_slash(leader_aggregator_endpoint),
-            helper_aggregator_endpoint: url_ensure_trailing_slash(helper_aggregator_endpoint),
+            leader_aggregator_endpoint,
+            helper_aggregator_endpoint,
             time_precision,
             http_request_retry_parameters: http_request_exponential_backoff(),
         }
@@ -193,7 +194,7 @@ impl ClientParameters {
 
     /// The URL relative to which the API endpoints for the aggregator may be found, if the role is
     /// an aggregator, or an error otherwise.
-    fn aggregator_endpoint(&self, role: &Role) -> Result<&Url, Error> {
+    fn aggregator_endpoint(&self, role: &Role) -> Result<&DapUrl, Error> {
         match role {
             Role::Leader => Ok(&self.leader_aggregator_endpoint),
             Role::Helper => Ok(&self.helper_aggregator_endpoint),
@@ -206,13 +207,12 @@ impl ClientParameters {
     ///
     /// [1]: https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#name-hpke-configuration-request
     fn hpke_config_endpoint(&self, role: &Role) -> Result<Url, Error> {
-        Ok(self.aggregator_endpoint(role)?.join("hpke_config")?)
+        Ok(url_for_join(self.aggregator_endpoint(role)?)?.join("hpke_config")?)
     }
 
     // URI to which reports may be uploaded for the provided task.
     fn reports_resource_uri(&self, task_id: &TaskId) -> Result<Url, Error> {
-        Ok(self
-            .leader_aggregator_endpoint
+        Ok(url_for_join(&self.leader_aggregator_endpoint)?
             .join(&format!("tasks/{task_id}/reports"))?)
     }
 }
@@ -258,8 +258,8 @@ impl<V: vdaf::Client<16>> ClientBuilder<V> {
     /// Construct a [`ClientBuilder`] from its required DAP task parameters.
     pub fn new(
         task_id: TaskId,
-        leader_aggregator_endpoint: Url,
-        helper_aggregator_endpoint: Url,
+        leader_aggregator_endpoint: DapUrl,
+        helper_aggregator_endpoint: DapUrl,
         time_precision: TimePrecision,
         vdaf: V,
     ) -> Self {
@@ -390,7 +390,7 @@ impl<V: vdaf::Client<16>> ClientBuilder<V> {
     /// ```no_run
     /// # use url::Url;
     /// # use prio::vdaf::prio3::Prio3Count;
-    /// # use janus_messages::{TimePrecision, TaskId};
+    /// # use janus_messages::{TimePrecision, TaskId, Url as DapUrl};
     /// # use rand::random;
     /// # use std::str::FromStr;
     ///
@@ -400,8 +400,8 @@ impl<V: vdaf::Client<16>> ClientBuilder<V> {
     ///
     ///     let client = janus_client::Client::builder(
     ///         task_id,
-    ///         Url::parse("https://leader.example.com/").unwrap(),
-    ///         Url::parse("https://helper.example.com/").unwrap(),
+    ///         DapUrl::try_from("https://leader.example.com/").unwrap(),
+    ///         DapUrl::try_from("https://helper.example.com/").unwrap(),
     ///         TimePrecision::from_seconds(1),
     ///         Prio3Count::new_count(2).unwrap(),
     ///     )
@@ -440,8 +440,8 @@ impl<V: vdaf::Client<16>> Client<V> {
     /// Construct a new client from the required set of DAP task parameters.
     pub async fn new(
         task_id: TaskId,
-        leader_aggregator_endpoint: Url,
-        helper_aggregator_endpoint: Url,
+        leader_aggregator_endpoint: DapUrl,
+        helper_aggregator_endpoint: DapUrl,
         time_precision: TimePrecision,
         vdaf: V,
     ) -> Result<Self, Error> {
@@ -468,8 +468,8 @@ impl<V: vdaf::Client<16>> Client<V> {
     )]
     pub fn with_hpke_configs(
         task_id: TaskId,
-        leader_aggregator_endpoint: Url,
-        helper_aggregator_endpoint: Url,
+        leader_aggregator_endpoint: DapUrl,
+        helper_aggregator_endpoint: DapUrl,
         time_precision: TimePrecision,
         vdaf: V,
         leader_hpke_config: HpkeConfig,
@@ -490,8 +490,8 @@ impl<V: vdaf::Client<16>> Client<V> {
     /// parameters.
     pub fn builder(
         task_id: TaskId,
-        leader_aggregator_endpoint: Url,
-        helper_aggregator_endpoint: Url,
+        leader_aggregator_endpoint: DapUrl,
+        helper_aggregator_endpoint: DapUrl,
         time_precision: TimePrecision,
         vdaf: V,
     ) -> ClientBuilder<V> {

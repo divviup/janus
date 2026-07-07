@@ -17,7 +17,7 @@ use janus_core::{
 };
 use janus_messages::{
     CollectionJobId, Duration, HpkeConfig, Interval, PartialBatchSelector, Query, TaskId, Time,
-    TimePrecision,
+    TimePrecision, Url as DapUrl,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
 };
 use prio::{
@@ -136,6 +136,14 @@ fn private_collector_credential_parser(
     s: &str,
 ) -> Result<PrivateCollectorCredential, serde_json::Error> {
     serde_json::from_str(s)
+}
+
+/// Parses an endpoint into a byte-preserving [`DapUrl`], rejecting a value that is not a parseable
+/// URL. The exact bytes are kept for later HPKE AAD binding (`DapUrl` alone only checks ASCII); the
+/// `url::Url` parse is a discarded validity gate.
+fn leader_endpoint_parser(s: &str) -> Result<DapUrl, anyhow::Error> {
+    Url::parse(s)?;
+    Ok(DapUrl::try_from(s)?)
 }
 
 #[derive(Debug, Args, PartialEq, Eq)]
@@ -287,8 +295,13 @@ struct Options {
     #[clap(long, help_heading = "DAP Task Parameters", display_order = 0)]
     task_id: TaskId,
     /// The leader aggregator's endpoint URL
-    #[clap(long, help_heading = "DAP Task Parameters", display_order = 1)]
-    leader: Url,
+    #[clap(
+        long,
+        value_parser = leader_endpoint_parser,
+        help_heading = "DAP Task Parameters",
+        display_order = 1
+    )]
+    leader: DapUrl,
     /// The task's time precision, in seconds
     #[clap(long, help_heading = "DAP Task Parameters", display_order = 2)]
     time_precision: u64,
@@ -697,10 +710,9 @@ mod tests {
         initialize_rustls,
         test_util::install_test_trace_subscriber,
     };
-    use janus_messages::TaskId;
+    use janus_messages::{TaskId, Url as DapUrl};
     use prio::codec::Encode;
     use rand::random;
-    use reqwest::Url;
     use tempfile::NamedTempFile;
 
     use crate::{
@@ -735,7 +747,7 @@ mod tests {
         let encoded_private_key = URL_SAFE_NO_PAD.encode(hpke_keypair.private_key().as_ref());
 
         let task_id = random();
-        let leader = Url::parse("https://example.com/dap/").unwrap();
+        let leader = DapUrl::try_from("https://example.com/dap/").unwrap();
         let auth_token = AuthenticationToken::DapAuth(random());
 
         let expected = Options {
@@ -906,7 +918,7 @@ mod tests {
         let task_id: TaskId = random();
         let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded().unwrap());
 
-        let leader = Url::parse("https://example.com/dap/").unwrap();
+        let leader = DapUrl::try_from("https://example.com/dap/").unwrap();
 
         let hpke_keypair = HpkeKeypair::test();
         let encoded_hpke_config =
@@ -1184,7 +1196,7 @@ mod tests {
     fn hpke_config() {
         let task_id: TaskId = random();
         let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded().unwrap());
-        let leader = Url::parse("https://example.com/dap/").unwrap();
+        let leader = DapUrl::try_from("https://example.com/dap/").unwrap();
         let hpke_keypair = HpkeKeypair::test();
         let encoded_hpke_config =
             URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded().unwrap());
@@ -1257,7 +1269,7 @@ mod tests {
         let encoded_private_key = URL_SAFE_NO_PAD.encode(hpke_keypair.private_key().as_ref());
 
         let task_id = random();
-        let leader = Url::parse("https://example.com/dap/").unwrap();
+        let leader = DapUrl::try_from("https://example.com/dap/").unwrap();
         let auth_token = AuthenticationToken::DapAuth(random());
 
         let mut expected = Options {
@@ -1345,7 +1357,7 @@ mod tests {
         let encoded_private_key = URL_SAFE_NO_PAD.encode(hpke_keypair.private_key().as_ref());
 
         let task_id = random();
-        let leader = Url::parse("https://example.com/dap/").unwrap();
+        let leader = DapUrl::try_from("https://example.com/dap/").unwrap();
         let auth_token = AuthenticationToken::DapAuth(random());
         let collection_job_id = random();
         let expected = Options {

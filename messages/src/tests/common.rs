@@ -19,7 +19,7 @@ fn roundtrip_url() {
         ),
     ] {
         roundtrip_encoding(&[(
-            Url::try_from(test.as_ref()).unwrap(),
+            Url::try_from(test).unwrap(),
             (hex::encode(len) + &hex::encode(test)).as_str(),
         )])
     }
@@ -35,6 +35,21 @@ fn roundtrip_url() {
         Url::get_decoded(&hex::decode("0001FF").unwrap()),
         Err(CodecError::Other(_))
     );
+}
+
+#[test]
+fn url_string_conversions_preserve_bytes() {
+    // Deliberately non-canonical: mixed-case host, no trailing slash. `url::Url` would normalize
+    // these; `janus_messages::Url` must preserve the exact bytes so the value bound into HPKE AADs
+    // is byte-identical to what was provisioned.
+    let raw = "HTTPS://Example.COM/Path";
+    let url = Url::try_from(raw.as_bytes()).unwrap();
+
+    assert_eq!(url.as_str(), raw);
+    assert_eq!(raw.parse::<Url>().unwrap(), url);
+
+    // serde carries the exact string, unchanged.
+    assert_tokens(&url, &[Token::Str(raw)]);
 }
 
 #[test]

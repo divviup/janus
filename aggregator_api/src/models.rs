@@ -15,7 +15,7 @@ use janus_core::{
 };
 use janus_messages::{
     Duration, HpkeAeadId, HpkeConfig, HpkeKdfId, HpkeKemId, Role, TaskId, Time, TimePrecision,
-    batch_mode::Code as SupportedBatchMode,
+    Url as DapUrl, batch_mode::Code as SupportedBatchMode,
 };
 use serde::{Deserialize, Deserializer, Serialize};
 use url::Url;
@@ -66,7 +66,7 @@ pub(crate) struct PostTaskReq {
     /// URL relative to which this task's peer aggregator's DAP API can be found. The peer
     /// aggregator plays the DAP role opposite to the one in the `role` field.
     #[educe(Debug(method(std::fmt::Display::fmt)))]
-    pub(crate) peer_aggregator_endpoint: Url,
+    pub(crate) peer_aggregator_endpoint: DapUrl,
     /// DAP batch mode for this task.
     pub(crate) batch_mode: BatchMode,
     /// Aggregation mode (e.g. synchronous vs asynchronous) for this task. Populated if and only if
@@ -120,7 +120,7 @@ pub(crate) struct TaskResp {
     /// URL relative to which this task's peer aggregator's DAP API can be found. The peer
     /// aggregator plays the DAP role opposite to the one in the `role` field.
     #[educe(Debug(method(std::fmt::Display::fmt)))]
-    pub(crate) peer_aggregator_endpoint: Url,
+    pub(crate) peer_aggregator_endpoint: DapUrl,
     /// DAP batch mode for this task.
     pub(crate) batch_mode: BatchMode,
     /// The VDAF being run by this task.

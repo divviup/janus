@@ -219,8 +219,14 @@ impl Components {
         let http_client = default_http_client().unwrap();
         let client = Client::builder(
             *task.id(),
-            task.leader_aggregator_endpoint().clone(),
-            task.helper_aggregator_endpoint().clone(),
+            task.leader_aggregator_endpoint()
+                .as_str()
+                .try_into()
+                .unwrap(),
+            task.helper_aggregator_endpoint()
+                .as_str()
+                .try_into()
+                .unwrap(),
             *task.time_precision(),
             state.vdaf.clone(),
         )
@@ -327,7 +333,10 @@ impl Components {
 
         let collector = Collector::builder(
             *task.id(),
-            task.leader_aggregator_endpoint().clone(),
+            task.leader_aggregator_endpoint()
+                .as_str()
+                .try_into()
+                .unwrap(),
             task.collector_auth_token().clone(),
             task.collector_hpke_keypair().clone(),
             state.vdaf.clone(),

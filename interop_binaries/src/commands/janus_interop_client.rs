@@ -16,7 +16,7 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use clap::Parser;
 use educe::Educe;
 use janus_core::vdaf::{VdafInstance, new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128};
-use janus_messages::{TaskId, Time, TimePrecision};
+use janus_messages::{TaskId, Time, TimePrecision, Url as DapUrl};
 use prio::{
     codec::Decode,
     field::Field64,
@@ -25,7 +25,6 @@ use prio::{
 };
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
-use url::Url;
 
 use crate::{
     NumberAsString, VdafObject, install_tracing_subscriber,
@@ -60,9 +59,9 @@ where
 struct UploadRequest {
     task_id: String,
     #[educe(Debug(method(std::fmt::Display::fmt)))]
-    leader: Url,
+    leader: DapUrl,
     #[educe(Debug(method(std::fmt::Display::fmt)))]
-    helper: Url,
+    helper: DapUrl,
     vdaf: VdafObject,
     measurement: serde_json::Value,
     #[serde(default)]

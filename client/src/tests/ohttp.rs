@@ -10,7 +10,7 @@ use janus_core::{
     retries::test_util::test_http_request_exponential_backoff,
     test_util::install_test_trace_subscriber,
 };
-use janus_messages::{MediaType, Report, TimePrecision, UploadRequest};
+use janus_messages::{MediaType, Report, TimePrecision, UploadRequest, Url as DapUrl};
 use ohttp::{
     KeyConfig, SymmetricSuite,
     hpke::{Aead, Kdf},
@@ -29,7 +29,7 @@ use crate::{
 
 async fn build_client(server: &mockito::ServerGuard) -> Result<Client<Prio3Count>, Error> {
     let task_id = random();
-    let server_url = Url::parse(&server.url()).unwrap();
+    let server_url = DapUrl::try_from(server.url().as_str()).unwrap();
     let keys_endpoint = Url::parse(format!("{}/ohttp-keys", server.url()).as_str()).unwrap();
     let relay = Url::parse(format!("{}/relay", server.url()).as_str()).unwrap();
 

@@ -15,8 +15,8 @@ fn roundtrip_task_configuration() {
         (
             TaskConfigurationBuilder::new(
                 "foobar".as_bytes().to_vec(),
-                Url::try_from("https://example.com/".as_ref()).unwrap(),
-                Url::try_from("https://another.example.com/".as_ref()).unwrap(),
+                Url::try_from("https://example.com/").unwrap(),
+                Url::try_from("https://another.example.com/").unwrap(),
                 time_precision,
                 10000,
                 BatchConfig::TimeInterval,
@@ -72,8 +72,8 @@ fn roundtrip_task_configuration() {
         (
             TaskConfigurationBuilder::new(
                 "f".as_bytes().to_vec(),
-                Url::try_from("https://example.com/".as_ref()).unwrap(),
-                Url::try_from("https://another.example.com/".as_ref()).unwrap(),
+                Url::try_from("https://example.com/").unwrap(),
+                Url::try_from("https://another.example.com/").unwrap(),
                 TimePrecision::from_seconds(1000),
                 1000,
                 BatchConfig::LeaderSelected,
@@ -489,8 +489,8 @@ fn task_configuration_task_interval() {
 
     let config = TaskConfigurationBuilder::new(
         "test".as_bytes().to_vec(),
-        Url::try_from("https://leader.example.com/".as_ref()).unwrap(),
-        Url::try_from("https://helper.example.com/".as_ref()).unwrap(),
+        Url::try_from("https://leader.example.com/").unwrap(),
+        Url::try_from("https://helper.example.com/").unwrap(),
         time_precision,
         10,
         BatchConfig::TimeInterval,
@@ -508,8 +508,8 @@ fn task_configuration_task_interval() {
     // TaskConfiguration without task_interval extension.
     let config_no_interval = TaskConfigurationBuilder::new(
         "test".as_bytes().to_vec(),
-        Url::try_from("https://leader.example.com/".as_ref()).unwrap(),
-        Url::try_from("https://helper.example.com/".as_ref()).unwrap(),
+        Url::try_from("https://leader.example.com/").unwrap(),
+        Url::try_from("https://helper.example.com/").unwrap(),
         time_precision,
         10,
         BatchConfig::TimeInterval,
@@ -532,8 +532,8 @@ fn task_configuration_rejects_duplicate_extensions() {
     assert!(
         TaskConfiguration::new(
             "test".as_bytes().to_vec(),
-            Url::try_from("https://leader.example.com/".as_ref()).unwrap(),
-            Url::try_from("https://helper.example.com/".as_ref()).unwrap(),
+            Url::try_from("https://leader.example.com/").unwrap(),
+            Url::try_from("https://helper.example.com/").unwrap(),
             time_precision,
             10,
             BatchConfig::TimeInterval,
@@ -551,8 +551,8 @@ fn task_configuration_rejects_duplicate_extensions() {
     assert!(
         TaskConfigurationBuilder::new(
             "test".as_bytes().to_vec(),
-            Url::try_from("https://leader.example.com/".as_ref()).unwrap(),
-            Url::try_from("https://helper.example.com/".as_ref()).unwrap(),
+            Url::try_from("https://leader.example.com/").unwrap(),
+            Url::try_from("https://helper.example.com/").unwrap(),
             time_precision,
             10,
             BatchConfig::TimeInterval,
@@ -579,8 +579,8 @@ fn task_configuration_rejects_out_of_order_extensions() {
     assert!(
         TaskConfiguration::new(
             "test".as_bytes().to_vec(),
-            Url::try_from("https://leader.example.com/".as_ref()).unwrap(),
-            Url::try_from("https://helper.example.com/".as_ref()).unwrap(),
+            Url::try_from("https://leader.example.com/").unwrap(),
+            Url::try_from("https://helper.example.com/").unwrap(),
             TimePrecision::from_seconds(60),
             10,
             BatchConfig::TimeInterval,
@@ -607,8 +607,8 @@ fn with_task_interval_inserts_in_sorted_order() {
     // TaskInterval extension before it, maintaining strictly increasing order.
     let config = TaskConfigurationBuilder::new(
         "test".as_bytes().to_vec(),
-        Url::try_from("https://leader.example.com/".as_ref()).unwrap(),
-        Url::try_from("https://helper.example.com/".as_ref()).unwrap(),
+        Url::try_from("https://leader.example.com/").unwrap(),
+        Url::try_from("https://helper.example.com/").unwrap(),
         time_precision,
         10,
         BatchConfig::TimeInterval,
@@ -648,8 +648,8 @@ fn with_task_interval_rejects_unsorted_caller_extensions() {
     assert!(
         TaskConfigurationBuilder::new(
             "test".as_bytes().to_vec(),
-            Url::try_from("https://leader.example.com/".as_ref()).unwrap(),
-            Url::try_from("https://helper.example.com/".as_ref()).unwrap(),
+            Url::try_from("https://leader.example.com/").unwrap(),
+            Url::try_from("https://helper.example.com/").unwrap(),
             time_precision,
             10,
             BatchConfig::TimeInterval,
@@ -675,8 +675,8 @@ fn task_configuration_rejects_oversized_task_info() {
     let builder = |task_info: Vec<u8>| {
         TaskConfigurationBuilder::new(
             task_info,
-            Url::try_from("https://leader.example.com/".as_ref()).unwrap(),
-            Url::try_from("https://helper.example.com/".as_ref()).unwrap(),
+            Url::try_from("https://leader.example.com/").unwrap(),
+            Url::try_from("https://helper.example.com/").unwrap(),
             TimePrecision::from_seconds(60),
             10,
             BatchConfig::TimeInterval,
@@ -750,8 +750,8 @@ fn unknown_vdaf_config_decodes_from_wire() {
 fn unknown_task_extension_type_in_task_configuration_roundtrips() {
     let config = TaskConfiguration::new(
         "test".as_bytes().to_vec(),
-        Url::try_from("https://leader.example.com/".as_ref()).unwrap(),
-        Url::try_from("https://helper.example.com/".as_ref()).unwrap(),
+        Url::try_from("https://leader.example.com/").unwrap(),
+        Url::try_from("https://helper.example.com/").unwrap(),
         TimePrecision::from_seconds(60),
         10,
         BatchConfig::TimeInterval,
@@ -777,8 +777,8 @@ fn with_task_interval_inserts_after_lower_extensions() {
     // Caller passes [Reserved] (< TaskInterval). Result should be [Reserved, TaskInterval].
     let config = TaskConfigurationBuilder::new(
         "test".as_bytes().to_vec(),
-        Url::try_from("https://leader.example.com/".as_ref()).unwrap(),
-        Url::try_from("https://helper.example.com/".as_ref()).unwrap(),
+        Url::try_from("https://leader.example.com/").unwrap(),
+        Url::try_from("https://helper.example.com/").unwrap(),
         time_precision,
         10,
         BatchConfig::TimeInterval,
@@ -812,8 +812,8 @@ fn builder_task_interval_survives_later_with_extensions() {
     // is tracked separately and inserted at build time regardless of call order.
     let config = TaskConfigurationBuilder::new(
         "test".as_bytes().to_vec(),
-        Url::try_from("https://leader.example.com/".as_ref()).unwrap(),
-        Url::try_from("https://helper.example.com/".as_ref()).unwrap(),
+        Url::try_from("https://leader.example.com/").unwrap(),
+        Url::try_from("https://helper.example.com/").unwrap(),
         time_precision,
         10,
         BatchConfig::TimeInterval,

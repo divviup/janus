@@ -56,7 +56,7 @@ use janus_messages::{
     AggregationJobStep, BatchSelector, CollectionJobId, CollectionJobReq, CollectionJobResp,
     Duration, ExtensionType, HpkeConfig, HpkeConfigList, InputShareAad, Interval,
     PartialBatchSelector, PlaintextInputShare, Report, ReportError, ReportUploadStatus, Role,
-    TaskConfiguration, TaskId, UploadErrors, VerifyResp,
+    TaskConfiguration, TaskId, UploadErrors, Url as DapUrl, VerifyResp,
     batch_mode::{LeaderSelected, TimeInterval},
     extensions_are_strictly_increasing,
 };
@@ -933,7 +933,7 @@ impl<C: Clock> Aggregator<C> {
         task_id: &TaskId,
         task_config: &TaskConfiguration,
         aggregator_auth_token: Option<&AuthenticationToken>,
-    ) -> Result<(&PeerAggregator, Url, Url), Error> {
+    ) -> Result<(&PeerAggregator, DapUrl, DapUrl), Error> {
         let peer_aggregator_url = match peer_role {
             Role::Leader => task_config.leader_aggregator_endpoint(),
             Role::Helper => task_config.helper_aggregator_endpoint(),
@@ -964,8 +964,9 @@ impl<C: Clock> Aggregator<C> {
         );
         Ok((
             peer_aggregator,
-            task_config.leader_aggregator_endpoint().try_into()?,
-            task_config.helper_aggregator_endpoint().try_into()?,
+            // Byte-preserving clones of the wire endpoints (no re-encoding, per DAP-18 §4.1).
+            task_config.leader_aggregator_endpoint().clone(),
+            task_config.helper_aggregator_endpoint().clone(),
         ))
     }
 
