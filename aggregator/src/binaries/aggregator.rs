@@ -15,12 +15,12 @@ use educe::Educe;
 use janus_aggregator_api::{self, aggregator_api_handler};
 use janus_aggregator_core::datastore::Datastore;
 use janus_core::{TokioRuntime, auth_tokens::AuthenticationToken, time::RealClock};
+use janus_messages::Url as DapUrl;
 use opentelemetry::metrics::Meter;
 use sec1::EcPrivateKey;
 use serde::{Deserialize, Deserializer, Serialize, de};
 use tokio::{spawn, sync::watch, time::interval, try_join};
 use tracing::{error, info};
-use url::Url;
 
 use crate::{
     aggregator::{
@@ -250,7 +250,7 @@ pub struct AggregatorApi {
     /// Resource location at which the DAP service managed by this aggregator api can be found
     /// on the public internet. Required.
     #[educe(Debug(method(std::fmt::Display::fmt)))]
-    pub public_dap_url: Url,
+    pub public_dap_url: DapUrl,
 }
 
 fn deserialize_aggregator_api<'de, D>(deserializer: D) -> Result<Option<AggregatorApi>, D::Error>

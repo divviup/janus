@@ -2387,6 +2387,7 @@ fn task_resp_serialization() {
     let task = AggregatorTask::new(
         TaskId::from([0u8; 32]),
         "https://helper.com/".parse().unwrap(),
+        "https://leader.com/".parse().unwrap(),
         BatchMode::LeaderSelected {
             batch_time_window_size: None,
         },

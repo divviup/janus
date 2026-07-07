@@ -62,13 +62,18 @@ async fn handle_add_task(
     datastore: &Datastore<RealClock>,
     request: AggregatorAddTaskRequest,
 ) -> anyhow::Result<()> {
-    let peer_aggregator_endpoint: DapUrl = match request.role {
-        AggregatorRole::Leader => request.helper,
-        AggregatorRole::Helper => request.leader,
-    }
-    .as_str()
-    .parse()
-    .context("invalid peer aggregator endpoint")?;
+    let (peer_endpoint, own_endpoint) = match request.role {
+        AggregatorRole::Leader => (&request.helper, &request.leader),
+        AggregatorRole::Helper => (&request.leader, &request.helper),
+    };
+    let peer_aggregator_endpoint: DapUrl = peer_endpoint
+        .as_str()
+        .parse()
+        .context("invalid peer aggregator endpoint")?;
+    let own_aggregator_endpoint: DapUrl = own_endpoint
+        .as_str()
+        .parse()
+        .context("invalid own aggregator endpoint")?;
     let vdaf = request.vdaf.into();
     let leader_authentication_token =
         AuthenticationToken::new_dap_auth_token_from_string(request.leader_authentication_token)
@@ -147,6 +152,7 @@ async fn handle_add_task(
     let task = AggregatorTask::new(
         request.task_id,
         peer_aggregator_endpoint,
+        own_aggregator_endpoint,
         batch_mode,
         vdaf,
         vdaf_verify_key,

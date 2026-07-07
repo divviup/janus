@@ -254,6 +254,9 @@ pub struct AggregatorTask {
     /// URL relative to which the peer aggregator's API endpoints are found.
     #[educe(Debug(method(std::fmt::Display::fmt)))]
     peer_aggregator_endpoint: DapUrl,
+    /// URL relative to which this aggregator's own API endpoints are found.
+    #[educe(Debug(method(std::fmt::Display::fmt)))]
+    own_aggregator_endpoint: DapUrl,
     /// Parameters specific to either aggregator role
     aggregator_parameters: AggregatorTaskParameters,
     /// Deactivation instant. When set and reached (per the aggregator's clock), the
@@ -267,6 +270,7 @@ impl AggregatorTask {
     pub fn new(
         task_id: TaskId,
         peer_aggregator_endpoint: DapUrl,
+        own_aggregator_endpoint: DapUrl,
         batch_mode: BatchMode,
         vdaf: VdafInstance,
         vdaf_verify_key: SecretBytes,
@@ -293,6 +297,7 @@ impl AggregatorTask {
         Self::new_with_common_parameters(
             common_parameters,
             peer_aggregator_endpoint,
+            own_aggregator_endpoint,
             aggregator_parameters,
         )
     }
@@ -300,11 +305,13 @@ impl AggregatorTask {
     fn new_with_common_parameters(
         common_parameters: CommonTaskParameters,
         peer_aggregator_endpoint: DapUrl,
+        own_aggregator_endpoint: DapUrl,
         aggregator_parameters: AggregatorTaskParameters,
     ) -> Result<Self, Error> {
         // Reject an unparseable endpoint at construction. Without this check a
         // malformed endpoint would persist and never surface a user-visible error.
         Url::try_from(&peer_aggregator_endpoint)?;
+        Url::try_from(&own_aggregator_endpoint)?;
 
         if let BatchMode::LeaderSelected {
             batch_time_window_size: Some(batch_time_window_size),
@@ -326,6 +333,7 @@ impl AggregatorTask {
         Ok(Self {
             common_parameters,
             peer_aggregator_endpoint,
+            own_aggregator_endpoint,
             aggregator_parameters,
             deactivate_at: None,
         })
@@ -349,6 +357,11 @@ impl AggregatorTask {
     /// Retrieves the peer aggregator endpoint associated with this task.
     pub fn peer_aggregator_endpoint(&self) -> &DapUrl {
         &self.peer_aggregator_endpoint
+    }
+
+    /// Retrieves this aggregator's own endpoint associated with this task.
+    pub fn own_aggregator_endpoint(&self) -> &DapUrl {
+        &self.own_aggregator_endpoint
     }
 
     /// Retrieves the batch mode associated with this task.
@@ -683,6 +696,7 @@ impl AggregatorTaskParameters {
 pub struct SerializedAggregatorTask {
     task_id: Option<TaskId>,
     peer_aggregator_endpoint: DapUrl,
+    own_aggregator_endpoint: DapUrl,
     batch_mode: BatchMode,
     aggregation_mode: Option<AggregationMode>,
     vdaf: VdafInstance,
@@ -743,6 +757,7 @@ impl Serialize for AggregatorTask {
         SerializedAggregatorTask {
             task_id: Some(*self.id()),
             peer_aggregator_endpoint: self.peer_aggregator_endpoint().clone(),
+            own_aggregator_endpoint: self.own_aggregator_endpoint().clone(),
             batch_mode: *self.batch_mode(),
             aggregation_mode: self.aggregator_parameters.aggregation_mode().copied(),
             vdaf: self.vdaf().clone(),
@@ -837,6 +852,7 @@ impl TryFrom<SerializedAggregatorTask> for AggregatorTask {
         AggregatorTask::new(
             task_id,
             serialized_task.peer_aggregator_endpoint,
+            serialized_task.own_aggregator_endpoint,
             serialized_task.batch_mode,
             serialized_task.vdaf,
             SecretBytes::new(URL_SAFE_NO_PAD.decode(vdaf_verify_key)?),
@@ -1138,6 +1154,7 @@ pub mod test_util {
             AggregatorTask::new_with_common_parameters(
                 self.common_parameters.clone(),
                 to_dap_url(&self.helper_aggregator_endpoint),
+                to_dap_url(&self.leader_aggregator_endpoint),
                 AggregatorTaskParameters::Leader {
                     aggregator_auth_token: self.aggregator_auth_token.clone(),
                     collector_auth_token_hash: AuthenticationTokenHash::from(
@@ -1153,6 +1170,7 @@ pub mod test_util {
             AggregatorTask::new_with_common_parameters(
                 self.common_parameters.clone(),
                 to_dap_url(&self.leader_aggregator_endpoint),
+                to_dap_url(&self.helper_aggregator_endpoint),
                 AggregatorTaskParameters::Helper {
                     aggregator_auth_token_hash: AuthenticationTokenHash::from(
                         &self.aggregator_auth_token,
@@ -1168,6 +1186,7 @@ pub mod test_util {
             AggregatorTask::new_with_common_parameters(
                 self.common_parameters.clone(),
                 to_dap_url(&self.leader_aggregator_endpoint),
+                to_dap_url(&self.helper_aggregator_endpoint),
                 AggregatorTaskParameters::TaskprovHelper {
                     aggregation_mode: self.helper_aggregation_mode,
                 },
@@ -1553,6 +1572,73 @@ mod tests {
     }
 
     #[test]
+    fn own_endpoint_is_this_aggregators_endpoint() {
+        // Each aggregator's own endpoint is its own side of the pair (not the peer's); a swap here
+        // would produce a mismatched TaskConfiguration and break every AAD decryption.
+        let task = TaskBuilder::new(
+            BatchMode::TimeInterval,
+            AggregationMode::Synchronous,
+            VdafInstance::Prio3Count,
+        )
+        .with_leader_aggregator_endpoint("https://leader.example.com/".parse().unwrap())
+        .with_helper_aggregator_endpoint("https://helper.example.com/".parse().unwrap())
+        .build();
+
+        let leader = task.leader_view().unwrap();
+        assert_eq!(
+            leader.own_aggregator_endpoint().as_str(),
+            "https://leader.example.com/"
+        );
+        assert_eq!(
+            leader.peer_aggregator_endpoint().as_str(),
+            "https://helper.example.com/"
+        );
+
+        let helper = task.helper_view().unwrap();
+        assert_eq!(
+            helper.own_aggregator_endpoint().as_str(),
+            "https://helper.example.com/"
+        );
+        assert_eq!(
+            helper.peer_aggregator_endpoint().as_str(),
+            "https://leader.example.com/"
+        );
+    }
+
+    #[test]
+    fn own_endpoint_stored_verbatim() {
+        // The production constructor must not re-encode the own endpoint: a non-canonical value
+        // (mixed-case host, no trailing slash) is bound verbatim into the task's TaskConfiguration
+        // (DAP-18 §4.1). A `url::Url`-normalizing path would silently canonicalize it.
+        let noncanonical = "https://Example.COM/DAP";
+        let task = TaskBuilder::new(
+            BatchMode::TimeInterval,
+            AggregationMode::Synchronous,
+            VdafInstance::Prio3Count,
+        )
+        .build()
+        .leader_view()
+        .unwrap();
+        let task = AggregatorTask::new(
+            *task.id(),
+            task.peer_aggregator_endpoint().clone(),
+            noncanonical.try_into().unwrap(),
+            *task.batch_mode(),
+            task.vdaf().clone(),
+            task.opaque_vdaf_verify_key().clone(),
+            task.task_interval().copied(),
+            task.report_expiry_age().copied(),
+            task.min_batch_size(),
+            *task.time_precision(),
+            *task.tolerable_clock_skew(),
+            task.task_info().to_vec(),
+            task.aggregator_parameters().clone(),
+        )
+        .unwrap();
+        assert_eq!(task.own_aggregator_endpoint().as_str(), noncanonical);
+    }
+
+    #[test]
     fn aggregator_request_paths() {
         for (prefix, task) in [
             (
@@ -1645,6 +1731,7 @@ mod tests {
         AggregatorTask::new(
             TaskId::from([0; 32]),
             peer_aggregator_endpoint,
+            "https://example.com/".parse().unwrap(),
             BatchMode::TimeInterval,
             VdafInstance::Prio3Count,
             SecretBytes::new(b"1234567812345678".to_vec()),
@@ -1709,13 +1796,15 @@ mod tests {
             &[
                 Token::Struct {
                     name: "SerializedAggregatorTask",
-                    len: 18,
+                    len: 19,
                 },
                 Token::Str("task_id"),
                 Token::Some,
                 Token::Str("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
                 Token::Str("peer_aggregator_endpoint"),
                 Token::Str("https://example.net/"),
+                Token::Str("own_aggregator_endpoint"),
+                Token::Str("https://example.com/"),
                 Token::Str("batch_mode"),
                 Token::UnitVariant {
                     name: "BatchMode",
@@ -1820,6 +1909,7 @@ mod tests {
             &AggregatorTask::new(
                 TaskId::from([255; 32]),
                 "https://example.com/".parse().unwrap(),
+                "https://example.net/".parse().unwrap(),
                 BatchMode::LeaderSelected {
                     batch_time_window_size: None,
                 },
@@ -1863,13 +1953,15 @@ mod tests {
             &[
                 Token::Struct {
                     name: "SerializedAggregatorTask",
-                    len: 18,
+                    len: 19,
                 },
                 Token::Str("task_id"),
                 Token::Some,
                 Token::Str("__________________________________________8"),
                 Token::Str("peer_aggregator_endpoint"),
                 Token::Str("https://example.com/"),
+                Token::Str("own_aggregator_endpoint"),
+                Token::Str("https://example.net/"),
                 Token::Str("batch_mode"),
                 Token::StructVariant {
                     name: "BatchMode",

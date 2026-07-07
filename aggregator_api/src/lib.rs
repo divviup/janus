@@ -20,18 +20,17 @@ use janus_aggregator_core::{
     http_server::{HttpMetrics, http_metrics_middleware},
 };
 use janus_core::{auth_tokens::AuthenticationToken, hpke, http::extract_bearer_token, time::Clock};
-use janus_messages::{HpkeConfigId, RoleParseError, TaskId};
+use janus_messages::{HpkeConfigId, RoleParseError, TaskId, Url as DapUrl};
 use opentelemetry::metrics::Meter;
 use routes::*;
 use tower::ServiceBuilder;
 use tracing::error;
-use url::Url;
 
 /// Represents the configuration for an instance of the Aggregator API.
 #[derive(Clone)]
 pub struct Config {
     pub auth_tokens: Vec<AuthenticationToken>,
-    pub public_dap_url: Url,
+    pub public_dap_url: DapUrl,
 }
 
 /// Content type

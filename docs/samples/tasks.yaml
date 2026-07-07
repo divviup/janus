@@ -9,6 +9,9 @@
   # HTTPS endpoint of the peer aggregator.
   peer_aggregator_endpoint: "https://example.com/"
 
+  # HTTPS endpoint of this aggregator.
+  own_aggregator_endpoint: "https://example.net/"
+
   # The DAP batch mode. See below for an example of a leader-selected task.
   batch_mode: TimeInterval
 
@@ -102,6 +105,7 @@
 
 - task_id: "D-hCKPuqL2oTf7ZVRVyMP5VGt43EAEA8q34mDf6p1JE"
   peer_aggregator_endpoint: "https://example.org/"
+  own_aggregator_endpoint: "https://example.net/"
   batch_mode: !LeaderSelected
     batch_time_window_size: null
   aggregation_mode: Synchronous
