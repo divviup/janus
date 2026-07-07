@@ -105,6 +105,7 @@ CREATE TABLE tasks(
     aggregator_role             AGGREGATOR_ROLE NOT NULL,  -- the role of this aggregator for this task
     peer_aggregator_endpoint    TEXT NOT NULL,             -- peer aggregator's API endpoint
     own_aggregator_endpoint     TEXT NOT NULL,             -- this aggregator's own API endpoint
+    taskprov_task_config        BYTEA,                     -- verbatim wire TaskConfiguration for taskprov tasks (bound into HPKE AADs); NULL for API-provisioned tasks
     batch_mode                  JSONB NOT NULL,            -- the batch mode in use for this task, along with its parameters
     aggregation_mode            AGGREGATION_MODE,          -- the aggregation mode in use for this task (populated for Helper only)
     vdaf                        JSON NOT NULL,             -- the VDAF instance in use for this task, along with its parameters

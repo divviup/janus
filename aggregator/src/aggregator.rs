@@ -851,6 +851,7 @@ impl<C: Clock> Aggregator<C> {
     ) -> Result<(), Error> {
         // The peer is always the Leader here, so `leader_url` is the peer endpoint and `helper_url`
         // is this Helper's own endpoint. Both come byte-preserving from the wire TaskConfiguration.
+        debug_assert_eq!(peer_role, &Role::Leader);
         let (peer_aggregator, leader_url, helper_url) = self
             .taskprov_authorize_request(peer_role, task_id, task_config, aggregator_auth_token)
             .await?;
@@ -897,7 +898,10 @@ impl<C: Clock> Aggregator<C> {
                     )?,
                 },
             )
-            .map_err(|err| Error::InvalidTask(*task_id, OptOutReason::TaskParameters(err)))?,
+            .map_err(|err| Error::InvalidTask(*task_id, OptOutReason::TaskParameters(err)))?
+            // Bind the received TaskConfiguration verbatim into HPKE AADs; it is not
+            // byte-reconstructible from the stored parameters.
+            .with_taskprov_task_config(task_config.clone()),
         );
         self.datastore
             .run_tx("taskprov_put_task", |tx| {

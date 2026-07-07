@@ -28,7 +28,8 @@ use janus_core::{
 use janus_messages::{
     AggregateShareId, AggregationJobId, BatchId, CollectionJobId, Duration, Extension,
     HpkeCiphertext, HpkeConfig, HpkeConfigId, Interval, Query, ReportId, ReportIdChecksum,
-    ReportMetadata, Role, TaskId, Time, TimePrecision, VerifyContinue, VerifyInit, VerifyResp,
+    ReportMetadata, Role, TaskConfiguration, TaskId, Time, TimePrecision, VerifyContinue,
+    VerifyInit, VerifyResp,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
 };
 use leases::{acquired_aggregation_job_from_row, acquired_collection_job_from_row};
@@ -713,8 +714,8 @@ WHERE success = TRUE ORDER BY version DESC LIMIT(1)",
                 "-- put_aggregator_task()
 INSERT INTO tasks (
     task_id, aggregator_role, aggregation_mode, peer_aggregator_endpoint,
-    own_aggregator_endpoint, batch_mode, vdaf, task_start, task_duration,
-    report_expiry_age, min_batch_size,
+    own_aggregator_endpoint, taskprov_task_config, batch_mode, vdaf, task_start,
+    task_duration, report_expiry_age, min_batch_size,
     time_precision, tolerable_clock_skew, collector_hpke_config,
     vdaf_verify_key, task_info, deactivate_at, aggregator_auth_token_type,
     aggregator_auth_token, aggregator_auth_token_hash,
@@ -722,7 +723,7 @@ INSERT INTO tasks (
     updated_at, updated_by)
 VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
-    $19, $20, $21, $22, $23, $24, $25
+    $19, $20, $21, $22, $23, $24, $25, $26
 )
 ON CONFLICT DO NOTHING",
             )
@@ -738,6 +739,11 @@ ON CONFLICT DO NOTHING",
                     &task.peer_aggregator_endpoint().as_str(),
                     /* own_aggregator_endpoint */
                     &task.own_aggregator_endpoint().as_str(),
+                    /* taskprov_task_config */
+                    &task
+                        .taskprov_task_config()
+                        .map(|c| c.get_encoded())
+                        .transpose()?,
                     /* batch_mode */ &Json(task.batch_mode()),
                     /* vdaf */ &Json(task.vdaf()),
                     /* task_start */
@@ -893,7 +899,7 @@ UPDATE tasks SET
                 "-- get_aggregator_task()
 SELECT
     aggregator_role, aggregation_mode, peer_aggregator_endpoint,
-    own_aggregator_endpoint, batch_mode,
+    own_aggregator_endpoint, taskprov_task_config, batch_mode,
     vdaf, task_start, task_duration, report_expiry_age, min_batch_size,
     time_precision, tolerable_clock_skew, collector_hpke_config,
     vdaf_verify_key, task_info, deactivate_at, aggregator_auth_token_type,
@@ -917,7 +923,7 @@ FROM tasks WHERE task_id = $1",
                 "-- get_aggregator_tasks()
 SELECT
     task_id, aggregator_role, aggregation_mode, peer_aggregator_endpoint,
-    own_aggregator_endpoint,
+    own_aggregator_endpoint, taskprov_task_config,
     batch_mode, vdaf, task_start, task_duration, report_expiry_age, min_batch_size,
     time_precision, tolerable_clock_skew, collector_hpke_config,
     vdaf_verify_key, task_info, deactivate_at, aggregator_auth_token_type,
@@ -940,6 +946,10 @@ FROM tasks",
         let aggregator_role: AggregatorRole = row.get("aggregator_role");
         let peer_aggregator_endpoint = row.get::<_, String>("peer_aggregator_endpoint").parse()?;
         let own_aggregator_endpoint = row.get::<_, String>("own_aggregator_endpoint").parse()?;
+        let taskprov_task_config = row
+            .get::<_, Option<Vec<u8>>>("taskprov_task_config")
+            .map(|bytes| TaskConfiguration::get_decoded(&bytes))
+            .transpose()?;
         let batch_mode = row.try_get::<_, Json<task::BatchMode>>("batch_mode")?.0;
         let aggregation_mode: Option<AggregationMode> = row.get("aggregation_mode");
         let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
@@ -1067,6 +1077,10 @@ FROM tasks",
             aggregator_parameters,
         )?
         .with_deactivate_at(deactivate_at);
+        let task = match taskprov_task_config {
+            Some(task_config) => task.with_taskprov_task_config(task_config),
+            None => task,
+        };
         Ok(task)
     }
 

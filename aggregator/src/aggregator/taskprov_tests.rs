@@ -431,7 +431,13 @@ async fn taskprov_aggregate_init() {
                 .eq(&AggregationJobState::AwaitingRequest)
     );
     let got_task = got_task.unwrap();
-    assert_eq!(test.task.taskprov_helper_view().unwrap(), got_task);
+    assert_eq!(
+        test.task
+            .taskprov_helper_view()
+            .unwrap()
+            .with_taskprov_task_config(test.task_config.clone()),
+        got_task
+    );
     assert_eq!(got_task.task_info(), b"foobar".as_slice());
 }
 
@@ -596,7 +602,13 @@ async fn taskprov_aggregate_init_missing_extension() {
                 .state()
                 .eq(&AggregationJobState::Finished)
     );
-    assert_eq!(test.task.taskprov_helper_view().unwrap(), got_task.unwrap());
+    assert_eq!(
+        test.task
+            .taskprov_helper_view()
+            .unwrap()
+            .with_taskprov_task_config(test.task_config.clone()),
+        got_task.unwrap()
+    );
 }
 
 #[tokio::test]
@@ -691,7 +703,13 @@ async fn taskprov_aggregate_init_malformed_extension() {
                 .state()
                 .eq(&AggregationJobState::Finished)
     );
-    assert_eq!(test.task.taskprov_helper_view().unwrap(), got_task.unwrap());
+    assert_eq!(
+        test.task
+            .taskprov_helper_view()
+            .unwrap()
+            .with_taskprov_task_config(test.task_config.clone()),
+        got_task.unwrap()
+    );
 }
 
 /// The helper should not opt out of the task if the current time is past the task end time.

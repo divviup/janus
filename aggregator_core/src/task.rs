@@ -8,12 +8,13 @@ use chrono::{DateTime, Utc};
 use educe::Educe;
 use janus_core::{
     auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
+    task_config::build_task_configuration,
     url_for_join,
     vdaf::VdafInstance,
 };
 use janus_messages::{
     AggregateShareId, AggregationJobId, AggregationJobStep, BatchConfig, Duration, HpkeConfig,
-    Interval, Role, TaskId, Time, TimePrecision, Url as DapUrl, batch_mode,
+    Interval, Role, TaskConfiguration, TaskId, Time, TimePrecision, Url as DapUrl, batch_mode,
 };
 use postgres_types::{FromSql, ToSql};
 use rand::{RngExt, distr::StandardUniform, random, rng};
@@ -33,6 +34,8 @@ pub enum Error {
     AggregatorVerifyKeySize,
     #[error("base64 decode error")]
     Base64Decode(#[from] base64::DecodeError),
+    #[error(transparent)]
+    Message(#[from] janus_messages::Error),
 }
 
 /// Identifiers for batch modes used by a task, along with batch mode-specific configuration.
@@ -58,7 +61,7 @@ pub enum BatchMode {
 
 impl BatchMode {
     /// Returns the [`BatchConfig`] message representation of this batch mode, for inclusion in a
-    /// [`TaskConfiguration`](janus_messages::TaskConfiguration).
+    /// [`TaskConfiguration`].
     ///
     /// This is the inverse of [`BatchMode::try_from(&BatchConfig)`](TryFrom). The
     /// `batch_time_window_size` of [`BatchMode::LeaderSelected`] is a Janus-specific parameter that
@@ -262,6 +265,14 @@ pub struct AggregatorTask {
     /// Deactivation instant. When set and reached (per the aggregator's clock), the
     /// aggregator stops accepting reports for this task. This is Janus-specific state.
     deactivate_at: Option<DateTime<Utc>>,
+    /// For taskprov tasks, the `TaskConfiguration` exactly as received on the wire, bound verbatim
+    /// into HPKE AADs. `None` for API-provisioned tasks, whose `TaskConfiguration` is synthesized
+    /// from the stored parameters. Reconstructing a taskprov config from those parameters is not
+    /// byte-safe (it would drop DP strategies and unknown extensions), so the wire bytes are kept.
+    ///
+    /// Persisted only via the datastore, not [`SerializedAggregatorTask`] (like `deactivate_at`);
+    /// taskprov tasks are never provisioned through that serde form.
+    taskprov_task_config: Option<TaskConfiguration>,
 }
 
 impl AggregatorTask {
@@ -336,6 +347,7 @@ impl AggregatorTask {
             own_aggregator_endpoint,
             aggregator_parameters,
             deactivate_at: None,
+            taskprov_task_config: None,
         })
     }
 
@@ -362,6 +374,61 @@ impl AggregatorTask {
     /// Retrieves this aggregator's own endpoint associated with this task.
     pub fn own_aggregator_endpoint(&self) -> &DapUrl {
         &self.own_aggregator_endpoint
+    }
+
+    /// The received wire `TaskConfiguration` for a taskprov task, or `None` for an API-provisioned
+    /// task.
+    pub fn taskprov_task_config(&self) -> Option<&TaskConfiguration> {
+        self.taskprov_task_config.as_ref()
+    }
+
+    /// Returns the canonical [`TaskConfiguration`] for this task, as bound into HPKE AADs.
+    ///
+    /// For taskprov tasks this is the wire configuration verbatim; for API-provisioned tasks it is
+    /// synthesized from the stored parameters, pairing this aggregator's own and peer endpoints
+    /// into leader/helper by role.
+    pub fn task_configuration(&self) -> Result<TaskConfiguration, Error> {
+        if let Some(task_config) = &self.taskprov_task_config {
+            return Ok(task_config.clone());
+        }
+
+        // A taskprov task must carry its wire configuration verbatim (set in `taskprov_opt_in` and
+        // rehydrated on DB read); synthesizing one from the stored parameters is not byte-faithful.
+        // Reaching here for a taskprov task means the config was lost, so fail loudly rather than
+        // bind a wrong AAD.
+        if matches!(
+            self.aggregator_parameters,
+            AggregatorTaskParameters::TaskprovHelper { .. }
+        ) {
+            return Err(Error::InvalidParameter(
+                "taskprov task is missing its verbatim TaskConfiguration",
+            ));
+        }
+
+        let (leader_endpoint, helper_endpoint) = match self.role() {
+            Role::Leader => (
+                &self.own_aggregator_endpoint,
+                &self.peer_aggregator_endpoint,
+            ),
+            Role::Helper => (
+                &self.peer_aggregator_endpoint,
+                &self.own_aggregator_endpoint,
+            ),
+            _ => return Err(Error::InvalidParameter("task role is not an aggregator")),
+        };
+
+        Ok(build_task_configuration(
+            self.task_info().to_vec(),
+            leader_endpoint.clone(),
+            helper_endpoint.clone(),
+            *self.time_precision(),
+            self.min_batch_size(),
+            self.batch_mode().to_batch_config(),
+            self.vdaf()
+                .to_vdaf_config()
+                .map_err(Error::InvalidParameter)?,
+            self.task_interval().copied(),
+        )?)
     }
 
     /// Retrieves the batch mode associated with this task.
@@ -402,6 +469,12 @@ impl AggregatorTask {
     /// Returns this task with its deactivation instant set. (Janus-specific)
     pub fn with_deactivate_at(mut self, deactivate_at: Option<DateTime<Utc>>) -> Self {
         self.deactivate_at = deactivate_at;
+        self
+    }
+
+    /// Returns this task with its verbatim taskprov [`TaskConfiguration`] set.
+    pub fn with_taskprov_task_config(mut self, task_config: TaskConfiguration) -> Self {
+        self.taskprov_task_config = Some(task_config);
         self
     }
 
@@ -1470,12 +1543,13 @@ mod tests {
     use chrono::TimeDelta;
     use janus_core::{
         auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
+        task_config::build_task_configuration,
         test_util::roundtrip_encoding,
         vdaf::vdaf_dp_strategies,
     };
     use janus_messages::{
         BatchConfig, Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId,
-        HpkePublicKey, Interval, TaskId, Time, TimePrecision, Url as DapUrl,
+        HpkePublicKey, Interval, TaskId, Time, TimePrecision, Url as DapUrl, VdafConfig,
     };
     use rand::random;
     use serde_json::json;
@@ -1636,6 +1710,84 @@ mod tests {
         )
         .unwrap();
         assert_eq!(task.own_aggregator_endpoint().as_str(), noncanonical);
+    }
+
+    #[test]
+    fn task_configuration_synthesized_for_api_task() {
+        // For an API-provisioned task, task_configuration() synthesizes from stored parameters,
+        // pairing own/peer endpoints into leader/helper by role. Both aggregators' views must
+        // produce byte-identical configurations, or their AADs would not match.
+        let task = TaskBuilder::new(
+            BatchMode::TimeInterval,
+            AggregationMode::Synchronous,
+            VdafInstance::Prio3Count,
+        )
+        .with_leader_aggregator_endpoint("https://leader.example.com/".parse().unwrap())
+        .with_helper_aggregator_endpoint("https://helper.example.com/".parse().unwrap())
+        .build();
+
+        let leader_config = task.leader_view().unwrap().task_configuration().unwrap();
+        assert_eq!(
+            leader_config.leader_aggregator_endpoint().as_str(),
+            "https://leader.example.com/"
+        );
+        assert_eq!(
+            leader_config.helper_aggregator_endpoint().as_str(),
+            "https://helper.example.com/"
+        );
+        assert_eq!(
+            leader_config,
+            task.helper_view().unwrap().task_configuration().unwrap()
+        );
+    }
+
+    #[test]
+    fn task_configuration_verbatim_for_taskprov() {
+        // A taskprov task binds the received wire configuration verbatim, not one synthesized from
+        // its stored parameters. Prove this by giving the wire config a distinct task_info: if the
+        // task re-synthesized, it would use the task's own task_info instead.
+        let wire = build_task_configuration(
+            b"wire-specific-task-info".to_vec(),
+            "https://leader.example.com/".try_into().unwrap(),
+            "https://helper.example.com/".try_into().unwrap(),
+            TimePrecision::from_seconds(3600),
+            100,
+            BatchConfig::TimeInterval,
+            VdafConfig::Prio3Count,
+            None,
+        )
+        .unwrap();
+
+        let task = TaskBuilder::new(
+            BatchMode::TimeInterval,
+            AggregationMode::Synchronous,
+            VdafInstance::Prio3Count,
+        )
+        .build()
+        .taskprov_helper_view()
+        .unwrap()
+        .with_taskprov_task_config(wire.clone());
+
+        assert_eq!(task.task_configuration().unwrap(), wire);
+        assert_eq!(
+            task.task_configuration().unwrap().task_info(),
+            b"wire-specific-task-info"
+        );
+    }
+
+    #[test]
+    fn task_configuration_taskprov_without_config_errors() {
+        // A taskprov task whose verbatim wire config is absent must fail loudly rather than
+        // silently synthesize a (non-byte-faithful) config from its stored parameters.
+        let task = TaskBuilder::new(
+            BatchMode::TimeInterval,
+            AggregationMode::Synchronous,
+            VdafInstance::Prio3Count,
+        )
+        .build()
+        .taskprov_helper_view()
+        .unwrap();
+        assert_matches!(task.task_configuration(), Err(Error::InvalidParameter(_)));
     }
 
     #[test]
