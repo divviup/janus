@@ -349,7 +349,6 @@ async fn collection_job_success_leader_selected() {
     let request = CollectionJobReq::new(
         Query::new_leader_selected(),
         aggregation_param.get_encoded().unwrap(),
-        Vec::new(),
     );
 
     for _ in 0..2 {
@@ -538,7 +537,6 @@ async fn collection_job_put_idempotence_time_interval() {
             .unwrap(),
         ),
         dummy::AggregationParam::default().get_encoded().unwrap(),
-        Vec::new(),
     );
 
     for _ in 0..2 {
@@ -594,7 +592,6 @@ async fn collection_job_put_idempotence_time_interval_varied_collection_id() {
             .unwrap(),
         ),
         dummy::AggregationParam::default().get_encoded().unwrap(),
-        Vec::new(),
     );
 
     for collection_job_id in &collection_job_ids {
@@ -646,7 +643,6 @@ async fn collection_job_put_idempotence_time_interval_mutate_time_interval() {
     let request = CollectionJobReq::new(
         Query::new_time_interval(Interval::minimal(Time::from_time_precision_units(0)).unwrap()),
         dummy::AggregationParam::default().get_encoded().unwrap(),
-        Vec::new(),
     );
 
     let response = test_case
@@ -663,7 +659,6 @@ async fn collection_job_put_idempotence_time_interval_mutate_time_interval() {
             .unwrap(),
         ),
         dummy::AggregationParam::default().get_encoded().unwrap(),
-        Vec::new(),
     );
 
     let response = test_case
@@ -683,7 +678,6 @@ async fn collection_job_put_idempotence_time_interval_mutate_aggregation_param()
     let request = CollectionJobReq::new(
         Query::new_time_interval(Interval::minimal(Time::from_time_precision_units(0)).unwrap()),
         dummy::AggregationParam(0).get_encoded().unwrap(),
-        Vec::new(),
     );
 
     let response = test_case
@@ -694,7 +688,6 @@ async fn collection_job_put_idempotence_time_interval_mutate_aggregation_param()
     let mutated_request = CollectionJobReq::new(
         Query::new_time_interval(Interval::minimal(Time::from_time_precision_units(0)).unwrap()),
         dummy::AggregationParam(1).get_encoded().unwrap(),
-        Vec::new(),
     );
 
     let response = test_case
@@ -712,7 +705,6 @@ async fn collection_job_put_idempotence_leader_selected() {
     let request = CollectionJobReq::new(
         Query::new_leader_selected(),
         dummy::AggregationParam(0).get_encoded().unwrap(),
-        Vec::new(),
     );
     let mut seen_batch_id = None;
 
@@ -764,7 +756,6 @@ async fn collection_job_put_idempotence_leader_selected_mutate_aggregation_param
     let request = CollectionJobReq::new(
         Query::new_leader_selected(),
         dummy::AggregationParam(0).get_encoded().unwrap(),
-        Vec::new(),
     );
 
     let response = test_case
@@ -776,7 +767,6 @@ async fn collection_job_put_idempotence_leader_selected_mutate_aggregation_param
     let mutated_request = CollectionJobReq::new(
         Query::new_leader_selected(),
         dummy::AggregationParam(1).get_encoded().unwrap(),
-        Vec::new(),
     );
 
     let response = test_case
@@ -795,7 +785,6 @@ async fn collection_job_put_idempotence_leader_selected_no_extra_reports() {
     let request = CollectionJobReq::new(
         Query::new_leader_selected(),
         dummy::AggregationParam(0).get_encoded().unwrap(),
-        Vec::new(),
     );
 
     // Create the first collection job.
@@ -845,7 +834,6 @@ async fn collection_job_batch_mode_misaligned() {
     let request = CollectionJobReq::new(
         Query::new_leader_selected(),
         dummy::AggregationParam(0).get_encoded().unwrap(),
-        Vec::new(),
     );
 
     let mut response = test_case

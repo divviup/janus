@@ -535,12 +535,10 @@ impl<V: vdaf::Collector> Collector<V> {
         aggregation_parameter: &V::AggregationParam,
         extensions: Vec<CollectionJobExtension>,
     ) -> Result<CollectionJob<V::AggregationParam, B>, Error> {
-        let collect_request = CollectionJobReq::new(
-            query.clone(),
-            aggregation_parameter.get_encoded()?,
-            extensions,
-        )
-        .get_encoded()?;
+        let collect_request =
+            CollectionJobReq::new(query.clone(), aggregation_parameter.get_encoded()?)
+                .with_extensions(extensions)
+                .get_encoded()?;
         let collection_job_url = self.collection_job_uri(collection_job_id)?;
 
         let response_res =

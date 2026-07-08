@@ -1838,17 +1838,20 @@ pub struct CollectionJobReq<B: BatchMode> {
 }
 
 impl<B: BatchMode> CollectionJobReq<B> {
-    /// Constructs a new collect request from its components.
-    pub fn new(
-        query: Query<B>,
-        aggregation_parameter: Vec<u8>,
-        extensions: Vec<CollectionJobExtension>,
-    ) -> Self {
+    /// Constructs a new collect request with no extensions. Use [`Self::with_extensions`] to add
+    /// them.
+    pub fn new(query: Query<B>, aggregation_parameter: Vec<u8>) -> Self {
         Self {
             query,
             aggregation_parameter,
-            extensions,
+            extensions: Vec::new(),
         }
+    }
+
+    /// Returns this collect request with its extensions set to the provided list.
+    pub fn with_extensions(mut self, extensions: Vec<CollectionJobExtension>) -> Self {
+        self.extensions = extensions;
+        self
     }
 
     /// Gets the query associated with this collect request.

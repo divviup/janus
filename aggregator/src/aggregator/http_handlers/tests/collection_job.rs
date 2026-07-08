@@ -51,7 +51,6 @@ async fn collection_job_put_request_to_helper() {
             .unwrap(),
         ),
         dummy::AggregationParam::default().get_encoded().unwrap(),
-        Vec::new(),
     );
 
     let mut response = test_case
@@ -94,7 +93,6 @@ async fn collection_job_put_request_invalid_batch_interval() {
             .unwrap(),
         ),
         dummy::AggregationParam::default().get_encoded().unwrap(),
-        Vec::new(),
     );
 
     let mut response = test_case
@@ -135,7 +133,6 @@ async fn collection_job_put_request_invalid_aggregation_parameter() {
         // dummy::AggregationParam is a tuple struct wrapping a u8, so this is not a valid
         // encoding of an aggregation parameter.
         Vec::from([0u8, 0u8]),
-        Vec::new(),
     );
 
     let mut response = test_case
@@ -168,11 +165,11 @@ async fn collection_job_put_request_unsupported_extension() {
             .unwrap(),
         ),
         dummy::AggregationParam::default().get_encoded().unwrap(),
-        Vec::from([CollectionJobExtension::new(
-            CollectionJobExtensionType::Unknown(0xffff),
-            Vec::new(),
-        )]),
-    );
+    )
+    .with_extensions(Vec::from([CollectionJobExtension::new(
+        CollectionJobExtensionType::Unknown(0xffff),
+        Vec::new(),
+    )]));
 
     let mut response = test_case.put_collection_job(&random(), &request).await;
 
@@ -203,11 +200,11 @@ async fn collection_job_put_request_invalid_extension_order() {
             .unwrap(),
         ),
         dummy::AggregationParam::default().get_encoded().unwrap(),
-        Vec::from([
-            CollectionJobExtension::new(CollectionJobExtensionType::Unknown(0x0002), Vec::new()),
-            CollectionJobExtension::new(CollectionJobExtensionType::Unknown(0x0001), Vec::new()),
-        ]),
-    );
+    )
+    .with_extensions(Vec::from([
+        CollectionJobExtension::new(CollectionJobExtensionType::Unknown(0x0002), Vec::new()),
+        CollectionJobExtension::new(CollectionJobExtensionType::Unknown(0x0001), Vec::new()),
+    ]));
 
     let mut response = test_case.put_collection_job(&random(), &request).await;
 
@@ -248,7 +245,6 @@ async fn collection_job_put_request_invalid_batch_size() {
     let request = CollectionJobReq::new(
         Query::new_time_interval(Interval::minimal(Time::from_time_precision_units(0)).unwrap()),
         dummy::AggregationParam::default().get_encoded().unwrap(),
-        Vec::new(),
     );
 
     let mut response = router
@@ -300,7 +296,6 @@ async fn collection_job_put_request_unauthenticated() {
     let req = CollectionJobReq::new(
         Query::new_time_interval(batch_interval),
         dummy::AggregationParam::default().get_encoded().unwrap(),
-        Vec::new(),
     );
 
     // Incorrect authentication token.
@@ -346,7 +341,6 @@ async fn collection_job_get_request_unauthenticated_collection_jobs() {
     let request = CollectionJobReq::new(
         Query::new_time_interval(batch_interval),
         dummy::AggregationParam::default().get_encoded().unwrap(),
-        Vec::new(),
     );
 
     let response = test_case
@@ -398,7 +392,6 @@ async fn collection_job_success_time_interval() {
     let request = CollectionJobReq::new(
         Query::new_time_interval(batch_interval),
         aggregation_param.get_encoded().unwrap(),
-        Vec::new(),
     );
 
     let mut response = test_case
@@ -587,7 +580,6 @@ async fn collection_job_put_request_batch_queried_multiple_times() {
     let request = CollectionJobReq::new(
         Query::new_time_interval(interval),
         dummy::AggregationParam(0).get_encoded().unwrap(),
-        Vec::new(),
     );
 
     let response = test_case.put_collection_job(&random(), &request).await;
@@ -598,7 +590,6 @@ async fn collection_job_put_request_batch_queried_multiple_times() {
     let invalid_request = CollectionJobReq::new(
         Query::new_time_interval(interval),
         dummy::AggregationParam(1).get_encoded().unwrap(),
-        Vec::new(),
     );
 
     let mut response = test_case
@@ -637,7 +628,6 @@ async fn collection_job_put_request_batch_overlap() {
             .unwrap(),
         ),
         dummy::AggregationParam(0).get_encoded().unwrap(),
-        Vec::new(),
     );
 
     let response = test_case.put_collection_job(&random(), &request).await;
@@ -648,7 +638,6 @@ async fn collection_job_put_request_batch_overlap() {
     let invalid_request = CollectionJobReq::new(
         Query::new_time_interval(interval),
         dummy::AggregationParam(1).get_encoded().unwrap(),
-        Vec::new(),
     );
 
     let mut response = test_case
@@ -704,7 +693,6 @@ async fn delete_collection_job() {
     let request = CollectionJobReq::new(
         Query::new_time_interval(batch_interval),
         dummy::AggregationParam::default().get_encoded().unwrap(),
-        Vec::new(),
     );
 
     let response = test_case
