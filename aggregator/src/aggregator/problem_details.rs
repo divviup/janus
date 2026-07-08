@@ -28,8 +28,8 @@ pub struct ProblemDocument<'a> {
     title: &'static str,
     #[serde(serialize_with = "serialize_status")]
     status: StatusCode,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    taskid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "taskid")]
+    task_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     detail: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -52,7 +52,7 @@ impl<'a> ProblemDocument<'a> {
             type_,
             title,
             status,
-            taskid: None,
+            task_id: None,
             detail: None,
             aggregation_job_id: None,
             collection_job_id: None,
@@ -74,17 +74,32 @@ impl<'a> ProblemDocument<'a> {
         )
     }
 
-    pub fn with_task_id(self, taskid: &TaskId) -> Self {
+    /// Add the provided task ID to this document.
+    pub fn with_task_id(self, task_id: &TaskId) -> Self {
         Self {
-            taskid: Some(taskid.to_string()),
+            task_id: Some(task_id.to_string()),
             ..self
         }
     }
 
+    /// Add the provided task ID, if any, to this document.
+    pub fn with_task_id_maybe(self, task_id: &Option<TaskId>) -> Self {
+        if let Some(task_id) = task_id {
+            self.with_task_id(task_id)
+        } else {
+            self
+        }
+    }
+
+    /// Add the provided detail string to this document, unless it is empty.
     pub fn with_detail(self, detail: &'a str) -> Self {
-        Self {
-            detail: Some(detail),
-            ..self
+        if detail.is_empty() {
+            self
+        } else {
+            Self {
+                detail: Some(detail),
+                ..self
+            }
         }
     }
 
@@ -183,6 +198,7 @@ mod tests {
     };
     use rand::random;
     use reqwest::Client;
+    use serde_json::Value;
     use tower::ServiceExt;
 
     use crate::aggregator::{Error, RequestBody, error::BatchMismatch, send_request_to_helper};
@@ -217,6 +233,7 @@ mod tests {
         struct TestCase {
             error_factory: Box<dyn Fn() -> Error + Send + Sync>,
             expected_problem_type: Option<DapProblemType>,
+            expect_task_id: bool,
         }
 
         impl TestCase {
@@ -227,6 +244,14 @@ mod tests {
                 TestCase {
                     error_factory,
                     expected_problem_type,
+                    expect_task_id: false,
+                }
+            }
+
+            fn expect_task_id(self) -> Self {
+                Self {
+                    expect_task_id: true,
+                    ..self
                 }
             }
         }
@@ -237,20 +262,25 @@ mod tests {
                 TestCase::new(
                     Box::new(|| Error::InvalidMessage(Some(random()), "test")),
                     Some(DapProblemType::InvalidMessage),
-                ),
+                )
+                .expect_task_id(),
                 TestCase::new(
                     Box::new(|| Error::UnrecognizedTask(random())),
                     Some(DapProblemType::UnrecognizedTask),
-                ),
+                )
+                .expect_task_id(),
                 TestCase::new(
                     Box::new(|| Error::UnrecognizedAggregationJob(random(), random())),
                     Some(DapProblemType::UnrecognizedAggregationJob),
-                ),
-                TestCase::new(Box::new(|| Error::UnauthorizedRequest(random())), None),
+                )
+                .expect_task_id(),
+                TestCase::new(Box::new(|| Error::UnauthorizedRequest(random())), None)
+                    .expect_task_id(),
                 TestCase::new(
                     Box::new(|| Error::InvalidBatchSize(random(), 8)),
                     Some(DapProblemType::InvalidBatchSize),
-                ),
+                )
+                .expect_task_id(),
                 TestCase::new(
                     Box::new(|| {
                         Error::BatchInvalid(
@@ -268,7 +298,8 @@ mod tests {
                         )
                     }),
                     Some(DapProblemType::BatchInvalid),
-                ),
+                )
+                .expect_task_id(),
                 TestCase::new(
                     Box::new(|| {
                         Error::BatchOverlap(
@@ -283,7 +314,8 @@ mod tests {
                         )
                     }),
                     Some(DapProblemType::BatchOverlap),
-                ),
+                )
+                .expect_task_id(),
                 TestCase::new(
                     Box::new(|| {
                         Error::BatchMismatch(Box::new(BatchMismatch {
@@ -295,7 +327,8 @@ mod tests {
                         }))
                     }),
                     Some(DapProblemType::BatchMismatch),
-                ),
+                )
+                .expect_task_id(),
                 TestCase::new(Box::new(|| Error::TooManyRequests), None),
                 TestCase::new(Box::new(|| Error::RequestTimeout), None),
             ]
@@ -309,6 +342,19 @@ mod tests {
                     let response = error.into_response();
                     let status = response.status();
                     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+
+                    // Check that the JSON document uses the expected keys per RFC 9457
+                    // <https://datatracker.ietf.org/doc/html/rfc9457#section-3.1> ...
+                    if test_case.expected_problem_type.is_some() {
+                        let value: Value = serde_json::from_slice(body.as_ref()).unwrap();
+                        assert!(value.get("title").is_some());
+                        assert!(value.get("type").is_some());
+                        // ... and DAP's error handling section
+                        // <https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-19#section-3.6>
+                        if test_case.expect_task_id {
+                            assert!(value.get("taskid").is_some());
+                        }
+                    }
 
                     // Serve the response via mockito, and run it through post_to_helper's
                     // error handling.
