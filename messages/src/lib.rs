@@ -1716,6 +1716,116 @@ impl<B: BatchMode> Decode for Query<B> {
     }
 }
 
+/// DAP protocol message representing an extension included in a collection job request.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CollectionJobExtension {
+    extension_type: CollectionJobExtensionType,
+    extension_data: Vec<u8>,
+}
+
+impl CollectionJobExtension {
+    /// Construct a collection job extension from its type and payload.
+    pub fn new(
+        extension_type: CollectionJobExtensionType,
+        extension_data: Vec<u8>,
+    ) -> CollectionJobExtension {
+        CollectionJobExtension {
+            extension_type,
+            extension_data,
+        }
+    }
+
+    /// Returns the type of this extension.
+    pub fn extension_type(&self) -> CollectionJobExtensionType {
+        self.extension_type
+    }
+
+    /// Returns the unparsed data representing this extension.
+    pub fn extension_data(&self) -> &[u8] {
+        &self.extension_data
+    }
+}
+
+impl Encode for CollectionJobExtension {
+    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
+        self.extension_type.encode(bytes)?;
+        encode_u16_items(bytes, &(), &self.extension_data)
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        // Extra 2 bytes for the data length prefix.
+        Some(self.extension_type.encoded_len()? + 2 + self.extension_data.len())
+    }
+}
+
+impl Decode for CollectionJobExtension {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let extension_type = CollectionJobExtensionType::decode(bytes)?;
+        let extension_data = decode_u16_items(&(), bytes)?;
+
+        Ok(Self {
+            extension_type,
+            extension_data,
+        })
+    }
+}
+
+/// DAP protocol message representing the type of a collection job extension.
+///
+/// No extension types are defined yet, so every codepoint other than the reserved `0x0000` decodes
+/// to `Unknown`. Equality, ordering, and hashing are all defined in terms of the underlying
+/// codepoint.
+#[derive(Clone, Copy, Debug, FromPrimitive, IntoPrimitive)]
+#[repr(u16)]
+#[non_exhaustive]
+pub enum CollectionJobExtensionType {
+    Reserved = 0x0000,
+    #[num_enum(catch_all)]
+    Unknown(u16),
+}
+
+impl PartialEq for CollectionJobExtensionType {
+    fn eq(&self, other: &Self) -> bool {
+        u16::from(*self) == u16::from(*other)
+    }
+}
+
+impl Eq for CollectionJobExtensionType {}
+
+impl Hash for CollectionJobExtensionType {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        u16::from(*self).hash(state)
+    }
+}
+
+impl PartialOrd for CollectionJobExtensionType {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for CollectionJobExtensionType {
+    fn cmp(&self, other: &Self) -> Ordering {
+        u16::from(*self).cmp(&u16::from(*other))
+    }
+}
+
+impl Encode for CollectionJobExtensionType {
+    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
+        u16::from(*self).encode(bytes)
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(2)
+    }
+}
+
+impl Decode for CollectionJobExtensionType {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        Ok(Self::from(u16::decode(bytes)?))
+    }
+}
+
 /// DAP protocol message representing a request from the collector to the leader to provide
 /// aggregate shares for a given batch.
 #[derive(Clone, Educe, PartialEq, Eq)]
@@ -1724,15 +1834,24 @@ pub struct CollectionJobReq<B: BatchMode> {
     query: Query<B>,
     #[educe(Debug(ignore))]
     aggregation_parameter: Vec<u8>,
+    extensions: Vec<CollectionJobExtension>,
 }
 
 impl<B: BatchMode> CollectionJobReq<B> {
-    /// Constructs a new collect request from its components.
+    /// Constructs a new collect request with no extensions. Use [`Self::with_extensions`] to add
+    /// them.
     pub fn new(query: Query<B>, aggregation_parameter: Vec<u8>) -> Self {
         Self {
             query,
             aggregation_parameter,
+            extensions: Vec::new(),
         }
+    }
+
+    /// Returns this collect request with its extensions set to the provided list.
+    pub fn with_extensions(mut self, extensions: Vec<CollectionJobExtension>) -> Self {
+        self.extensions = extensions;
+        self
     }
 
     /// Gets the query associated with this collect request.
@@ -1744,6 +1863,11 @@ impl<B: BatchMode> CollectionJobReq<B> {
     pub fn aggregation_parameter(&self) -> &[u8] {
         &self.aggregation_parameter
     }
+
+    /// Gets the extensions associated with this collect request.
+    pub fn extensions(&self) -> &[CollectionJobExtension] {
+        &self.extensions
+    }
 }
 
 impl<B: BatchMode> MediaType for CollectionJobReq<B> {
@@ -1753,22 +1877,32 @@ impl<B: BatchMode> MediaType for CollectionJobReq<B> {
 impl<B: BatchMode> Encode for CollectionJobReq<B> {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         self.query.encode(bytes)?;
-        encode_u32_items(bytes, &(), &self.aggregation_parameter)
+        encode_u32_items(bytes, &(), &self.aggregation_parameter)?;
+        encode_u16_items(bytes, &(), &self.extensions)
     }
 
     fn encoded_len(&self) -> Option<usize> {
-        Some(self.query.encoded_len()? + 4 + self.aggregation_parameter.len())
+        let mut len = self.query.encoded_len()? + 4 + self.aggregation_parameter.len() + 2;
+        for extension in &self.extensions {
+            len += extension.encoded_len()?;
+        }
+        Some(len)
     }
 }
 
 impl<B: BatchMode> Decode for CollectionJobReq<B> {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        // Extension ordering and support are semantic checks the Leader performs while handling the
+        // request (producing the DAP `invalidExtension`/`unsupportedExtension` errors), so decoding
+        // here is purely structural.
         let query = Query::decode(bytes)?;
         let aggregation_parameter = decode_u32_items(&(), bytes)?;
+        let extensions = decode_u16_items(&(), bytes)?;
 
         Ok(Self {
             query,
             aggregation_parameter,
+            extensions,
         })
     }
 }

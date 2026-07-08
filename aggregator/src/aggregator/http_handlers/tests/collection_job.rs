@@ -12,8 +12,9 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    AggregateShareAad, BatchSelector, CollectionJobId, CollectionJobReq, CollectionJobResp,
-    Duration, Interval, MediaType, Query, Role, Time, batch_mode::TimeInterval,
+    AggregateShareAad, BatchSelector, CollectionJobExtension, CollectionJobExtensionType,
+    CollectionJobId, CollectionJobReq, CollectionJobResp, Duration, Interval, MediaType, Query,
+    Role, Time, batch_mode::TimeInterval,
 };
 use prio::{
     codec::{Decode, Encode},
@@ -146,6 +147,76 @@ async fn collection_job_put_request_invalid_aggregation_parameter() {
             "status": StatusCode::BAD_REQUEST.as_u16(),
             "type": "urn:ietf:params:ppm:dap:error:invalidMessage",
             "title": "The message type for a response was incorrect or the payload was malformed.",
+        })
+    );
+}
+
+#[tokio::test]
+async fn collection_job_put_request_unsupported_extension() {
+    let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
+
+    // No collection job extension types are defined, so any extension is unsupported.
+    let request = CollectionJobReq::new(
+        Query::new_time_interval(
+            Interval::minimal(Time::from_seconds_since_epoch(
+                0,
+                test_case.task.time_precision(),
+            ))
+            .unwrap(),
+        ),
+        dummy::AggregationParam::default().get_encoded().unwrap(),
+    )
+    .with_extensions(Vec::from([CollectionJobExtension::new(
+        CollectionJobExtensionType::Unknown(0xffff),
+        Vec::new(),
+    )]));
+
+    let mut response = test_case.put_collection_job(&random(), &request).await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        take_problem_details(&mut response).await,
+        json!({
+            "status": StatusCode::BAD_REQUEST.as_u16(),
+            "type": "urn:ietf:params:ppm:dap:error:unsupportedExtension",
+            "title": "The message includes an unsupported extension.",
+            "detail": "collection job contains an unsupported extension type",
+            "taskid": format!("{}", test_case.task.id()),
+        })
+    );
+}
+
+#[tokio::test]
+async fn collection_job_put_request_invalid_extension_order() {
+    let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
+
+    // Extension types 0x0002 then 0x0001 are not in strictly increasing order.
+    let request = CollectionJobReq::new(
+        Query::new_time_interval(
+            Interval::minimal(Time::from_seconds_since_epoch(
+                0,
+                test_case.task.time_precision(),
+            ))
+            .unwrap(),
+        ),
+        dummy::AggregationParam::default().get_encoded().unwrap(),
+    )
+    .with_extensions(Vec::from([
+        CollectionJobExtension::new(CollectionJobExtensionType::Unknown(0x0002), Vec::new()),
+        CollectionJobExtension::new(CollectionJobExtensionType::Unknown(0x0001), Vec::new()),
+    ]));
+
+    let mut response = test_case.put_collection_job(&random(), &request).await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        take_problem_details(&mut response).await,
+        json!({
+            "status": StatusCode::BAD_REQUEST.as_u16(),
+            "type": "urn:ietf:params:ppm:dap:error:invalidExtension",
+            "title": "An extensions list is out of order or contains an invalid extension encoding.",
+            "detail": "collection job extensions are not in strictly increasing order of extension type",
+            "taskid": format!("{}", test_case.task.id()),
         })
     );
 }

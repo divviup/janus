@@ -78,6 +78,26 @@ impl Error {
                 }
                 doc.into_response()
             }
+            Error::UnsupportedExtension(task_id, detail) => {
+                let mut doc = ProblemDocument::new_dap(DapProblemType::UnsupportedExtension);
+                if let Some(task_id) = task_id {
+                    doc = doc.with_task_id(task_id);
+                }
+                if !detail.is_empty() {
+                    doc = doc.with_detail(detail);
+                }
+                doc.into_response()
+            }
+            Error::InvalidExtension(task_id, detail) => {
+                let mut doc = ProblemDocument::new_dap(DapProblemType::InvalidExtension);
+                if let Some(task_id) = task_id {
+                    doc = doc.with_task_id(task_id);
+                }
+                if !detail.is_empty() {
+                    doc = doc.with_detail(detail);
+                }
+                doc.into_response()
+            }
             Error::StepMismatch { task_id, .. } => {
                 ProblemDocument::new_dap(DapProblemType::StepMismatch)
                     .with_task_id(task_id)

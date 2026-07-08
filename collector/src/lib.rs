@@ -51,13 +51,14 @@
 //!
 //! // Make the requests and retrieve the aggregated statistic.
 //! let aggregation_result = collector
-//!     .collect(Query::new_time_interval(interval), &())
+//!     .collection(Query::new_time_interval(interval), &())
+//!     .collect()
 //!     .await
 //!     .unwrap();
 //!
 //! // Or if this is a leader-selected task, make a leader-selected query.
 //! let query = Query::new_leader_selected();
-//! let aggregation_result = collector.collect(query, &()).await.unwrap();
+//! let aggregation_result = collector.collection(query, &()).collect().await.unwrap();
 //! # }
 //! ```
 
@@ -85,8 +86,9 @@ use janus_core::{
     url_for_join,
 };
 use janus_messages::{
-    AggregateShareAad, BatchSelector, CollectionJobId, CollectionJobReq, CollectionJobResp,
-    MediaType, PartialBatchSelector, Query, Role, TaskId, TimePrecision, Url as DapUrl,
+    AggregateShareAad, BatchSelector, CollectionJobExtension, CollectionJobId, CollectionJobReq,
+    CollectionJobResp, MediaType, PartialBatchSelector, Query, Role, TaskId, TimePrecision,
+    Url as DapUrl,
     batch_mode::{BatchMode, TimeInterval},
 };
 use prio::{
@@ -207,6 +209,55 @@ impl<P, B: BatchMode> CollectionJob<P, B> {
     /// Gets the aggregation parameter used to create this collection job.
     pub fn aggregation_parameter(&self) -> &P {
         &self.aggregation_parameter
+    }
+}
+
+/// A builder for a collection request, returned by [`Collector::collection`].
+///
+/// Configure the optional collection job ID ([`Self::with_id`]) and extensions
+/// ([`Self::with_extensions`]), then send the request with [`Self::start`] or [`Self::collect`].
+pub struct CollectionRequestBuilder<'a, V: vdaf::Collector, B: BatchMode> {
+    collector: &'a Collector<V>,
+    query: Query<B>,
+    aggregation_parameter: &'a V::AggregationParam,
+    collection_job_id: Option<CollectionJobId>,
+    extensions: Vec<CollectionJobExtension>,
+}
+
+impl<'a, V: vdaf::Collector, B: BatchMode> CollectionRequestBuilder<'a, V, B> {
+    /// Use a caller-chosen collection job ID instead of a randomly generated one.
+    pub fn with_id(mut self, collection_job_id: CollectionJobId) -> Self {
+        self.collection_job_id = Some(collection_job_id);
+        self
+    }
+
+    /// Set the collection job extensions.
+    pub fn with_extensions(mut self, extensions: Vec<CollectionJobExtension>) -> Self {
+        self.extensions = extensions;
+        self
+    }
+
+    /// Send the collection request to the leader aggregator and return an in-progress
+    /// [`CollectionJob`] that must be polled separately using [`Collector::poll_once`] or
+    /// [`Collector::poll_until_complete`].
+    pub async fn start(self) -> Result<CollectionJob<V::AggregationParam, B>, Error> {
+        let collection_job_id = self.collection_job_id.unwrap_or_else(random);
+        self.collector
+            .send_collection_request(
+                collection_job_id,
+                self.query,
+                self.aggregation_parameter,
+                self.extensions,
+            )
+            .await
+    }
+
+    /// Send the collection request to the leader aggregator, wait for it to complete, and return
+    /// the result of the aggregation.
+    pub async fn collect(self) -> Result<Collection<V::AggregateResult, B>, Error> {
+        let collector = self.collector;
+        let job = self.start().await?;
+        collector.poll_until_complete(&job).await
     }
 }
 
@@ -453,49 +504,40 @@ impl<V: vdaf::Collector> Collector<V> {
         ))?)
     }
 
-    /// Send a collection request to the leader aggregator, wait for it to complete, and return the
-    /// result of the aggregation.
-    pub async fn collect<B: BatchMode>(
-        &self,
+    /// Construct a collection request to send to the leader aggregator.
+    ///
+    /// Returns a [`CollectionRequestBuilder`]; configure the optional collection job ID
+    /// ([`CollectionRequestBuilder::with_id`]) and extensions
+    /// ([`CollectionRequestBuilder::with_extensions`]), then send the request with
+    /// [`CollectionRequestBuilder::start`] (returns a [`CollectionJob`] to poll) or
+    /// [`CollectionRequestBuilder::collect`] (sends and waits for the result).
+    pub fn collection<'a, B: BatchMode>(
+        &'a self,
         query: Query<B>,
-        aggregation_parameter: &V::AggregationParam,
-    ) -> Result<Collection<V::AggregateResult, B>, Error> {
-        let job = self.start_collection(query, aggregation_parameter).await?;
-        self.poll_until_complete(&job).await
+        aggregation_parameter: &'a V::AggregationParam,
+    ) -> CollectionRequestBuilder<'a, V, B> {
+        CollectionRequestBuilder {
+            collector: self,
+            query,
+            aggregation_parameter,
+            collection_job_id: None,
+            extensions: Vec::new(),
+        }
     }
 
-    /// Send a collection request to the leader aggregator, using a randomly generated
-    /// [`CollectionJobId`].
-    ///
-    /// This returns a [`CollectionJob`] that must be polled separately using [`Self::poll_once`] or
-    /// [`Self::poll_until_complete`].
-    ///
-    /// Since the collection job ID is randomly generated in this function, it is at risk of being
-    /// lost if the program crashes before the generated ID is returned to the caller. It is
-    /// recommended that collectors instead generate an ID themselves, store it to non-volatile
-    /// storage, then invoke [`Self::start_collection_with_id`].
-    #[tracing::instrument(skip(aggregation_parameter), err)]
-    pub async fn start_collection<B: BatchMode>(
-        &self,
-        query: Query<B>,
-        aggregation_parameter: &V::AggregationParam,
-    ) -> Result<CollectionJob<V::AggregationParam, B>, Error> {
-        self.start_collection_with_id(random(), query, aggregation_parameter)
-            .await
-    }
-
-    /// Send a collection request to the leader aggregator, with the given [`CollectionJobId`].
-    ///
-    /// This returns a [`CollectionJob`] that must be polled separately using [`Self::poll_once`] or
-    /// [`Self::poll_until_complete`].
-    pub async fn start_collection_with_id<B: BatchMode>(
+    /// Send a collection request to the leader aggregator with the given [`CollectionJobId`],
+    /// returning an in-progress [`CollectionJob`].
+    #[tracing::instrument(skip(self, aggregation_parameter, extensions), err)]
+    async fn send_collection_request<B: BatchMode>(
         &self,
         collection_job_id: CollectionJobId,
         query: Query<B>,
         aggregation_parameter: &V::AggregationParam,
+        extensions: Vec<CollectionJobExtension>,
     ) -> Result<CollectionJob<V::AggregationParam, B>, Error> {
         let collect_request =
             CollectionJobReq::new(query.clone(), aggregation_parameter.get_encoded()?)
+                .with_extensions(extensions)
                 .get_encoded()?;
         let collection_job_url = self.collection_job_uri(collection_job_id)?;
 
@@ -982,7 +1024,8 @@ mod tests {
             .await;
 
         let job = collector
-            .start_collection(Query::new_time_interval(batch_interval), &())
+            .collection(Query::new_time_interval(batch_interval), &())
+            .start()
             .await;
 
         mocked_collect_start_error.assert_async().await;
@@ -1072,7 +1115,8 @@ mod tests {
             .await;
 
         let job = collector
-            .start_collection(Query::new_time_interval(batch_interval), &())
+            .collection(Query::new_time_interval(batch_interval), &())
+            .start()
             .await
             .unwrap();
         assert_eq!(job.query.batch_interval(), &batch_interval);
@@ -1141,7 +1185,8 @@ mod tests {
             .await;
 
         let job = collector
-            .start_collection(Query::new_time_interval(batch_interval), &())
+            .collection(Query::new_time_interval(batch_interval), &())
+            .start()
             .await
             .unwrap();
         assert_eq!(job.query.batch_interval(), &batch_interval);
@@ -1206,7 +1251,8 @@ mod tests {
             .await;
 
         let job = collector
-            .start_collection(Query::new_leader_selected(), &())
+            .collection(Query::new_leader_selected(), &())
+            .start()
             .await
             .unwrap();
 
@@ -1289,7 +1335,8 @@ mod tests {
             .await;
 
         let job = collector
-            .start_collection(Query::new_time_interval(batch_interval), &())
+            .collection(Query::new_time_interval(batch_interval), &())
+            .start()
             .await;
 
         mocked_collect_start_success.assert_async().await;
@@ -1356,7 +1403,8 @@ mod tests {
         )
         .unwrap();
         let error = collector
-            .start_collection(Query::new_time_interval(batch_interval), &())
+            .collection(Query::new_time_interval(batch_interval), &())
+            .start()
             .await
             .unwrap_err();
         assert_matches!(error, Error::Http(error_response) => {
@@ -1380,7 +1428,8 @@ mod tests {
             .await;
 
         let error = collector
-            .start_collection(Query::new_time_interval(batch_interval), &())
+            .collection(Query::new_time_interval(batch_interval), &())
+            .start()
             .await
             .unwrap_err();
         assert_matches!(error, Error::Http(error_response) => {
@@ -1409,7 +1458,8 @@ mod tests {
             .await;
 
         let error = collector
-            .start_collection(Query::new_time_interval(batch_interval), &())
+            .collection(Query::new_time_interval(batch_interval), &())
+            .start()
             .await
             .unwrap_err();
         assert_matches!(error, Error::Http(error_response) => {
@@ -1454,7 +1504,8 @@ mod tests {
         )
         .unwrap();
         let job = collector
-            .start_collection(Query::new_time_interval(batch_interval), &())
+            .collection(Query::new_time_interval(batch_interval), &())
+            .start()
             .await
             .unwrap();
         let error = collector.poll_once(&job).await.unwrap_err();
@@ -1703,7 +1754,8 @@ mod tests {
         )
         .unwrap();
         let job = collector
-            .start_collection(Query::new_time_interval(batch_interval), &())
+            .collection(Query::new_time_interval(batch_interval), &())
+            .start()
             .await
             .unwrap();
         mock_collect_start.assert_async().await;

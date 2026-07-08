@@ -1,10 +1,10 @@
 use prio::codec::Decode;
 
 use crate::{
-    AggregateShare, AggregateShareAad, AggregateShareReq, BatchId, BatchSelector, CollectionJobReq,
-    CollectionJobResp, Duration, HpkeCiphertext, HpkeConfigId, Interval, LeaderSelected,
-    PartialBatchSelector, Query, ReportIdChecksum, TaskId, Time, TimeInterval, TimePrecision,
-    roundtrip_encoding,
+    AggregateShare, AggregateShareAad, AggregateShareReq, BatchId, BatchSelector,
+    CollectionJobExtension, CollectionJobExtensionType, CollectionJobReq, CollectionJobResp,
+    Duration, HpkeCiphertext, HpkeConfigId, Interval, LeaderSelected, PartialBatchSelector, Query,
+    ReportIdChecksum, TaskId, Time, TimeInterval, TimePrecision, roundtrip_encoding,
 };
 
 const TEST_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(1);
@@ -23,6 +23,7 @@ fn roundtrip_collection_job_req() {
                     .unwrap(),
                 },
                 aggregation_parameter: Vec::new(),
+                extensions: Vec::new(),
             },
             concat!(
                 concat!(
@@ -40,6 +41,7 @@ fn roundtrip_collection_job_req() {
                     "00000000", // length
                     "",         // opaque data
                 ),
+                "0000", // extensions (empty)
             ),
         ),
         (
@@ -52,6 +54,7 @@ fn roundtrip_collection_job_req() {
                     .unwrap(),
                 },
                 aggregation_parameter: Vec::from("012345"),
+                extensions: Vec::new(),
             },
             concat!(
                 concat!(
@@ -69,6 +72,7 @@ fn roundtrip_collection_job_req() {
                     "00000006",     // length
                     "303132333435", // opaque data
                 ),
+                "0000", // extensions (empty)
             ),
         ),
     ]);
@@ -79,6 +83,7 @@ fn roundtrip_collection_job_req() {
             CollectionJobReq::<LeaderSelected> {
                 query: Query { query_body: () },
                 aggregation_parameter: Vec::new(),
+                extensions: Vec::new(),
             },
             concat!(
                 concat!(
@@ -91,12 +96,14 @@ fn roundtrip_collection_job_req() {
                     "00000000", // length
                     "",         // opaque data
                 ),
+                "0000", // extensions (empty)
             ),
         ),
         (
             CollectionJobReq::<LeaderSelected> {
                 query: Query { query_body: () },
                 aggregation_parameter: Vec::from("012345"),
+                extensions: Vec::new(),
             },
             concat!(
                 concat!(
@@ -109,9 +116,74 @@ fn roundtrip_collection_job_req() {
                     "00000006",     // length
                     "303132333435", // opaque data
                 ),
+                "0000", // extensions (empty)
+            ),
+        ),
+        (
+            // Two extensions, in strictly increasing order of extension_type.
+            CollectionJobReq::<LeaderSelected> {
+                query: Query { query_body: () },
+                aggregation_parameter: Vec::new(),
+                extensions: Vec::from([
+                    CollectionJobExtension::new(CollectionJobExtensionType::Reserved, Vec::new()),
+                    CollectionJobExtension::new(
+                        CollectionJobExtensionType::Unknown(0x0001),
+                        Vec::from("ext"),
+                    ),
+                ]),
+            },
+            concat!(
+                concat!(
+                    "02",   // batch_mode
+                    "0000", // length
+                    "",     // opaque data
+                ),
+                concat!(
+                    // aggregation_parameter
+                    "00000000", // length
+                    "",         // opaque data
+                ),
+                concat!(
+                    // extensions
+                    "000B", // length of extensions list
+                    concat!(
+                        "0000", // extension_type (Reserved)
+                        "0000", // extension_data length
+                        "",     // extension_data
+                    ),
+                    concat!(
+                        "0001",   // extension_type (0x0001)
+                        "0003",   // extension_data length
+                        "657874", // extension_data ("ext")
+                    ),
+                ),
             ),
         ),
     ]);
+}
+
+#[test]
+fn collection_job_req_decode_is_lenient_about_extension_order() {
+    // Unsorted extension_types (0x0002 before 0x0001) must still decode; ordering is enforced by
+    // the Leader, not here.
+    let encoded = hex::decode(concat!(
+        concat!(
+            "02",   // batch_mode (LeaderSelected)
+            "0000", // length
+        ),
+        "00000000", // aggregation_parameter length
+        concat!(
+            // extensions
+            "0008",                  // length of extensions list
+            concat!("0002", "0000"), // extension_type 0x0002, empty data
+            concat!("0001", "0000"), // extension_type 0x0001, empty data
+        ),
+    ))
+    .unwrap();
+
+    let req = CollectionJobReq::<LeaderSelected>::get_decoded(&encoded)
+        .expect("structurally valid collection job request must decode");
+    assert_eq!(req.extensions().len(), 2);
 }
 
 #[test]

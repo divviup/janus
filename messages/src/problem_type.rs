@@ -15,6 +15,7 @@ pub enum DapProblemType {
     StepMismatch,
     BatchOverlap,
     UnsupportedExtension,
+    InvalidExtension,
     /// A task defined via Taskprov was rejected by the aggregator. Error defined by
     /// draft-ietf-ppm-dap-taskprov ([1]).
     ///
@@ -42,6 +43,7 @@ impl DapProblemType {
             DapProblemType::UnsupportedExtension => {
                 "urn:ietf:params:ppm:dap:error:unsupportedExtension"
             }
+            DapProblemType::InvalidExtension => "urn:ietf:params:ppm:dap:error:invalidExtension",
             DapProblemType::InvalidTask => "urn:ietf:params:ppm:dap:error:invalidTask",
         }
     }
@@ -72,7 +74,12 @@ impl DapProblemType {
             DapProblemType::BatchOverlap => {
                 "The queried batch overlaps with a previously queried batch."
             }
-            DapProblemType::UnsupportedExtension => "The report includes an unsupported extension.",
+            DapProblemType::UnsupportedExtension => {
+                "The message includes an unsupported extension."
+            }
+            DapProblemType::InvalidExtension => {
+                "An extensions list is out of order or contains an invalid extension encoding."
+            }
             DapProblemType::InvalidTask => "Aggregator has opted out of the indicated task.",
         }
     }
@@ -103,6 +110,9 @@ impl FromStr for DapProblemType {
             "urn:ietf:params:ppm:dap:error:batchOverlap" => Ok(DapProblemType::BatchOverlap),
             "urn:ietf:params:ppm:dap:error:unsupportedExtension" => {
                 Ok(DapProblemType::UnsupportedExtension)
+            }
+            "urn:ietf:params:ppm:dap:error:invalidExtension" => {
+                Ok(DapProblemType::InvalidExtension)
             }
             "urn:ietf:params:ppm:dap:error:invalidTask" => Ok(DapProblemType::InvalidTask),
             _ => Err(DapProblemTypeParseError),

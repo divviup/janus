@@ -3169,6 +3169,25 @@ impl VdafOps {
         collection_job_id: &CollectionJobId,
         req: Arc<CollectionJobReq<B>>,
     ) -> Result<Vec<u8>, Error> {
+        // Collection job extensions must be in strictly increasing order of extension type, which
+        // also rejects duplicates, and every extension type must be supported (DAP-19 §4.6.2). No
+        // collection job extension types are defined yet, so any extension is unsupported.
+        if !req
+            .extensions()
+            .is_sorted_by(|a, b| a.extension_type() < b.extension_type())
+        {
+            return Err(Error::InvalidExtension(
+                Some(*task.id()),
+                "collection job extensions are not in strictly increasing order of extension type",
+            ));
+        }
+        if !req.extensions().is_empty() {
+            return Err(Error::UnsupportedExtension(
+                Some(*task.id()),
+                "collection job contains an unsupported extension type",
+            ));
+        }
+
         let aggregation_param = Arc::new(
             A::AggregationParam::get_decoded(req.aggregation_parameter())
                 .map_err(Error::MessageDecode)?,
