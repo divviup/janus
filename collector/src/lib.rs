@@ -504,7 +504,7 @@ impl<V: vdaf::Collector> Collector<V> {
         ))?)
     }
 
-    /// Begin a collection request to the leader aggregator.
+    /// Construct a collection request to send to the leader aggregator.
     ///
     /// Returns a [`CollectionRequestBuilder`]; configure the optional collection job ID
     /// ([`CollectionRequestBuilder::with_id`]) and extensions
