@@ -69,34 +69,22 @@ impl Error {
                 panic!("no report rejected error should make it to the error handler")
             }
             Error::InvalidMessage(task_id, detail) => {
-                let mut doc = ProblemDocument::new_dap(DapProblemType::InvalidMessage);
-                if let Some(task_id) = task_id {
-                    doc = doc.with_task_id(task_id);
-                }
-                if !detail.is_empty() {
-                    doc = doc.with_detail(detail);
-                }
-                doc.into_response()
+                ProblemDocument::new_dap(DapProblemType::InvalidMessage)
+                    .with_task_id_maybe(task_id)
+                    .with_detail(detail)
+                    .into_response()
             }
             Error::UnsupportedExtension(task_id, detail) => {
-                let mut doc = ProblemDocument::new_dap(DapProblemType::UnsupportedExtension);
-                if let Some(task_id) = task_id {
-                    doc = doc.with_task_id(task_id);
-                }
-                if !detail.is_empty() {
-                    doc = doc.with_detail(detail);
-                }
-                doc.into_response()
+                ProblemDocument::new_dap(DapProblemType::UnsupportedExtension)
+                    .with_task_id_maybe(task_id)
+                    .with_detail(detail)
+                    .into_response()
             }
             Error::InvalidExtension(task_id, detail) => {
-                let mut doc = ProblemDocument::new_dap(DapProblemType::InvalidExtension);
-                if let Some(task_id) = task_id {
-                    doc = doc.with_task_id(task_id);
-                }
-                if !detail.is_empty() {
-                    doc = doc.with_detail(detail);
-                }
-                doc.into_response()
+                ProblemDocument::new_dap(DapProblemType::InvalidExtension)
+                    .with_task_id_maybe(task_id)
+                    .with_detail(detail)
+                    .into_response()
             }
             Error::StepMismatch { task_id, .. } => {
                 ProblemDocument::new_dap(DapProblemType::StepMismatch)
