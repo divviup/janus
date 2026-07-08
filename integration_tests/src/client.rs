@@ -275,6 +275,16 @@ where
             helper_aggregator_endpoint.as_str().try_into().unwrap(),
             task_parameters.time_precision,
             vdaf,
+        )
+        // task_info is threaded through for AAD byte-identity in a later stage; empty for now.
+        .with_task_info(Vec::new())
+        .with_min_batch_size(task_parameters.min_batch_size)
+        .with_batch_config(task_parameters.batch_mode.to_batch_config())
+        .with_vdaf_config(
+            task_parameters
+                .vdaf
+                .to_vdaf_config()
+                .map_err(janus_client::Error::InvalidParameter)?,
         );
 
         if let Some(ohttp_config) = &task_parameters.endpoint_fragments.ohttp_config {

@@ -10,7 +10,9 @@ use janus_core::{
     retries::test_util::test_http_request_exponential_backoff,
     test_util::install_test_trace_subscriber,
 };
-use janus_messages::{MediaType, Report, TimePrecision, UploadRequest, Url as DapUrl};
+use janus_messages::{
+    BatchConfig, MediaType, Report, TimePrecision, UploadRequest, Url as DapUrl, VdafConfig,
+};
 use ohttp::{
     KeyConfig, SymmetricSuite,
     hpke::{Aead, Kdf},
@@ -41,6 +43,10 @@ async fn build_client(server: &mockito::ServerGuard) -> Result<Client<Prio3Count
         Prio3::new_count(2).unwrap(),
     )
     .with_backoff(test_http_request_exponential_backoff())
+    .with_task_info(b"test task".to_vec())
+    .with_min_batch_size(1)
+    .with_batch_config(BatchConfig::TimeInterval)
+    .with_vdaf_config(VdafConfig::Prio3Count)
     .with_leader_hpke_config(HpkeKeypair::test().config().clone())
     .with_helper_hpke_config(HpkeKeypair::test().config().clone())
     .with_ohttp_config(OhttpConfig {

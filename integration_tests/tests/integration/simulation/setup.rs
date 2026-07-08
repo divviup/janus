@@ -231,6 +231,11 @@ impl Components {
             state.vdaf.clone(),
         )
         .with_http_client(http_client.clone())
+        .with_task_info(leader_task.task_info().to_vec())
+        .with_min_batch_size(leader_task.min_batch_size())
+        .with_batch_config(leader_task.batch_mode().to_batch_config())
+        .with_vdaf_config(leader_task.vdaf().to_vdaf_config().unwrap())
+        .with_task_interval(leader_task.task_interval().copied())
         .build()
         .await
         .unwrap();
