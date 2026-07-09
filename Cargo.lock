@@ -2617,7 +2617,7 @@ dependencies = [
  "pem",
  "postgres-protocol",
  "postgres-types",
- "prio 0.18.1-alpha.3",
+ "prio 0.18.1-alpha.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "prometheus",
  "querystring",
  "quickcheck",
@@ -2719,7 +2719,7 @@ dependencies = [
  "opentelemetry",
  "postgres-protocol",
  "postgres-types",
- "prio 0.18.1-alpha.3",
+ "prio 0.18.1-alpha.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand 0.10.1",
  "regex",
  "reqwest",
@@ -2757,7 +2757,7 @@ dependencies = [
  "janus_messages 0.9.0-prerelease-1",
  "mockito",
  "ohttp",
- "prio 0.18.1-alpha.3",
+ "prio 0.18.1-alpha.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand 0.10.1",
  "reqwest",
  "thiserror 2.0.18",
@@ -2784,7 +2784,7 @@ dependencies = [
  "janus_messages 0.9.0-prerelease-1",
  "mime",
  "mockito",
- "prio 0.18.1-alpha.3",
+ "prio 0.18.1-alpha.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand 0.10.1",
  "reqwest",
  "retry-after",
@@ -2821,7 +2821,7 @@ dependencies = [
  "kube",
  "mime",
  "mockito",
- "prio 0.18.1-alpha.3",
+ "prio 0.18.1-alpha.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "quickcheck",
  "rand 0.10.1",
  "regex",
@@ -2873,7 +2873,7 @@ dependencies = [
  "kube",
  "opentelemetry",
  "opentelemetry_sdk",
- "prio 0.18.1-alpha.3",
+ "prio 0.18.1-alpha.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "quickcheck",
  "rand 0.10.1",
  "regex",
@@ -2912,7 +2912,7 @@ dependencies = [
  "janus_core",
  "janus_interop_binaries",
  "janus_messages 0.9.0-prerelease-1",
- "prio 0.18.1-alpha.3",
+ "prio 0.18.1-alpha.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand 0.10.1",
  "regex",
  "reqwest",
@@ -2977,7 +2977,7 @@ dependencies = [
  "janus_collector",
  "janus_core",
  "janus_messages 0.9.0-prerelease-1",
- "prio 0.18.1-alpha.3",
+ "prio 0.18.1-alpha.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand 0.10.1",
  "reqwest",
  "serde_json",
@@ -3112,6 +3112,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb26cec98cce3a3d96cbb7bced3c4b16e3d13f27ec56dbd62cbc8f39cfb9d653"
 dependencies = [
  "cpufeatures 0.2.17",
+]
+
+[[package]]
+name = "keccak"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9e24a010dd405bd7ed803e5253182815b41bf2e6a80cc3bfc066658e03a198aa"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.3.0",
 ]
 
 [[package]]
@@ -4089,6 +4099,24 @@ dependencies = [
 [[package]]
 name = "prio"
 version = "0.18.1-alpha.3"
+dependencies = [
+ "byteorder",
+ "num-bigint",
+ "num-integer",
+ "num-iter",
+ "num-rational",
+ "num-traits",
+ "rand 0.10.1",
+ "rand_core 0.10.1",
+ "serde",
+ "subtle",
+ "thiserror 2.0.18",
+ "turboshake",
+]
+
+[[package]]
+name = "prio"
+version = "0.18.1-alpha.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63f116b43145de87ab3a439940d3e54209c6fecb23a07983dea85966baf5d37d"
 dependencies = [
@@ -4990,7 +5018,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77fd7028345d415a4034cf8777cd4f8ab1851274233b45f84e3d955502d93874"
 dependencies = [
  "digest 0.10.7",
- "keccak",
+ "keccak 0.1.6",
 ]
 
 [[package]]
@@ -5205,6 +5233,12 @@ dependencies = [
  "base64ct",
  "der 0.7.10",
 ]
+
+[[package]]
+name = "sponge-cursor"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a0219bd7d979d58245a4f41f695e1ac9f8befdffadd7f61f1bae9e39abc6620"
 
 [[package]]
 name = "sqlx"
@@ -6277,6 +6311,17 @@ dependencies = [
  "rand 0.9.4",
  "sha1 0.10.6",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "turboshake"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f892c6904b0bd5a9241eac848347abcbbbd2b9f3892bad23ac3e6efab8d6f06a"
+dependencies = [
+ "digest 0.11.3",
+ "keccak 0.2.0",
+ "sponge-cursor",
 ]
 
 [[package]]

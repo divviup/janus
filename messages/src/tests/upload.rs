@@ -1,4 +1,4 @@
-use prio::codec::Encode;
+use prio::codec::{Decode, Encode};
 
 use crate::{
     Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, InputShareAad, PlaintextInputShare,
@@ -20,6 +20,66 @@ fn roundtrip_report_id() {
             "100f0e0d0c0b0a090807060504030201",
         ),
     ])
+}
+
+#[test]
+fn extension_equivalent() {
+    /// DAP protocol message representing an arbitrary extension included in a client report.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct OldExtension {
+        extension_type: ExtensionType,
+        extension_data: Vec<u8>,
+    }
+
+    impl OldExtension {
+        /// Construct an extension from its type and payload.
+        pub fn new(extension_type: ExtensionType, extension_data: Vec<u8>) -> OldExtension {
+            OldExtension {
+                extension_type,
+                extension_data,
+            }
+        }
+    }
+
+    impl Encode for OldExtension {
+        fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), prio::codec::CodecError> {
+            self.extension_type.encode(bytes)?;
+            prio::codec::encode_u16_items(bytes, &(), &self.extension_data)
+        }
+
+        fn encoded_len(&self) -> Option<usize> {
+            // Type, length prefix, and extension data.
+            Some(self.extension_type.encoded_len()? + 2 + self.extension_data.len())
+        }
+    }
+
+    impl prio::codec::Decode for OldExtension {
+        fn decode(bytes: &mut std::io::Cursor<&[u8]>) -> Result<Self, prio::codec::CodecError> {
+            let extension_type = ExtensionType::decode(bytes)?;
+            let extension_data = prio::codec::decode_u16_items(&(), bytes)?;
+
+            Ok(Self {
+                extension_type,
+                extension_data,
+            })
+        }
+    }
+
+    let old_extension = OldExtension::new(ExtensionType::Taskbind, Vec::from("0123"));
+    let new_extension = Extension::new(ExtensionType::Taskbind, Vec::from("0123"));
+
+    assert_eq!(
+        old_extension.get_encoded().unwrap(),
+        new_extension.get_encoded().unwrap()
+    );
+
+    let decode_old_as_new =
+        Extension::get_decoded(old_extension.get_encoded().unwrap().as_ref()).unwrap();
+    assert_eq!(new_extension, decode_old_as_new);
+
+    let decode_new_as_old =
+        OldExtension::get_decoded(new_extension.get_encoded().unwrap().as_ref()).unwrap();
+    assert_eq!(old_extension, decode_new_as_old);
 }
 
 #[test]

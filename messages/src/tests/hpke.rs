@@ -79,6 +79,91 @@ fn roundtrip_hpke_ciphertext() {
 }
 
 #[test]
+fn hpke_ciphertext_equivalent() {
+    use prio::codec::Decode;
+    use prio::codec::Encode;
+
+    /// DAP protocol message representing an HPKE ciphertext.
+    #[derive(Clone, educe::Educe, Eq, PartialEq)]
+    #[educe(Debug)]
+    pub struct OldHpkeCiphertext {
+        /// An identifier of the HPKE configuration used to seal the message.
+        config_id: HpkeConfigId,
+        /// An encapsulated HPKE key.
+        #[educe(Debug(ignore))]
+        encapsulated_key: Vec<u8>,
+        /// An HPKE ciphertext.
+        #[educe(Debug(ignore))]
+        payload: Vec<u8>,
+    }
+
+    impl OldHpkeCiphertext {
+        /// Construct a HPKE ciphertext message from its components.
+        pub fn new(
+            config_id: HpkeConfigId,
+            encapsulated_key: Vec<u8>,
+            payload: Vec<u8>,
+        ) -> OldHpkeCiphertext {
+            OldHpkeCiphertext {
+                config_id,
+                encapsulated_key,
+                payload,
+            }
+        }
+    }
+
+    impl prio::codec::Encode for OldHpkeCiphertext {
+        fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), prio::codec::CodecError> {
+            self.config_id.encode(bytes)?;
+            prio::codec::encode_u16_items(bytes, &(), &self.encapsulated_key)?;
+            prio::codec::encode_u32_items(bytes, &(), &self.payload)
+        }
+
+        fn encoded_len(&self) -> Option<usize> {
+            Some(
+                self.config_id.encoded_len()?
+                    + 2
+                    + self.encapsulated_key.len()
+                    + 4
+                    + self.payload.len(),
+            )
+        }
+    }
+
+    impl prio::codec::Decode for OldHpkeCiphertext {
+        fn decode(bytes: &mut std::io::Cursor<&[u8]>) -> Result<Self, prio::codec::CodecError> {
+            let config_id = HpkeConfigId::decode(bytes)?;
+            let encapsulated_key = prio::codec::decode_u16_items(&(), bytes)?;
+            let payload = prio::codec::decode_u32_items(&(), bytes)?;
+
+            Ok(Self {
+                config_id,
+                encapsulated_key,
+                payload,
+            })
+        }
+    }
+
+    let old_ciphertext =
+        OldHpkeCiphertext::new(HpkeConfigId::from(10), Vec::from("0123"), Vec::from("4567"));
+    let new_ciphertext =
+        HpkeCiphertext::new(HpkeConfigId::from(10), Vec::from("0123"), Vec::from("4567"));
+
+    assert_eq!(
+        old_ciphertext.get_encoded().unwrap(),
+        new_ciphertext.get_encoded().unwrap()
+    );
+
+    let decode_old_as_new =
+        HpkeCiphertext::get_decoded(old_ciphertext.get_encoded().unwrap().as_ref()).unwrap();
+    assert_eq!(new_ciphertext, decode_old_as_new);
+
+    let decode_new_as_old =
+        OldHpkeCiphertext::get_decoded(new_ciphertext.get_encoded().unwrap().as_ref()).unwrap();
+    assert_eq!(old_ciphertext, decode_new_as_old);
+}
+
+#[test]
 fn roundtrip_hpke_public_key() {
     roundtrip_encoding(&[
         (

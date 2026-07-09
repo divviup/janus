@@ -23,8 +23,8 @@ use num_enum::{FromPrimitive, IntoPrimitive, TryFromPrimitive};
 pub use prio::codec;
 use prio::{
     codec::{
-        CodecError, Decode, Encode, ParameterizedDecode, decode_fixlen_items, decode_u16_items,
-        decode_u32_items, encode_fixlen_items, encode_u16_items, encode_u32_items,
+        CodecError, Decode, Encode, ParameterizedDecode, VariableLengthVector, decode_fixlen_items,
+        encode_fixlen_items,
     },
     topology::ping_pong::PingPongMessage,
 };
@@ -870,7 +870,7 @@ impl Decode for HpkeAeadId {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Extension {
     extension_type: ExtensionType,
-    extension_data: Vec<u8>,
+    extension_data: VariableLengthVector<0, u16, u8>,
 }
 
 impl Extension {
@@ -878,7 +878,7 @@ impl Extension {
     pub fn new(extension_type: ExtensionType, extension_data: Vec<u8>) -> Extension {
         Extension {
             extension_type,
-            extension_data,
+            extension_data: VariableLengthVector::new(extension_data),
         }
     }
 
@@ -889,26 +889,28 @@ impl Extension {
 
     /// Returns the unparsed data representing this extension.
     pub fn extension_data(&self) -> &[u8] {
-        &self.extension_data
+        &self.extension_data.as_ref()
     }
 }
 
 impl Encode for Extension {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         self.extension_type.encode(bytes)?;
-        encode_u16_items(bytes, &(), &self.extension_data)
+        self.extension_data.encode(bytes)?;
+
+        Ok(())
     }
 
     fn encoded_len(&self) -> Option<usize> {
-        // Type, length prefix, and extension data.
-        Some(self.extension_type.encoded_len()? + 2 + self.extension_data.len())
+        // Type and extension data.
+        Some(self.extension_type.encoded_len()? + self.extension_data.encoded_len()?)
     }
 }
 
 impl Decode for Extension {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let extension_type = ExtensionType::decode(bytes)?;
-        let extension_data = decode_u16_items(&(), bytes)?;
+        let extension_data = VariableLengthVector::decode(bytes)?;
 
         Ok(Self {
             extension_type,
@@ -1005,10 +1007,10 @@ pub struct HpkeCiphertext {
     config_id: HpkeConfigId,
     /// An encapsulated HPKE key.
     #[educe(Debug(ignore))]
-    encapsulated_key: Vec<u8>,
+    encapsulated_key: VariableLengthVector<1, u16, u8>,
     /// An HPKE ciphertext.
     #[educe(Debug(ignore))]
-    payload: Vec<u8>,
+    payload: VariableLengthVector<1, u32, u8>,
 }
 
 impl HpkeCiphertext {
@@ -1020,8 +1022,8 @@ impl HpkeCiphertext {
     ) -> HpkeCiphertext {
         HpkeCiphertext {
             config_id,
-            encapsulated_key,
-            payload,
+            encapsulated_key: encapsulated_key.into(),
+            payload: payload.into(),
         }
     }
 
@@ -1032,29 +1034,29 @@ impl HpkeCiphertext {
 
     /// Get the encapsulated key from this ciphertext message.
     pub fn encapsulated_key(&self) -> &[u8] {
-        &self.encapsulated_key
+        self.encapsulated_key.as_ref()
     }
 
     /// Get the encrypted payload from this ciphertext message.
     pub fn payload(&self) -> &[u8] {
-        &self.payload
+        self.payload.as_ref()
     }
 }
 
 impl Encode for HpkeCiphertext {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         self.config_id.encode(bytes)?;
-        encode_u16_items(bytes, &(), &self.encapsulated_key)?;
-        encode_u32_items(bytes, &(), &self.payload)
+        self.encapsulated_key.encode(bytes)?;
+        self.payload.encode(bytes)?;
+
+        Ok(())
     }
 
     fn encoded_len(&self) -> Option<usize> {
         Some(
             self.config_id.encoded_len()?
-                + 2
-                + self.encapsulated_key.len()
-                + 4
-                + self.payload.len(),
+                + self.encapsulated_key.encoded_len()?
+                + self.payload.encoded_len()?,
         )
     }
 }
@@ -1062,8 +1064,8 @@ impl Encode for HpkeCiphertext {
 impl Decode for HpkeCiphertext {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let config_id = HpkeConfigId::decode(bytes)?;
-        let encapsulated_key = decode_u16_items(&(), bytes)?;
-        let payload = decode_u32_items(&(), bytes)?;
+        let encapsulated_key = VariableLengthVector::decode(bytes)?;
+        let payload = VariableLengthVector::decode(bytes)?;
 
         Ok(Self {
             config_id,

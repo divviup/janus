@@ -21,7 +21,8 @@ hex = { workspace = true }
 num_enum = { workspace = true }
 # Make sure not to enable default-features on prio, as we want clients to be
 # able to get message definitions without pulling in prio/crypto-dependencies
-prio.workspace = true
+#prio.workspace = true
+prio = { version = "0.18.1-alpha.3", default-features = false, path = "/home/timg/source/libprio-rs" }
 rand.workspace = true
 serde.workspace = true
 thiserror.workspace = true
