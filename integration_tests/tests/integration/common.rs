@@ -260,6 +260,13 @@ where
         vdaf,
         task_parameters.time_precision,
     )
+    // The helper endpoint and task_info are threaded through for AAD byte-identity in a later
+    // stage; placeholders for now.
+    .with_helper_endpoint("http://unused.helper.example/".try_into().unwrap())
+    .with_task_info(Vec::new())
+    .with_min_batch_size(task_parameters.min_batch_size)
+    .with_batch_config(task_parameters.batch_mode.to_batch_config())
+    .with_vdaf_config(task_parameters.vdaf.to_vdaf_config().unwrap())
     .with_http_request_backoff(test_http_request_exponential_backoff())
     .with_collect_poll_backoff(
         ExponentialWithTotalDelayBuilder::new()

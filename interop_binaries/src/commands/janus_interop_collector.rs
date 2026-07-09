@@ -23,8 +23,8 @@ use janus_core::{
     vdaf::{VdafInstance, new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128},
 };
 use janus_messages::{
-    BatchId, Duration, HpkeConfig, Interval, PartialBatchSelector, Query, TaskId, Time,
-    TimePrecision, Url as DapUrl, batch_mode::BatchMode,
+    BatchConfig, BatchId, Duration, HpkeConfig, Interval, PartialBatchSelector, Query, TaskId,
+    Time, TimePrecision, Url as DapUrl, batch_mode::BatchMode,
 };
 use prio::{
     codec::{Decode, Encode},
@@ -206,6 +206,9 @@ where
     B: BatchMode,
 {
     let time_precision = task_state.time_precision;
+    let vdaf_config = VdafInstance::from(task_state.vdaf.clone())
+        .to_vdaf_config()
+        .map_err(|err| anyhow::anyhow!("unsupported VDAF for TaskConfiguration: {err}"))?;
     let collector = Collector::builder(
         task_state.task_id,
         task_state.leader_url.clone(),
@@ -214,6 +217,15 @@ where
         vdaf,
         time_precision,
     )
+    // The interop add-task request does not yet carry the helper endpoint, task_info,
+    // min_batch_size, batch_config, or task_interval; these placeholders make the collector
+    // build, but interop AAD byte-identity needs test-design support to provide the real
+    // values.
+    .with_helper_endpoint("http://unused.helper.example/".try_into().unwrap())
+    .with_task_info(Vec::new())
+    .with_min_batch_size(0)
+    .with_batch_config(BatchConfig::TimeInterval)
+    .with_vdaf_config(vdaf_config)
     .with_http_client(http_client.clone())
     .with_http_request_backoff(
         ExponentialWithTotalDelayBuilder::new()

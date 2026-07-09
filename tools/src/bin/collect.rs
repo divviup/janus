@@ -16,8 +16,8 @@ use janus_core::{
     retries::ExponentialWithTotalDelayBuilder,
 };
 use janus_messages::{
-    CollectionJobId, Duration, HpkeConfig, Interval, PartialBatchSelector, Query, TaskId, Time,
-    TimePrecision, Url as DapUrl,
+    BatchConfig, CollectionJobId, Duration, HpkeConfig, Interval, PartialBatchSelector, Query,
+    TaskId, Time, TimePrecision, Url as DapUrl, VdafConfig,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
 };
 use prio::{
@@ -623,6 +623,14 @@ fn new_collector<V: vdaf::Collector>(
         vdaf,
         time_precision,
     )
+    // The helper endpoint and remaining TaskConfiguration parameters are not yet exposed as CLI
+    // options; these placeholders make the collector build, but correct aggregate-share decryption
+    // will require real values once the TaskConfiguration is bound into the AAD.
+    .with_helper_endpoint("http://unused.helper.example/".try_into().unwrap())
+    .with_task_info(Vec::new())
+    .with_min_batch_size(0)
+    .with_batch_config(BatchConfig::TimeInterval)
+    .with_vdaf_config(VdafConfig::Prio3Count)
     .with_http_client(http_client)
     .with_collect_poll_backoff(
         ExponentialWithTotalDelayBuilder::new()

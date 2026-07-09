@@ -347,6 +347,17 @@ impl Components {
             state.vdaf.clone(),
             *task.time_precision(),
         )
+        .with_helper_endpoint(
+            task.helper_aggregator_endpoint()
+                .as_str()
+                .try_into()
+                .unwrap(),
+        )
+        .with_task_info(leader_task.task_info().to_vec())
+        .with_min_batch_size(leader_task.min_batch_size())
+        .with_batch_config(leader_task.batch_mode().to_batch_config())
+        .with_vdaf_config(leader_task.vdaf().to_vdaf_config().unwrap())
+        .with_task_interval(leader_task.task_interval().copied())
         .with_http_request_backoff(http_request_exponential_backoff())
         .with_collect_poll_backoff(
             ExponentialWithTotalDelayBuilder::new().with_total_delay(Some(StdDuration::ZERO)),
