@@ -10,6 +10,7 @@ use janus_integration_tests::janus::JanusContainer;
 use janus_integration_tests::{TaskParameters, client::ClientBackend, janus::JanusInProcess};
 #[cfg(feature = "testcontainer")]
 use janus_interop_binaries::test_util::generate_network_name;
+#[cfg(feature = "testcontainer")]
 use janus_messages::Role;
 use prio::{
     dp::{
@@ -86,20 +87,36 @@ impl JanusInProcessPair {
     /// Set up a new pair of in-process Janus test instances, and set up a new task in each using
     /// the given VDAF and batch mode.
     pub async fn new(task_builder: TaskBuilder) -> JanusInProcessPair {
-        let (task_parameters, mut task_builder) = build_test_task(
+        let (task_parameters, task_builder) = build_test_task(
             task_builder,
             TestContext::Host,
             Duration::from_millis(500),
             Duration::from_secs(60),
         );
 
-        let helper = JanusInProcess::new(&task_builder.clone().build(), Role::Helper).await;
-        let helper_url = task_parameters
-            .endpoint_fragments
-            .helper
-            .endpoint_for_host(helper.port());
-        task_builder = task_builder.with_helper_aggregator_endpoint(helper_url);
-        let leader = JanusInProcess::new(&task_builder.build(), Role::Leader).await;
+        // Start both aggregators first, so their ephemeral ports are known. Then build a single
+        // task with byte-identical real endpoints and provision each aggregator's view of
+        // it.
+        let leader = JanusInProcess::new().await;
+        let helper = JanusInProcess::new().await;
+
+        let task = task_builder
+            .with_leader_aggregator_endpoint(
+                task_parameters
+                    .endpoint_fragments
+                    .leader
+                    .endpoint_for_host(leader.port()),
+            )
+            .with_helper_aggregator_endpoint(
+                task_parameters
+                    .endpoint_fragments
+                    .helper
+                    .endpoint_for_host(helper.port()),
+            )
+            .build();
+
+        leader.provision_task(&task.leader_view().unwrap()).await;
+        helper.provision_task(&task.helper_view().unwrap()).await;
 
         Self {
             task_parameters,
