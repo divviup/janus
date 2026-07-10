@@ -837,7 +837,7 @@ async fn delete_task() {
     let response = handler
         .clone()
         .oneshot(
-            Request::delete(format!("/tasks/{}", &task_id))
+            Request::delete(format!("/tasks/{}", task_id))
                 .header("authorization", format!("Bearer {AUTH_TOKEN}"))
                 .header("accept", CONTENT_TYPE)
                 .body(Body::empty())
@@ -860,7 +860,7 @@ async fn delete_task() {
     let response = handler
         .clone()
         .oneshot(
-            Request::delete(format!("/tasks/{}", &task_id))
+            Request::delete(format!("/tasks/{}", task_id))
                 .header("authorization", format!("Bearer {AUTH_TOKEN}"))
                 .header("accept", CONTENT_TYPE)
                 .body(Body::empty())
@@ -874,7 +874,7 @@ async fn delete_task() {
     let response = handler
         .clone()
         .oneshot(
-            Request::delete(format!("/tasks/{}", &random::<TaskId>()))
+            Request::delete(format!("/tasks/{}", random::<TaskId>()))
                 .header("authorization", format!("Bearer {AUTH_TOKEN}"))
                 .header("accept", CONTENT_TYPE)
                 .body(Body::empty())
@@ -888,7 +888,7 @@ async fn delete_task() {
     let response = handler
         .clone()
         .oneshot(
-            Request::delete(format!("/tasks/{}", &task_id))
+            Request::delete(format!("/tasks/{}", task_id))
                 .header("accept", CONTENT_TYPE)
                 .body(Body::empty())
                 .unwrap(),
@@ -1137,7 +1137,7 @@ async fn get_task_upload_metrics() {
     let response = handler
         .clone()
         .oneshot(
-            Request::get(format!("/tasks/{}/metrics/uploads", &task_id))
+            Request::get(format!("/tasks/{}/metrics/uploads", task_id))
                 .header("authorization", format!("Bearer {AUTH_TOKEN}"))
                 .header("accept", CONTENT_TYPE)
                 .body(Body::empty())
@@ -1169,7 +1169,7 @@ async fn get_task_upload_metrics() {
     let response = handler
         .clone()
         .oneshot(
-            Request::get(format!("/tasks/{}/metrics/uploads", &task_id))
+            Request::get(format!("/tasks/{}/metrics/uploads", task_id))
                 .header("authorization", format!("Bearer {AUTH_TOKEN}"))
                 .header("accept", CONTENT_TYPE)
                 .body(Body::empty())
@@ -1194,7 +1194,7 @@ async fn get_task_upload_metrics() {
     let response = handler
         .clone()
         .oneshot(
-            Request::get(format!("/tasks/{}/metrics/uploads", &random::<TaskId>()))
+            Request::get(format!("/tasks/{}/metrics/uploads", random::<TaskId>()))
                 .header("authorization", format!("Bearer {AUTH_TOKEN}"))
                 .header("accept", CONTENT_TYPE)
                 .body(Body::empty())
@@ -1208,7 +1208,7 @@ async fn get_task_upload_metrics() {
     let response = handler
         .clone()
         .oneshot(
-            Request::get(format!("/tasks/{}/metrics/uploads", &task_id))
+            Request::get(format!("/tasks/{}/metrics/uploads", task_id))
                 .header("accept", CONTENT_TYPE)
                 .body(Body::empty())
                 .unwrap(),
@@ -1310,7 +1310,7 @@ async fn get_task_aggregation_metrics() {
         .oneshot(
             Request::get(format!(
                 "/tasks/{}/metrics/aggregations",
-                &random::<TaskId>()
+                random::<TaskId>()
             ))
             .header("authorization", format!("Bearer {AUTH_TOKEN}"))
             .header("accept", CONTENT_TYPE)

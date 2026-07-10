@@ -3071,7 +3071,7 @@ pub(crate) fn roundtrip_encoding_parameterized<'a, T, P, TB, PB, I>(
 
     impl<T: Debug> Debug for Wrapper<T> {
         fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-            write!(f, "{:02x?}", &self.0)
+            write!(f, "{:02x?}", self.0)
         }
     }
 
