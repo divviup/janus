@@ -20,6 +20,11 @@ struct CargoArgs {
     /// Require Cargo.lock is up to date
     #[clap(long, action)]
     locked: bool,
+
+    /// Arguments forwarded to `cargo test`, e.g. a test-name filter. Everything after a `--`
+    /// separator is passed through verbatim.
+    #[clap(last = true)]
+    test_args: Vec<String>,
 }
 
 #[derive(Parser)]
@@ -157,6 +162,7 @@ fn run_docker_tests(images: ContainerImages, cargo_args: CargoArgs) -> Result<()
         "--package=janus_integration_tests",
         "--features=testcontainer",
     ]);
+    command.args(&cargo_args.test_args);
     command.envs([
         ("JANUS_INTEROP_CLIENT_IMAGE", &images.client),
         ("JANUS_INTEROP_AGGREGATOR_IMAGE", &images.aggregator),
