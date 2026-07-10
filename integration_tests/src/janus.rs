@@ -24,9 +24,14 @@ use janus_aggregator::{
     metrics::{MetricsConfiguration, test_util::InMemoryMetricInfrastructure},
     trace::{TokioConsoleConfiguration, TraceConfiguration},
 };
+#[cfg(feature = "testcontainer")]
+use janus_aggregator_core::task::test_util::Task;
 use janus_aggregator_core::{
-    datastore::test_util::{EphemeralDatastore, ephemeral_datastore},
-    task::test_util::Task,
+    datastore::{
+        Datastore,
+        test_util::{EphemeralDatastore, ephemeral_datastore},
+    },
+    task::AggregatorTask,
 };
 use janus_core::time::RealClock;
 #[cfg(feature = "testcontainer")]
@@ -34,6 +39,7 @@ use janus_interop_binaries::{
     ContainerLogsDropGuard, get_rust_log_level, test_util::await_http_server,
     testcontainer::Aggregator,
 };
+#[cfg(feature = "testcontainer")]
 use janus_messages::Role;
 #[cfg(feature = "testcontainer")]
 use testcontainers::{ContainerRequest, ImageExt, runners::AsyncRunner};
@@ -96,6 +102,7 @@ impl JanusContainer {
 pub struct JanusInProcess {
     socket_address: SocketAddr,
     stopper: Stopper,
+    datastore: Datastore<RealClock>,
     _ephemeral_datastore: EphemeralDatastore,
     pub aggregator_metrics: InMemoryMetricInfrastructure,
     pub aggregation_job_creator_metrics: InMemoryMetricInfrastructure,
@@ -105,9 +112,10 @@ pub struct JanusInProcess {
 }
 
 impl JanusInProcess {
-    /// Start a new Janus instance in the current process, using a separate ephemeral database,
-    /// configured to service the given task.
-    pub async fn new(task: &Task, role: Role) -> Self {
+    /// Start a new Janus instance in the current process, using a separate ephemeral database. The
+    /// task to service is provisioned separately via [`Self::provision_task`] once the aggregator's
+    /// ephemeral port is known.
+    pub async fn new() -> Self {
         // Set up common utilities.
         let stopper = Stopper::new();
         let clock = RealClock::default();
@@ -125,12 +133,6 @@ impl JanusInProcess {
         let aggregation_job_driver_metrics = InMemoryMetricInfrastructure::new();
         let collection_job_driver_metrics = InMemoryMetricInfrastructure::new();
         let key_rotator_metrics = InMemoryMetricInfrastructure::new();
-
-        // Provision the task.
-        datastore
-            .put_aggregator_task(&task.view_for_role(role).expect("invalid role"))
-            .await
-            .expect("task provisioning failed");
 
         // Construct configuration and options for each component.
         let common_binary_options = CommonBinaryOptions {
@@ -332,9 +334,13 @@ impl JanusInProcess {
                 .expect("aggregator task shut down before sending socket address");
         };
 
+        // A dedicated datastore handle for provisioning the task after startup.
+        let datastore = ephemeral_datastore.datastore(clock).await;
+
         Self {
             socket_address,
             stopper,
+            datastore,
             _ephemeral_datastore: ephemeral_datastore,
             aggregator_metrics,
             aggregation_job_creator_metrics,
@@ -347,6 +353,14 @@ impl JanusInProcess {
     /// Returns the aggregator's port.
     pub fn port(&self) -> u16 {
         self.socket_address.port()
+    }
+
+    /// Provision the given aggregator task view into this instance's datastore.
+    pub async fn provision_task(&self, task: &AggregatorTask) {
+        self.datastore
+            .put_aggregator_task(task)
+            .await
+            .expect("task provisioning failed");
     }
 }
 
