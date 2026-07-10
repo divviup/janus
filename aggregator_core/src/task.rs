@@ -1515,6 +1515,16 @@ pub mod test_util {
             self
         }
 
+        /// Gets the `task_info` field for the eventual task.
+        pub fn task_info(&self) -> &[u8] {
+            &self.0.common_parameters.task_info
+        }
+
+        /// Gets the task interval for the eventual task.
+        pub fn task_interval(&self) -> Option<&Interval> {
+            self.0.common_parameters.task_interval.as_ref()
+        }
+
         /// Gets the colector HPKE keypair for the eventual task.
         pub fn collector_hpke_keypair(&self) -> &HpkeKeypair {
             self.0.collector_hpke_keypair()

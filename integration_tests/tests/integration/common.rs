@@ -113,6 +113,8 @@ pub fn build_test_task(
         vdaf: task_builder.vdaf().clone(),
         min_batch_size: task_builder.min_batch_size(),
         time_precision: *task_builder.time_precision(),
+        task_info: task_builder.task_info().to_vec(),
+        task_interval: task_builder.task_interval().copied(),
         collector_hpke_keypair: task_builder.collector_hpke_keypair().clone(),
         collector_auth_token: task_builder.collector_auth_token().clone(),
         collector_max_interval,
