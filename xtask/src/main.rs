@@ -21,8 +21,7 @@ struct CargoArgs {
     #[clap(long, action)]
     locked: bool,
 
-    /// Arguments forwarded to `cargo test`, e.g. a test-name filter. Everything after a `--`
-    /// separator is passed through verbatim.
+    /// Arguments forwarded to the test binary. Pass them after a `--` separator.
     #[clap(last = true)]
     test_args: Vec<String>,
 }
@@ -162,7 +161,12 @@ fn run_docker_tests(images: ContainerImages, cargo_args: CargoArgs) -> Result<()
         "--package=janus_integration_tests",
         "--features=testcontainer",
     ]);
-    command.args(&cargo_args.test_args);
+    // Forward after `--` so libtest harness flags (--test-threads, --nocapture, etc.) reach the
+    // test binary rather than being parsed as flags for cargo itself.
+    if !cargo_args.test_args.is_empty() {
+        command.arg("--");
+        command.args(&cargo_args.test_args);
+    }
     command.envs([
         ("JANUS_INTEROP_CLIENT_IMAGE", &images.client),
         ("JANUS_INTEROP_AGGREGATOR_IMAGE", &images.aggregator),
