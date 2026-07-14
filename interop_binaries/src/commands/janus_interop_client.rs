@@ -16,7 +16,7 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use clap::Parser;
 use educe::Educe;
 use janus_core::vdaf::{VdafInstance, new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128};
-use janus_messages::{BatchConfig, TaskId, Time, TimePrecision, Url as DapUrl};
+use janus_messages::{TaskId, Time, TimePrecision, Url as DapUrl};
 use prio::{
     codec::Decode,
     field::Field64,
@@ -27,7 +27,8 @@ use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 
 use crate::{
-    NumberAsString, VdafObject, install_tracing_subscriber,
+    INTEROP_TASK_INFO, NumberAsString, VdafObject, install_tracing_subscriber,
+    interop_batch_config,
     status::{ERROR, SUCCESS},
 };
 
@@ -67,6 +68,10 @@ struct UploadRequest {
     #[serde(default)]
     time: Option<u64>,
     time_precision: u64,
+    #[serde(default)]
+    min_batch_size: u64,
+    #[serde(default)]
+    batch_mode: u8,
 }
 
 #[derive(Debug, Serialize)]
@@ -100,12 +105,9 @@ async fn handle_upload_generic<V: prio::vdaf::Client<16>>(
         vdaf,
     )
     .with_http_client(http_client.clone())
-    // The interop upload request does not yet carry task_info, min_batch_size, batch_config, or
-    // task_interval; these placeholders make the client build, but interop AAD byte-identity needs
-    // test-design support to provide the real values.
-    .with_task_info(Vec::new())
-    .with_min_batch_size(0)
-    .with_batch_config(BatchConfig::TimeInterval)
+    .with_task_info(INTEROP_TASK_INFO.to_vec())
+    .with_min_batch_size(request.min_batch_size)
+    .with_batch_config(interop_batch_config(request.batch_mode)?)
     .with_vdaf_config(vdaf_config)
     .build()
     .await

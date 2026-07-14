@@ -36,7 +36,7 @@ use tokio::net::TcpListener;
 use url::Url;
 
 use crate::{
-    AddTaskResponse, AggregatorAddTaskRequest, AggregatorRole,
+    AddTaskResponse, AggregatorAddTaskRequest, AggregatorRole, INTEROP_TASK_INFO,
     status::{ERROR, SUCCESS},
 };
 
@@ -66,14 +66,8 @@ async fn handle_add_task(
         AggregatorRole::Leader => (&request.helper, &request.leader),
         AggregatorRole::Helper => (&request.leader, &request.helper),
     };
-    let peer_aggregator_endpoint: DapUrl = peer_endpoint
-        .as_str()
-        .parse()
-        .context("invalid peer aggregator endpoint")?;
-    let own_aggregator_endpoint: DapUrl = own_endpoint
-        .as_str()
-        .parse()
-        .context("invalid own aggregator endpoint")?;
+    let peer_aggregator_endpoint: DapUrl = peer_endpoint.clone();
+    let own_aggregator_endpoint: DapUrl = own_endpoint.clone();
     let vdaf = request.vdaf.into();
     let leader_authentication_token =
         AuthenticationToken::new_dap_auth_token_from_string(request.leader_authentication_token)
@@ -162,8 +156,7 @@ async fn handle_add_task(
         time_precision,
         /* tolerable clock skew */
         Duration::ONE, // Since the clock skew must be a multiple of the precision, start at 1x
-        // The interop test API has no task_info concept, so use a fixed non-empty placeholder.
-        b"task-info".to_vec(),
+        INTEROP_TASK_INFO.to_vec(),
         aggregator_parameters,
     )
     .context("error constructing task")?;

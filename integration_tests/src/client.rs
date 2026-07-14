@@ -2,10 +2,14 @@ use std::env;
 
 use anyhow::anyhow;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use janus_aggregator_core::task::BatchMode;
 use janus_client::Client;
 use janus_core::vdaf::{Prio3SumVecField64MultiproofHmacSha256Aes128, VdafInstance};
 use janus_interop_binaries::{ContainerLogsDropGuard, get_rust_log_level};
-use janus_messages::{TaskId, Time, TimePrecision};
+use janus_messages::{
+    TaskId, Time, TimePrecision,
+    batch_mode::{BatchMode as _, LeaderSelected, TimeInterval},
+};
 use prio::{
     codec::Encode,
     field::Field64,
@@ -245,6 +249,8 @@ where
     vdaf_instance: VdafInstance,
     host_port: u16,
     http_client: reqwest::Client,
+    min_batch_size: u64,
+    batch_mode: u8,
 }
 
 /// A DAP client implementation, specialized to work with a particular VDAF. See also
@@ -321,6 +327,10 @@ where
         let (leader_aggregator_endpoint, helper_aggregator_endpoint) = task_parameters
             .endpoint_fragments
             .endpoints_for_virtual_network_client();
+        let batch_mode = match task_parameters.batch_mode {
+            BatchMode::TimeInterval => TimeInterval::CODE as u8,
+            BatchMode::LeaderSelected { .. } => LeaderSelected::CODE as u8,
+        };
         ClientImplementation::Container(Box::new(ContainerClientImplementation {
             _container: container,
             leader: leader_aggregator_endpoint,
@@ -331,6 +341,8 @@ where
             vdaf_instance: task_parameters.vdaf.clone(),
             host_port,
             http_client,
+            min_batch_size: task_parameters.min_batch_size,
+            batch_mode,
         }))
     }
 
@@ -356,6 +368,8 @@ where
                         "measurement": inner.vdaf.json_encode_measurement(measurement),
                         "time": time.as_seconds_since_epoch(&inner.time_precision),
                         "time_precision": inner.time_precision.as_seconds(),
+                        "min_batch_size": inner.min_batch_size,
+                        "batch_mode": inner.batch_mode,
                     }))
                     .send()
                     .await?
