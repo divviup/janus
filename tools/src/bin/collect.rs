@@ -1,6 +1,6 @@
 use std::{fmt::Debug, fs::File, path::PathBuf, process::exit, time::Duration as StdDuration};
 
-use anyhow::Context;
+use anyhow::{Context, anyhow};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use clap::{
     Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum,
@@ -54,6 +54,19 @@ impl From<clap::Error> for Error {
     fn from(error: clap::Error) -> Self {
         Error::Clap(error)
     }
+}
+
+/// Decrypting an aggregate share requires binding the task's `TaskConfiguration` into the AAD, but
+/// this tool does not yet accept the parameters needed to reconstruct it, so [`new_collector`]
+/// supplies placeholders. Refuse up front rather than decrypt against an AAD we know is wrong and
+/// fail with an opaque HPKE error.
+fn ensure_aggregate_share_decryption_supported() -> Result<(), Error> {
+    Err(Error::Anyhow(anyhow!(
+        "collecting an aggregate share is not yet supported: the helper endpoint, task info, \
+         minimum batch size, batch config, and VDAF config are needed to reconstruct the task's \
+         TaskConfiguration, and this tool does not yet accept them. The `new-job` subcommand still \
+         works. See https://github.com/divviup/janus/issues/4713."
+    )))
 }
 
 // Parsers for command-line arguments:
@@ -543,6 +556,7 @@ async fn run_collection<V: vdaf::Collector, B: BatchModeExt>(
 where
     V::AggregateResult: Debug,
 {
+    ensure_aggregate_share_decryption_supported()?;
     let collection = new_collector(options, vdaf, http_client)?
         .collection(query, agg_param)
         .collect()
@@ -584,6 +598,7 @@ async fn run_poll_job<V: vdaf::Collector, B: BatchModeExt>(
 where
     V::AggregateResult: Debug,
 {
+    ensure_aggregate_share_decryption_supported()?;
     let collection_job = CollectionJob::new(collection_job_id, query, agg_param.clone());
     let poll_result = new_collector(options, vdaf, http_client)?
         .poll_once(&collection_job)
@@ -623,9 +638,7 @@ fn new_collector<V: vdaf::Collector>(
         vdaf,
         time_precision,
     )
-    // The helper endpoint and remaining TaskConfiguration parameters are not yet exposed as CLI
-    // options; these placeholders make the collector build, but correct aggregate-share decryption
-    // will require real values once the TaskConfiguration is bound into the AAD.
+    // Placeholders (#4713). Only `new-job` gets this far, and it never computes an AAD.
     .with_helper_endpoint("http://unused.helper.example/".try_into().unwrap())
     .with_task_info(Vec::new())
     .with_min_batch_size(0)
@@ -721,7 +734,7 @@ mod tests {
         initialize_rustls,
         test_util::install_test_trace_subscriber,
     };
-    use janus_messages::{TaskId, Url as DapUrl};
+    use janus_messages::{CollectionJobId, TaskId, Url as DapUrl};
     use prio::codec::Encode;
     use rand::random;
     use tempfile::NamedTempFile;
@@ -745,6 +758,61 @@ mod tests {
     #[test]
     fn verify_app() {
         Options::command().debug_assert();
+    }
+
+    /// The paths that decrypt an aggregate share must refuse before contacting the leader, rather
+    /// than build an AAD from the placeholders in `new_collector` and fail to decrypt. See #4713.
+    #[tokio::test]
+    async fn aggregate_share_decryption_refused() {
+        install_test_trace_subscriber();
+        initialize_rustls();
+
+        let hpke_keypair = HpkeKeypair::test();
+        let task_id: TaskId = random();
+        let auth_token = AuthenticationToken::DapAuth(random());
+        let arguments = [
+            "collect".to_string(),
+            format!(
+                "--task-id={}",
+                URL_SAFE_NO_PAD.encode(task_id.get_encoded().unwrap())
+            ),
+            "--leader=https://example.com/dap/".to_string(),
+            format!("--dap-auth-token={}", auth_token.as_str()),
+            format!(
+                "--hpke-config={}",
+                URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded().unwrap())
+            ),
+            format!(
+                "--hpke-private-key={}",
+                URL_SAFE_NO_PAD.encode(hpke_keypair.private_key().as_ref())
+            ),
+            "--vdaf=count".to_string(),
+            "--batch-interval-start=1000000".to_string(),
+            "--batch-interval-duration=1000".to_string(),
+            "--time-precision=300".to_string(),
+        ];
+
+        let collection_job_id: CollectionJobId = random();
+
+        // The default (collect-and-wait) path, and the poll path.
+        for subcommand in [
+            Vec::new(),
+            Vec::from([
+                "poll-job".to_string(),
+                "--".to_string(),
+                collection_job_id.to_string(),
+            ]),
+        ] {
+            let options =
+                Options::try_parse_from(arguments.iter().cloned().chain(subcommand)).unwrap();
+            assert_matches!(
+                run(options).await.unwrap_err(),
+                Error::Anyhow(err) => assert!(
+                    err.to_string().contains("issues/4713"),
+                    "unexpected error: {err}"
+                )
+            );
+        }
     }
 
     #[tokio::test]

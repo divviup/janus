@@ -19,8 +19,9 @@ use janus_core::{
 };
 use janus_messages::{
     AggregateShare as AggregateShareMessage, AggregateShareAad, AggregateShareId,
-    AggregateShareReq, BatchId, BatchSelector, CollectionJobReq, Duration, Interval, MediaType,
-    Query, ReportIdChecksum, Role, Time, TimePrecision,
+    AggregateShareReq, BatchId, BatchSelector, CollectionJobExtension, CollectionJobExtensionType,
+    CollectionJobReq, Duration, Interval, MediaType, Query, ReportIdChecksum, Role, Time,
+    TimePrecision,
     batch_mode::{self, LeaderSelected, TimeInterval},
 };
 use prio::{
@@ -1297,6 +1298,140 @@ async fn aggregate_share_delete_nonexistant() {
             "title": "The aggregate share ID is not recognized.",
             "taskid": format!("{}", task.id()),
             "aggregate_share_id": format!("{}", nonexistent_aggregate_share_id),
+        })
+    );
+}
+
+#[tokio::test]
+async fn aggregate_share_request_batch_selector_inconsistent_with_query() {
+    let HttpHandlerTest {
+        clock: _,
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        router,
+        ..
+    } = HttpHandlerTest::new().await;
+
+    let task = TaskBuilder::new(
+        BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
+        VdafInstance::Fake { rounds: 1 },
+    )
+    .with_helper_aggregator_endpoint("https://helper.example.com/".parse().unwrap())
+    .build();
+    datastore
+        .put_aggregator_task(&task.helper_view().unwrap())
+        .await
+        .unwrap();
+
+    let interval = |start, duration| {
+        Interval::new(
+            Time::from_time_precision_units(start),
+            Duration::from_time_precision_units(duration),
+        )
+        .unwrap()
+    };
+    let queried_interval = interval(10, 10);
+
+    for selected_interval in [
+        interval(30, 10), // disjoint from the queried interval
+        // A strict sub-interval. This is permitted by DAP-19 4.6.4 but not by Janus.
+        interval(12, 5),
+        interval(5, 20), // a superset of the queried interval
+    ] {
+        let request = AggregateShareReq::new(
+            CollectionJobReq::new(
+                Query::new_time_interval(queried_interval),
+                dummy::AggregationParam(0).get_encoded().unwrap(),
+            ),
+            BatchSelector::new_time_interval(selected_interval),
+            0,
+            ReportIdChecksum::default(),
+        );
+
+        let mut response = put_aggregate_share_request(
+            &task,
+            &request,
+            &AggregateShareId::from([0u8; 16]),
+            &router,
+        )
+        .await;
+
+        assert_eq!(
+            response.status(),
+            StatusCode::BAD_REQUEST,
+            "selector {selected_interval} should be rejected"
+        );
+        assert_eq!(
+            take_problem_details(&mut response).await,
+            json!({
+                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "type": "urn:ietf:params:ppm:dap:error:invalidMessage",
+                "title": "The message type for a response was incorrect or the payload was malformed.",
+                "detail": "batch selector is inconsistent with the collection job request's query",
+                "taskid": format!("{}", task.id()),
+            })
+        );
+    }
+}
+
+// The helper validates the collector's extensions itself rather than trusting the leader
+// (DAP-19 §4.6.4).
+#[tokio::test]
+async fn aggregate_share_request_unsupported_extension() {
+    let HttpHandlerTest {
+        clock: _,
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        router,
+        ..
+    } = HttpHandlerTest::new().await;
+
+    let task = TaskBuilder::new(
+        BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
+        VdafInstance::Fake { rounds: 1 },
+    )
+    .with_helper_aggregator_endpoint("https://helper.example.com/".parse().unwrap())
+    .build();
+    datastore
+        .put_aggregator_task(&task.helper_view().unwrap())
+        .await
+        .unwrap();
+
+    let batch_interval = Interval::new(
+        Time::from_time_precision_units(10),
+        Duration::from_time_precision_units(10),
+    )
+    .unwrap();
+
+    let request = AggregateShareReq::new(
+        CollectionJobReq::new(
+            Query::new_time_interval(batch_interval),
+            dummy::AggregationParam(0).get_encoded().unwrap(),
+        )
+        .with_extensions(Vec::from([CollectionJobExtension::new(
+            CollectionJobExtensionType::Unknown(0xbeef),
+            Vec::from([0]),
+        )])),
+        BatchSelector::new_time_interval(batch_interval),
+        0,
+        ReportIdChecksum::default(),
+    );
+
+    let mut response =
+        put_aggregate_share_request(&task, &request, &AggregateShareId::from([0u8; 16]), &router)
+            .await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        take_problem_details(&mut response).await,
+        json!({
+            "status": StatusCode::BAD_REQUEST.as_u16(),
+            "type": "urn:ietf:params:ppm:dap:error:unsupportedExtension",
+            "title": "The message includes an unsupported extension.",
+            "detail": "collection job contains an unsupported extension type",
+            "taskid": format!("{}", task.id()),
         })
     );
 }
