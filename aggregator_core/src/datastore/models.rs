@@ -19,10 +19,10 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    AggregateShareId, AggregationJobId, AggregationJobStep, BatchId, CollectionJobId, Duration,
-    Extension, HpkeCiphertext, HpkeConfigId, Interval, Query, ReportError, ReportId,
-    ReportIdChecksum, ReportMetadata, Role, TaskId, Time, TimePrecision, VerifyContinue,
-    VerifyInit, VerifyResp,
+    AggregateShareId, AggregationJobId, AggregationJobStep, BatchId, CollectionJobId,
+    CollectionJobReq, Duration, Extension, HpkeCiphertext, HpkeConfigId, Interval, Query,
+    ReportError, ReportId, ReportIdChecksum, ReportMetadata, Role, TaskId, Time, TimePrecision,
+    VerifyContinue, VerifyInit, VerifyResp,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
 };
 use postgres_protocol::types::{
@@ -30,7 +30,7 @@ use postgres_protocol::types::{
 };
 use postgres_types::{FromSql, ToSql, accepts, to_sql_checked};
 use prio::{
-    codec::{Encode, encode_u16_items},
+    codec::{CodecError, Encode, encode_u16_items},
     topology::ping_pong::PingPongContinuation,
     vdaf::Aggregatable,
 };
@@ -193,6 +193,7 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> LeaderStoredReport<S
         &self,
         vdaf: &A,
         leader_hpke_keypair: &hpke::HpkeKeypair,
+        task_configuration: &janus_messages::TaskConfiguration,
         report: &janus_messages::Report,
     ) -> bool {
         use janus_core::hpke::{self, HpkeApplicationInfo, Label};
@@ -210,6 +211,7 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> LeaderStoredReport<S
             report.leader_encrypted_input_share(),
             &InputShareAad::new(
                 self.task_id,
+                task_configuration.clone(),
                 report.metadata().clone(),
                 report.public_share().to_vec(),
             )
@@ -236,6 +238,7 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> LeaderStoredReport<S
     #[cfg(feature = "test-util")]
     pub fn generate(
         task_id: TaskId,
+        task_configuration: janus_messages::TaskConfiguration,
         report_metadata: ReportMetadata,
         helper_hpke_config: &janus_messages::HpkeConfig,
         leader_private_extensions: Vec<Extension>,
@@ -258,6 +261,7 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> LeaderStoredReport<S
             .unwrap(),
             &InputShareAad::new(
                 task_id,
+                task_configuration,
                 report_metadata.clone(),
                 transcript.public_share.get_encoded().unwrap(),
             )
@@ -1839,6 +1843,20 @@ impl<const SEED_SIZE: usize, B: BatchMode, A: AsyncAggregator<SEED_SIZE>>
     /// Returns the query that was sent to create this collection job.
     pub fn query(&self) -> &Query<B> {
         &self.query
+    }
+
+    /// Reconstructs the [`CollectionJobReq`] that the Collector originally sent to create this
+    /// collection job. The Leader forwards this to the Helper and binds it into aggregate-share
+    /// AADs, where it must be byte-identical to the Collector's original request.
+    ///
+    /// Collection job extensions are rejected unless empty (DAP-19 §4.6.2), so no extensions are
+    /// stored and the reconstruction carries none. If that enforcement ever relaxes, the original
+    /// extensions must be persisted and replayed here, or the AAD will silently mismatch.
+    pub fn to_collection_job_req(&self) -> Result<CollectionJobReq<B>, CodecError> {
+        Ok(CollectionJobReq::new(
+            self.query.clone(),
+            self.aggregation_parameter.get_encoded()?,
+        ))
     }
 
     /// Return the aggregate share's ID in use for this collection job.

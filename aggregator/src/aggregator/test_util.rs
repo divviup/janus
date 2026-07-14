@@ -12,7 +12,8 @@ use janus_core::{
 };
 use janus_messages::{
     AggregateShare, Extension, HpkeCiphertext, HpkeConfig, HpkeConfigId, InputShareAad,
-    PlaintextInputShare, Report, ReportId, ReportMetadata, ReportShare, Role, TaskId, Time,
+    PlaintextInputShare, Report, ReportId, ReportMetadata, ReportShare, Role, TaskConfiguration,
+    TaskId, Time,
 };
 use prio::{
     codec::Encode,
@@ -85,6 +86,7 @@ pub fn create_report_custom(
 
     let associated_data = InputShareAad::new(
         *task.id(),
+        task.task_configuration().unwrap(),
         report_metadata.clone(),
         public_share.get_encoded().unwrap(),
     );
@@ -134,6 +136,7 @@ pub fn create_report(
 
 pub fn generate_helper_report_share<V: vdaf::Client<16>>(
     task_id: TaskId,
+    task_configuration: TaskConfiguration,
     report_metadata: ReportMetadata,
     cfg: &HpkeConfig,
     public_share: &V::PublicShare,
@@ -149,6 +152,7 @@ pub fn generate_helper_report_share<V: vdaf::Client<16>>(
             .unwrap(),
         &InputShareAad::new(
             task_id,
+            task_configuration,
             report_metadata,
             public_share.get_encoded().unwrap(),
         )

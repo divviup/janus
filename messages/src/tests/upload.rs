@@ -1,5 +1,6 @@
 use prio::codec::Encode;
 
+use super::{TASK_CONFIGURATION_HEX, test_task_configuration};
 use crate::{
     Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, InputShareAad, PlaintextInputShare,
     Report, ReportError, ReportId, ReportMetadata, ReportUploadStatus, TaskId, Time, TimePrecision,
@@ -317,9 +318,38 @@ fn roundtrip_report() {
 
 #[test]
 fn roundtrip_input_share_aad() {
+    // The embedded TaskConfiguration bytes are spliced in from `TASK_CONFIGURATION_HEX` (verified
+    // in `task::roundtrip_task_configuration`) via `format!`, since `concat!` cannot reference a
+    // const.
+    let encoding = format!(
+        "{task_id}{task_configuration}{metadata}{public_share}",
+        task_id = "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C",
+        task_configuration = TASK_CONFIGURATION_HEX,
+        metadata = concat!(
+            "0102030405060708090A0B0C0D0E0F10", // report_id
+            "000000000000D431",                 // time
+            concat!(
+                // public_extensions
+                "0008", // length
+                concat!(
+                    "0000", // extension_type
+                    concat!(
+                        // extension_data
+                        "0004",     // length
+                        "30313233", // opaque data
+                    ),
+                ),
+            ),
+        ),
+        public_share = concat!(
+            "00000004", // length
+            "30313233", // opaque data
+        ),
+    );
     roundtrip_encoding(&[(
         InputShareAad {
             task_id: TaskId::from([12u8; 32]),
+            task_configuration: test_task_configuration(),
             metadata: ReportMetadata::new(
                 ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                 Time::from_seconds_since_epoch(54321, &TEST_TIME_PRECISION),
@@ -327,31 +357,7 @@ fn roundtrip_input_share_aad() {
             ),
             public_share: Vec::from("0123"),
         },
-        concat!(
-            "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C", // task_id
-            concat!(
-                // metadata
-                "0102030405060708090A0B0C0D0E0F10", // report_id
-                "000000000000D431",                 // time
-                concat!(
-                    // public_extensions
-                    "0008", // length
-                    concat!(
-                        "0000", // extension_type
-                        concat!(
-                            // extension_data
-                            "0004",     // length
-                            "30313233", // opaque data
-                        ),
-                    ),
-                ),
-            ),
-            concat!(
-                // public_share
-                "00000004", // length
-                "30313233", // opaque data
-            ),
-        ),
+        encoding.as_str(),
     )])
 }
 

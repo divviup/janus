@@ -1,5 +1,6 @@
 use prio::codec::Decode;
 
+use super::{TASK_CONFIGURATION_HEX, test_task_configuration};
 use crate::{
     AggregateShare, AggregateShareAad, AggregateShareReq, BatchId, BatchSelector,
     CollectionJobExtension, CollectionJobExtensionType, CollectionJobReq, CollectionJobResp,
@@ -551,6 +552,17 @@ fn roundtrip_aggregate_share_req() {
     roundtrip_encoding(&[
         (
             AggregateShareReq::<TimeInterval> {
+                collection_job_req: CollectionJobReq {
+                    query: Query {
+                        query_body: Interval::new(
+                            Time::from_seconds_since_epoch(54321, &TEST_TIME_PRECISION),
+                            Duration::from_seconds(12345, &TEST_TIME_PRECISION),
+                        )
+                        .unwrap(),
+                    },
+                    aggregation_parameter: Vec::new(),
+                    extensions: Vec::new(),
+                },
                 batch_selector: BatchSelector {
                     batch_identifier: Interval::new(
                         Time::from_seconds_since_epoch(54321, &TEST_TIME_PRECISION),
@@ -558,11 +570,28 @@ fn roundtrip_aggregate_share_req() {
                     )
                     .unwrap(),
                 },
-                aggregation_parameter: Vec::new(),
                 report_count: 439,
                 checksum: ReportIdChecksum::get_decoded(&[u8::MIN; 32]).unwrap(),
             },
             concat!(
+                concat!(
+                    // collection_job_req
+                    concat!(
+                        // query
+                        "01",   // batch_mode
+                        "0010", // length
+                        concat!(
+                            "000000000000D431", // start
+                            "0000000000003039", // duration
+                        ),
+                    ),
+                    concat!(
+                        // aggregation_parameter
+                        "00000000", // length
+                        "",         // opaque data
+                    ),
+                    "0000", // extensions (empty)
+                ),
                 concat!(
                     // batch_selector
                     "01",   // batch_mode
@@ -573,17 +602,23 @@ fn roundtrip_aggregate_share_req() {
                         "0000000000003039", // duration
                     ),
                 ),
-                concat!(
-                    // aggregation_parameter
-                    "00000000", // length
-                    "",         // opaque data
-                ),
                 "00000000000001B7", // report_count
                 "0000000000000000000000000000000000000000000000000000000000000000", // checksum
             ),
         ),
         (
             AggregateShareReq::<TimeInterval> {
+                collection_job_req: CollectionJobReq {
+                    query: Query {
+                        query_body: Interval::new(
+                            Time::from_seconds_since_epoch(50821, &TEST_TIME_PRECISION),
+                            Duration::from_seconds(84354, &TEST_TIME_PRECISION),
+                        )
+                        .unwrap(),
+                    },
+                    aggregation_parameter: Vec::from("012345"),
+                    extensions: Vec::new(),
+                },
                 batch_selector: BatchSelector {
                     batch_identifier: Interval::new(
                         Time::from_seconds_since_epoch(50821, &TEST_TIME_PRECISION),
@@ -591,11 +626,28 @@ fn roundtrip_aggregate_share_req() {
                     )
                     .unwrap(),
                 },
-                aggregation_parameter: Vec::from("012345"),
                 report_count: 8725,
                 checksum: ReportIdChecksum::get_decoded(&[u8::MAX; 32]).unwrap(),
             },
             concat!(
+                concat!(
+                    // collection_job_req
+                    concat!(
+                        // query
+                        "01",   // batch_mode
+                        "0010", // length
+                        concat!(
+                            "000000000000C685", // start
+                            "0000000000014982", // duration
+                        ),
+                    ),
+                    concat!(
+                        // aggregation_parameter
+                        "00000006",     // length
+                        "303132333435", // opaque data
+                    ),
+                    "0000", // extensions (empty)
+                ),
                 concat!(
                     // batch_selector
                     "01",   // batch_mode
@@ -605,11 +657,6 @@ fn roundtrip_aggregate_share_req() {
                         "000000000000C685", // start
                         "0000000000014982", // duration
                     ),
-                ),
-                concat!(
-                    // aggregation_parameter
-                    "00000006",     // length
-                    "303132333435", // opaque data
                 ),
                 "0000000000002215", // report_count
                 "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // checksum
@@ -621,14 +668,32 @@ fn roundtrip_aggregate_share_req() {
     roundtrip_encoding(&[
         (
             AggregateShareReq::<LeaderSelected> {
+                collection_job_req: CollectionJobReq {
+                    query: Query { query_body: () },
+                    aggregation_parameter: Vec::new(),
+                    extensions: Vec::new(),
+                },
                 batch_selector: BatchSelector {
                     batch_identifier: BatchId::from([12u8; 32]),
                 },
-                aggregation_parameter: Vec::new(),
                 report_count: 439,
                 checksum: ReportIdChecksum::get_decoded(&[u8::MIN; 32]).unwrap(),
             },
             concat!(
+                concat!(
+                    // collection_job_req
+                    concat!(
+                        // query
+                        "02",   // batch_mode
+                        "0000", // length (empty body)
+                    ),
+                    concat!(
+                        // aggregation_parameter
+                        "00000000", // length
+                        "",         // opaque data
+                    ),
+                    "0000", // extensions (empty)
+                ),
                 concat!(
                     // batch_selector
                     "02",   // batch_mode
@@ -636,36 +701,44 @@ fn roundtrip_aggregate_share_req() {
                     // opaque data
                     "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C",
                 ),
-                concat!(
-                    // aggregation_parameter
-                    "00000000", // length
-                    "",         // opaque data
-                ),
                 "00000000000001B7", // report_count
                 "0000000000000000000000000000000000000000000000000000000000000000", // checksum
             ),
         ),
         (
             AggregateShareReq::<LeaderSelected> {
+                collection_job_req: CollectionJobReq {
+                    query: Query { query_body: () },
+                    aggregation_parameter: Vec::from("012345"),
+                    extensions: Vec::new(),
+                },
                 batch_selector: BatchSelector {
                     batch_identifier: BatchId::from([7u8; 32]),
                 },
-                aggregation_parameter: Vec::from("012345"),
                 report_count: 8725,
                 checksum: ReportIdChecksum::get_decoded(&[u8::MAX; 32]).unwrap(),
             },
             concat!(
+                concat!(
+                    // collection_job_req
+                    concat!(
+                        // query
+                        "02",   // batch_mode
+                        "0000", // length (empty body)
+                    ),
+                    concat!(
+                        // aggregation_parameter
+                        "00000006",     // length
+                        "303132333435", // opaque data
+                    ),
+                    "0000", // extensions (empty)
+                ),
                 concat!(
                     // batch_selector
                     "02",   // batch_mode
                     "0020", // length
                     // opaque data
                     "0707070707070707070707070707070707070707070707070707070707070707",
-                ),
-                concat!(
-                    // aggregation_parameter
-                    "00000006",     // length
-                    "303132333435", // opaque data
                 ),
                 "0000000000002215", // report_count
                 "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // checksum
@@ -727,61 +800,81 @@ fn roundtrip_aggregate_share() {
 
 #[test]
 fn roundtrip_aggregate_share_aad() {
+    // The embedded TaskConfiguration bytes are spliced in from `TASK_CONFIGURATION_HEX` (verified
+    // in `task::roundtrip_task_configuration`) via `format!`, since `concat!` cannot reference a
+    // const.
+
     // TimeInterval.
-    roundtrip_encoding(&[(
-        AggregateShareAad::<TimeInterval> {
-            task_id: TaskId::from([12u8; 32]),
-            aggregation_parameter: Vec::from([0, 1, 2, 3]),
-            batch_selector: BatchSelector {
-                batch_identifier: Interval::new(
-                    Time::from_seconds_since_epoch(54321, &TEST_TIME_PRECISION),
-                    Duration::from_seconds(12345, &TEST_TIME_PRECISION),
-                )
-                .unwrap(),
-            },
-        },
-        concat!(
-            "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C", // task_id
+    let time_interval_encoding = format!(
+        "{task_id}{task_configuration}{collection_job_req}",
+        task_id = "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C",
+        task_configuration = TASK_CONFIGURATION_HEX,
+        collection_job_req = concat!(
             concat!(
-                // aggregation_parameter
-                "00000004", // length
-                "00010203", //opaque data
-            ),
-            concat!(
-                // batch_selector
+                // query
                 "01",   // batch_mode
                 "0010", // length
                 concat!(
-                    // opaque data
                     "000000000000D431", // start
                     "0000000000003039", // duration
                 ),
             ),
-        ),
-    )]);
-
-    // LeaderSelected.
-    roundtrip_encoding(&[(
-        AggregateShareAad::<LeaderSelected> {
-            task_id: TaskId::from([u8::MIN; 32]),
-            aggregation_parameter: Vec::from([3, 2, 1, 0]),
-            batch_selector: BatchSelector {
-                batch_identifier: BatchId::from([7u8; 32]),
-            },
-        },
-        concat!(
-            "0000000000000000000000000000000000000000000000000000000000000000", // task_id
             concat!(
                 // aggregation_parameter
                 "00000004", // length
-                "03020100", //opaque data
+                "00010203", // opaque data
+            ),
+            "0000", // extensions (empty)
+        ),
+    );
+    roundtrip_encoding(&[(
+        AggregateShareAad::<TimeInterval> {
+            task_id: TaskId::from([12u8; 32]),
+            task_configuration: test_task_configuration(),
+            collection_job_req: CollectionJobReq {
+                query: Query {
+                    query_body: Interval::new(
+                        Time::from_seconds_since_epoch(54321, &TEST_TIME_PRECISION),
+                        Duration::from_seconds(12345, &TEST_TIME_PRECISION),
+                    )
+                    .unwrap(),
+                },
+                aggregation_parameter: Vec::from([0, 1, 2, 3]),
+                extensions: Vec::new(),
+            },
+        },
+        time_interval_encoding.as_str(),
+    )]);
+
+    // LeaderSelected.
+    let leader_selected_encoding = format!(
+        "{task_id}{task_configuration}{collection_job_req}",
+        task_id = "0000000000000000000000000000000000000000000000000000000000000000",
+        task_configuration = TASK_CONFIGURATION_HEX,
+        collection_job_req = concat!(
+            concat!(
+                // query
+                "02",   // batch_mode
+                "0000", // length (empty body)
             ),
             concat!(
-                // batch_selector
-                "02",                                                               // batch_mode
-                "0020",                                                             // length
-                "0707070707070707070707070707070707070707070707070707070707070707", // opaque data
+                // aggregation_parameter
+                "00000004", // length
+                "03020100", // opaque data
             ),
+            "0000", // extensions (empty)
         ),
+    );
+    roundtrip_encoding(&[(
+        AggregateShareAad::<LeaderSelected> {
+            task_id: TaskId::from([u8::MIN; 32]),
+            task_configuration: test_task_configuration(),
+            collection_job_req: CollectionJobReq {
+                query: Query { query_body: () },
+                aggregation_parameter: Vec::from([3, 2, 1, 0]),
+                extensions: Vec::new(),
+            },
+        },
+        leader_selected_encoding.as_str(),
     )])
 }

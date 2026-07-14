@@ -53,10 +53,10 @@ use janus_core::{
 use janus_messages::{
     AggregateShare, AggregateShareAad, AggregateShareId, AggregateShareReq,
     AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq, AggregationJobResp,
-    AggregationJobStep, BatchSelector, CollectionJobId, CollectionJobReq, CollectionJobResp,
-    Duration, ExtensionType, HpkeConfig, HpkeConfigList, InputShareAad, Interval,
-    PartialBatchSelector, PlaintextInputShare, Report, ReportError, ReportUploadStatus, Role,
-    TaskConfiguration, TaskId, UploadErrors, Url as DapUrl, VerifyResp,
+    AggregationJobStep, CollectionJobId, CollectionJobReq, CollectionJobResp, Duration,
+    ExtensionType, HpkeConfig, HpkeConfigList, InputShareAad, Interval, PartialBatchSelector,
+    PlaintextInputShare, Report, ReportError, ReportUploadStatus, Role, TaskConfiguration, TaskId,
+    UploadErrors, Url as DapUrl, VerifyResp,
     batch_mode::{LeaderSelected, TimeInterval},
     extensions_are_strictly_increasing,
 };
@@ -1945,6 +1945,8 @@ impl VdafOps {
 
         let input_share_aad = InputShareAad::new(
             *task.id(),
+            task.task_configuration()
+                .map_err(|e| UploadError::Internal(Arc::new(e.into())))?,
             report.metadata().clone(),
             report.public_share().to_vec(),
         )
@@ -3422,11 +3424,10 @@ impl VdafOps {
                         .map_err(Error::MessageEncode)?,
                     &AggregateShareAad::new(
                         *collection_job.task_id(),
+                        task.task_configuration()?,
                         collection_job
-                            .aggregation_parameter()
-                            .get_encoded()
+                            .to_collection_job_req()
                             .map_err(Error::MessageEncode)?,
-                        BatchSelector::<B>::new(collection_job.batch_identifier().clone()),
                     )
                     .get_encoded()
                     .map_err(Error::MessageEncode)?,
@@ -3651,11 +3652,18 @@ impl VdafOps {
                 .map_err(Error::MessageEncode)?,
             &AggregateShareAad::new(
                 *task.id(),
-                aggregate_share_job
-                    .aggregation_parameter()
-                    .get_encoded()
-                    .map_err(Error::MessageEncode)?,
-                BatchSelector::<B>::new(aggregate_share_job.batch_identifier().clone()),
+                task.task_configuration()?,
+                // On the poll path we no longer have the Collector's original CollectionJobReq
+                // (there is no incoming AggregateShareReq), so reconstruct it from the stored job.
+                // This must be byte-identical to the request the Collector sent; see
+                // `query_for_collection_identifier`.
+                CollectionJobReq::new(
+                    B::query_for_collection_identifier(aggregate_share_job.batch_identifier()),
+                    aggregate_share_job
+                        .aggregation_parameter()
+                        .get_encoded()
+                        .map_err(Error::MessageEncode)?,
+                ),
             )
             .get_encoded()
             .map_err(Error::MessageEncode)?,
@@ -4006,11 +4014,8 @@ impl VdafOps {
                 .map_err(Error::MessageEncode)?,
             &AggregateShareAad::new(
                 *task.id(),
-                aggregate_share_job
-                    .aggregation_parameter()
-                    .get_encoded()
-                    .map_err(Error::MessageEncode)?,
-                aggregate_share_req.batch_selector().clone(),
+                task.task_configuration()?,
+                aggregate_share_req.collection_job_req().clone(),
             )
             .get_encoded()
             .map_err(Error::MessageEncode)?,
