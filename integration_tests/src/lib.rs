@@ -25,7 +25,7 @@ pub struct TaskParameters {
     /// The task's `task_info`, sourced from the provisioned task so the client and collector bind
     /// a byte-identical `TaskConfiguration` into their HPKE AADs.
     pub task_info: Vec<u8>,
-    /// The task's optional collection interval, for the same byte-identity reason.
+    /// The optional task interval, for the same byte-identity reason.
     pub task_interval: Option<Interval>,
     pub collector_hpke_keypair: HpkeKeypair,
     pub collector_auth_token: AuthenticationToken,
