@@ -430,7 +430,7 @@ async fn require_global_hpke_keys() {
         .build()
         .unwrap();
 
-    let mut test_conn = get(format!("/hpke_config?task_id={}", &random::<TaskId>()))
+    let mut test_conn = get(format!("/hpke_config?task_id={}", random::<TaskId>()))
         .run_async(&handler)
         .await;
     assert_eq!(test_conn.status(), Some(Status::Ok));

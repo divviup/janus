@@ -171,20 +171,17 @@ pub(crate) fn expires_at<'a, I: IntoIterator<Item = &'a HeaderValue>>(
             return Some(Instant::now());
         }
 
-        if let Some(max_age) = directive.strip_prefix("max-age=") {
-            let parsed = match max_age.parse() {
-                Ok(parsed) => parsed,
-                Err(_) => return None,
-            };
+        let max_age = directive.strip_prefix("max-age=")?;
+        let parsed = match max_age.parse() {
+            Ok(parsed) => parsed,
+            Err(_) => return None,
+        };
 
-            if expires_at.is_some() {
-                return None;
-            }
-
-            expires_at = Instant::now().checked_add(Duration::from_secs(parsed));
-        } else {
+        if expires_at.is_some() {
             return None;
         }
+
+        expires_at = Instant::now().checked_add(Duration::from_secs(parsed));
     }
 
     expires_at

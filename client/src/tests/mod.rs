@@ -267,7 +267,7 @@ async fn unsupported_hpke_algorithms() {
     let mock = server
         .mock(
             "GET",
-            format!("/hpke_config?task_id={}", &client_parameters.task_id).as_str(),
+            format!("/hpke_config?task_id={}", client_parameters.task_id).as_str(),
         )
         .with_status(200)
         .with_header(CONTENT_TYPE.as_str(), HpkeConfigList::MEDIA_TYPE)

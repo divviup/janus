@@ -636,7 +636,7 @@ async fn delete_task() {
 
     // Verify: deleting a task succeeds (and actually deletes the task).
     assert_response!(
-        delete(format!("/tasks/{}", &task_id))
+        delete(format!("/tasks/{}", task_id))
             .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
             .with_request_header("Accept", CONTENT_TYPE)
             .run_async(&handler)
@@ -656,7 +656,7 @@ async fn delete_task() {
 
     // Verify: deleting a task twice returns NoContent.
     assert_response!(
-        delete(format!("/tasks/{}", &task_id))
+        delete(format!("/tasks/{}", task_id))
             .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
             .with_request_header("Accept", CONTENT_TYPE)
             .run_async(&handler)
@@ -667,7 +667,7 @@ async fn delete_task() {
 
     // Verify: deleting an arbitrary nonexistent task ID returns NoContent.
     assert_response!(
-        delete(format!("/tasks/{}", &random::<TaskId>()))
+        delete(format!("/tasks/{}", random::<TaskId>()))
             .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
             .with_request_header("Accept", CONTENT_TYPE)
             .run_async(&handler)
@@ -678,7 +678,7 @@ async fn delete_task() {
 
     // Verify: unauthorized requests are denied appropriately.
     assert_response!(
-        delete(format!("/tasks/{}", &task_id))
+        delete(format!("/tasks/{}", task_id))
             .with_request_header("Accept", CONTENT_TYPE)
             .run_async(&handler)
             .await,
@@ -827,7 +827,7 @@ async fn get_task_upload_metrics() {
 
     // Verify: requesting metrics on a fresh task returns zeroes.
     assert_response!(
-        get(format!("/tasks/{}/metrics/uploads", &task_id))
+        get(format!("/tasks/{}/metrics/uploads", task_id))
             .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
             .with_request_header("Accept", CONTENT_TYPE)
             .run_async(&handler)
@@ -850,7 +850,7 @@ async fn get_task_upload_metrics() {
     .await
     .unwrap();
     assert_response!(
-        get(format!("/tasks/{}/metrics/uploads", &task_id))
+        get(format!("/tasks/{}/metrics/uploads", task_id))
             .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
             .with_request_header("Accept", CONTENT_TYPE)
             .run_async(&handler)
@@ -864,7 +864,7 @@ async fn get_task_upload_metrics() {
 
     // Verify: requesting metrics on a nonexistent task returns NotFound.
     assert_response!(
-        get(format!("/tasks/{}/metrics/uploads", &random::<TaskId>()))
+        get(format!("/tasks/{}/metrics/uploads", random::<TaskId>()))
             .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
             .with_request_header("Accept", CONTENT_TYPE)
             .run_async(&handler)
@@ -875,7 +875,7 @@ async fn get_task_upload_metrics() {
 
     // Verify: unauthorized requests are denied appropriately.
     assert_response!(
-        get(format!("/tasks/{}/metrics/uploads", &task_id))
+        get(format!("/tasks/{}/metrics/uploads", task_id))
             .with_request_header("Accept", CONTENT_TYPE)
             .run_async(&handler)
             .await,
@@ -954,7 +954,7 @@ async fn get_task_aggregation_metrics() {
     assert_response!(
         get(format!(
             "/tasks/{}/metrics/aggregations",
-            &random::<TaskId>()
+            random::<TaskId>()
         ))
         .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
         .with_request_header("Accept", CONTENT_TYPE)
