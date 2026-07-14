@@ -90,7 +90,7 @@ async fn get_config() {
     .unwrap();
     assert!(
         body.contains(concat!(
-            r#""protocol":"DAP-18","dap_url":"https://dap.url/","role":"Either","vdafs":"#,
+            r#""protocol":"DAP-18","dap_url":"https://dap.url","role":"Either","vdafs":"#,
             r#"["Prio3Count","Prio3Sum","Prio3Histogram","Prio3SumVec"],"#,
             r#""batch_modes":["TimeInterval","LeaderSelected"],"#,
             r#""features":["TokenHash","UploadMetrics","TimeBucketedLeaderSelected","#,
@@ -2387,6 +2387,7 @@ fn task_resp_serialization() {
     let task = AggregatorTask::new(
         TaskId::from([0u8; 32]),
         "https://helper.com/".parse().unwrap(),
+        "https://leader.com/".parse().unwrap(),
         BatchMode::LeaderSelected {
             batch_time_window_size: None,
         },

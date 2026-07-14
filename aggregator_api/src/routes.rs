@@ -205,6 +205,7 @@ pub(super) async fn post_task<C: Clock>(
         AggregatorTask::new(
             task_id,
             /* peer_aggregator_endpoint */ req.peer_aggregator_endpoint,
+            /* own_aggregator_endpoint */ state.config.public_dap_url.clone(),
             /* batch_mode */ req.batch_mode,
             /* vdaf */ req.vdaf,
             vdaf_verify_key,

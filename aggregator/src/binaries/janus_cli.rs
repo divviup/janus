@@ -1619,6 +1619,7 @@ mod tests {
         // or HPKE keys.
         let serialized_task_yaml = r#"
 - peer_aggregator_endpoint: https://helper
+  own_aggregator_endpoint: https://leader
   batch_mode: TimeInterval
   vdaf: !Prio3Sum
     max_measurement: 4096
@@ -1644,6 +1645,7 @@ mod tests {
     hash: MJOoBO_ysLEuG_lv2C37eEOf1Ngetsr-Ers0ZYj4vdQ
   hpke_keys: []
 - peer_aggregator_endpoint: https://leader
+  own_aggregator_endpoint: https://helper
   batch_mode: TimeInterval
   aggregation_mode: Asynchronous
   vdaf: !Prio3Sum

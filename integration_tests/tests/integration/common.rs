@@ -113,6 +113,8 @@ pub fn build_test_task(
         vdaf: task_builder.vdaf().clone(),
         min_batch_size: task_builder.min_batch_size(),
         time_precision: *task_builder.time_precision(),
+        task_info: task_builder.task_info().to_vec(),
+        task_interval: task_builder.task_interval().copied(),
         collector_hpke_keypair: task_builder.collector_hpke_keypair().clone(),
         collector_auth_token: task_builder.collector_auth_token().clone(),
         collector_max_interval,
@@ -260,6 +262,13 @@ where
         vdaf,
         task_parameters.time_precision,
     )
+    // The helper endpoint and task_info are threaded through for AAD byte-identity in a later
+    // stage; placeholders for now.
+    .with_helper_endpoint("http://unused.helper.example/".try_into().unwrap())
+    .with_task_info(Vec::new())
+    .with_min_batch_size(task_parameters.min_batch_size)
+    .with_batch_config(task_parameters.batch_mode.to_batch_config())
+    .with_vdaf_config(task_parameters.vdaf.to_vdaf_config().unwrap())
     .with_http_request_backoff(test_http_request_exponential_backoff())
     .with_collect_poll_backoff(
         ExponentialWithTotalDelayBuilder::new()

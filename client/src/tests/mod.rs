@@ -7,8 +7,8 @@ use janus_core::{
     test_util::install_test_trace_subscriber,
 };
 use janus_messages::{
-    HpkeConfigList, MediaType, ReportError, ReportUploadStatus, Role, Time, TimePrecision,
-    UploadErrors, UploadRequest, Url as DapUrl,
+    BatchConfig, HpkeConfigList, MediaType, ReportError, ReportUploadStatus, Role, Time,
+    TimePrecision, UploadErrors, UploadRequest, Url as DapUrl, VdafConfig,
 };
 use prio::{
     codec::Encode,
@@ -31,11 +31,36 @@ async fn setup_client<V: vdaf::Client<16>>(server: &mockito::Server, vdaf: V) ->
         vdaf,
     )
     .with_backoff(test_http_request_exponential_backoff())
+    .with_task_info(b"test task".to_vec())
+    .with_min_batch_size(1)
+    .with_batch_config(BatchConfig::TimeInterval)
+    .with_vdaf_config(VdafConfig::Prio3Count)
     .with_leader_hpke_config(HpkeKeypair::test().config().clone())
     .with_helper_hpke_config(HpkeKeypair::test().config().clone())
     .build()
     .await
     .unwrap()
+}
+
+#[tokio::test]
+async fn build_fails_without_required_task_configuration() {
+    initialize_rustls();
+    // Omitting the required TaskConfiguration setters must fail fast at build(), before any network
+    // access, rather than deferring to the first upload's AAD construction.
+    let server_url = DapUrl::try_from("https://example.com/").unwrap();
+    let err = Client::builder(
+        random(),
+        server_url.clone(),
+        server_url,
+        TimePrecision::from_seconds(100),
+        Prio3::new_count(2).unwrap(),
+    )
+    .with_leader_hpke_config(HpkeKeypair::test().config().clone())
+    .with_helper_hpke_config(HpkeKeypair::test().config().clone())
+    .build()
+    .await
+    .unwrap_err();
+    assert_matches!(err, Error::InvalidParameter(_));
 }
 
 #[test]

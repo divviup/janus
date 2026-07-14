@@ -34,7 +34,7 @@ pub(crate) enum AggregatorRole {
 pub(crate) struct AggregatorApiConfig {
     pub protocol: &'static str,
     #[educe(Debug(method(std::fmt::Display::fmt)))]
-    pub dap_url: Url,
+    pub dap_url: DapUrl,
     pub role: AggregatorRole,
     pub vdafs: Vec<SupportedVdaf>,
     pub batch_modes: Vec<SupportedBatchMode>,

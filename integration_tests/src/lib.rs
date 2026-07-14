@@ -6,7 +6,7 @@ use janus_aggregator_core::task::BatchMode;
 use janus_client::OhttpConfig;
 use janus_collector::AuthenticationToken;
 use janus_core::{hpke::HpkeKeypair, vdaf::VdafInstance};
-use janus_messages::{TaskId, TimePrecision};
+use janus_messages::{Interval, TaskId, TimePrecision};
 use url::Url;
 
 pub mod client;
@@ -22,6 +22,11 @@ pub struct TaskParameters {
     pub vdaf: VdafInstance,
     pub min_batch_size: u64,
     pub time_precision: TimePrecision,
+    /// The task's `task_info`, sourced from the provisioned task so the client and collector bind
+    /// a byte-identical `TaskConfiguration` into their HPKE AADs.
+    pub task_info: Vec<u8>,
+    /// The optional task interval, for the same byte-identity reason.
+    pub task_interval: Option<Interval>,
     pub collector_hpke_keypair: HpkeKeypair,
     pub collector_auth_token: AuthenticationToken,
     pub collector_max_interval: time::Duration,

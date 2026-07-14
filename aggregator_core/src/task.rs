@@ -8,12 +8,13 @@ use chrono::{DateTime, Utc};
 use educe::Educe;
 use janus_core::{
     auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
+    task_config::build_task_configuration,
     url_for_join,
     vdaf::VdafInstance,
 };
 use janus_messages::{
     AggregateShareId, AggregationJobId, AggregationJobStep, BatchConfig, Duration, HpkeConfig,
-    Interval, Role, TaskId, Time, TimePrecision, Url as DapUrl, batch_mode,
+    Interval, Role, TaskConfiguration, TaskId, Time, TimePrecision, Url as DapUrl, batch_mode,
 };
 use postgres_types::{FromSql, ToSql};
 use rand::{RngExt, distr::StandardUniform, random, rng};
@@ -33,6 +34,8 @@ pub enum Error {
     AggregatorVerifyKeySize,
     #[error("base64 decode error")]
     Base64Decode(#[from] base64::DecodeError),
+    #[error(transparent)]
+    Message(#[from] janus_messages::Error),
 }
 
 /// Identifiers for batch modes used by a task, along with batch mode-specific configuration.
@@ -58,7 +61,7 @@ pub enum BatchMode {
 
 impl BatchMode {
     /// Returns the [`BatchConfig`] message representation of this batch mode, for inclusion in a
-    /// [`TaskConfiguration`](janus_messages::TaskConfiguration).
+    /// [`TaskConfiguration`].
     ///
     /// This is the inverse of [`BatchMode::try_from(&BatchConfig)`](TryFrom). The
     /// `batch_time_window_size` of [`BatchMode::LeaderSelected`] is a Janus-specific parameter that
@@ -254,11 +257,22 @@ pub struct AggregatorTask {
     /// URL relative to which the peer aggregator's API endpoints are found.
     #[educe(Debug(method(std::fmt::Display::fmt)))]
     peer_aggregator_endpoint: DapUrl,
+    /// URL relative to which this aggregator's own API endpoints are found.
+    #[educe(Debug(method(std::fmt::Display::fmt)))]
+    own_aggregator_endpoint: DapUrl,
     /// Parameters specific to either aggregator role
     aggregator_parameters: AggregatorTaskParameters,
     /// Deactivation instant. When set and reached (per the aggregator's clock), the
     /// aggregator stops accepting reports for this task. This is Janus-specific state.
     deactivate_at: Option<DateTime<Utc>>,
+    /// For taskprov tasks, the `TaskConfiguration` exactly as received on the wire, bound verbatim
+    /// into HPKE AADs. `None` for API-provisioned tasks, whose `TaskConfiguration` is synthesized
+    /// from the stored parameters. Reconstructing a taskprov config from those parameters is not
+    /// byte-safe (it would drop DP strategies and unknown extensions), so the wire bytes are kept.
+    ///
+    /// Persisted only via the datastore, not [`SerializedAggregatorTask`] (like `deactivate_at`);
+    /// taskprov tasks are never provisioned through that serde form.
+    taskprov_task_config: Option<TaskConfiguration>,
 }
 
 impl AggregatorTask {
@@ -267,6 +281,7 @@ impl AggregatorTask {
     pub fn new(
         task_id: TaskId,
         peer_aggregator_endpoint: DapUrl,
+        own_aggregator_endpoint: DapUrl,
         batch_mode: BatchMode,
         vdaf: VdafInstance,
         vdaf_verify_key: SecretBytes,
@@ -293,6 +308,7 @@ impl AggregatorTask {
         Self::new_with_common_parameters(
             common_parameters,
             peer_aggregator_endpoint,
+            own_aggregator_endpoint,
             aggregator_parameters,
         )
     }
@@ -300,11 +316,13 @@ impl AggregatorTask {
     fn new_with_common_parameters(
         common_parameters: CommonTaskParameters,
         peer_aggregator_endpoint: DapUrl,
+        own_aggregator_endpoint: DapUrl,
         aggregator_parameters: AggregatorTaskParameters,
     ) -> Result<Self, Error> {
         // Reject an unparseable endpoint at construction. Without this check a
         // malformed endpoint would persist and never surface a user-visible error.
         Url::try_from(&peer_aggregator_endpoint)?;
+        Url::try_from(&own_aggregator_endpoint)?;
 
         if let BatchMode::LeaderSelected {
             batch_time_window_size: Some(batch_time_window_size),
@@ -326,8 +344,10 @@ impl AggregatorTask {
         Ok(Self {
             common_parameters,
             peer_aggregator_endpoint,
+            own_aggregator_endpoint,
             aggregator_parameters,
             deactivate_at: None,
+            taskprov_task_config: None,
         })
     }
 
@@ -349,6 +369,66 @@ impl AggregatorTask {
     /// Retrieves the peer aggregator endpoint associated with this task.
     pub fn peer_aggregator_endpoint(&self) -> &DapUrl {
         &self.peer_aggregator_endpoint
+    }
+
+    /// Retrieves this aggregator's own endpoint associated with this task.
+    pub fn own_aggregator_endpoint(&self) -> &DapUrl {
+        &self.own_aggregator_endpoint
+    }
+
+    /// The received wire `TaskConfiguration` for a taskprov task, or `None` for an API-provisioned
+    /// task.
+    pub fn taskprov_task_config(&self) -> Option<&TaskConfiguration> {
+        self.taskprov_task_config.as_ref()
+    }
+
+    /// Returns the canonical [`TaskConfiguration`] for this task, as bound into HPKE AADs.
+    ///
+    /// For taskprov tasks this is the wire configuration verbatim; for API-provisioned tasks it is
+    /// synthesized from the stored parameters, pairing this aggregator's own and peer endpoints
+    /// into leader/helper by role.
+    pub fn task_configuration(&self) -> Result<TaskConfiguration, Error> {
+        if let Some(task_config) = &self.taskprov_task_config {
+            return Ok(task_config.clone());
+        }
+
+        // A taskprov task must carry its wire configuration verbatim (set in `taskprov_opt_in` and
+        // rehydrated on DB read); synthesizing one from the stored parameters is not byte-faithful.
+        // Reaching here for a taskprov task means the config was lost, so fail loudly rather than
+        // bind a wrong AAD.
+        if matches!(
+            self.aggregator_parameters,
+            AggregatorTaskParameters::TaskprovHelper { .. }
+        ) {
+            return Err(Error::InvalidParameter(
+                "taskprov task is missing its verbatim TaskConfiguration",
+            ));
+        }
+
+        let (leader_endpoint, helper_endpoint) = match self.role() {
+            Role::Leader => (
+                &self.own_aggregator_endpoint,
+                &self.peer_aggregator_endpoint,
+            ),
+            Role::Helper => (
+                &self.peer_aggregator_endpoint,
+                &self.own_aggregator_endpoint,
+            ),
+            _ => return Err(Error::InvalidParameter("task role is not an aggregator")),
+        };
+
+        Ok(build_task_configuration(
+            self.task_info().to_vec(),
+            leader_endpoint.clone(),
+            helper_endpoint.clone(),
+            *self.time_precision(),
+            self.min_batch_size(),
+            self.batch_mode().to_batch_config(),
+            self.vdaf()
+                .to_vdaf_config()
+                .map_err(Error::InvalidParameter)?,
+            self.task_interval().copied(),
+        )?)
     }
 
     /// Retrieves the batch mode associated with this task.
@@ -389,6 +469,12 @@ impl AggregatorTask {
     /// Returns this task with its deactivation instant set. (Janus-specific)
     pub fn with_deactivate_at(mut self, deactivate_at: Option<DateTime<Utc>>) -> Self {
         self.deactivate_at = deactivate_at;
+        self
+    }
+
+    /// Returns this task with its verbatim taskprov [`TaskConfiguration`] set.
+    pub fn with_taskprov_task_config(mut self, task_config: TaskConfiguration) -> Self {
+        self.taskprov_task_config = Some(task_config);
         self
     }
 
@@ -683,6 +769,7 @@ impl AggregatorTaskParameters {
 pub struct SerializedAggregatorTask {
     task_id: Option<TaskId>,
     peer_aggregator_endpoint: DapUrl,
+    own_aggregator_endpoint: DapUrl,
     batch_mode: BatchMode,
     aggregation_mode: Option<AggregationMode>,
     vdaf: VdafInstance,
@@ -743,6 +830,7 @@ impl Serialize for AggregatorTask {
         SerializedAggregatorTask {
             task_id: Some(*self.id()),
             peer_aggregator_endpoint: self.peer_aggregator_endpoint().clone(),
+            own_aggregator_endpoint: self.own_aggregator_endpoint().clone(),
             batch_mode: *self.batch_mode(),
             aggregation_mode: self.aggregator_parameters.aggregation_mode().copied(),
             vdaf: self.vdaf().clone(),
@@ -837,6 +925,7 @@ impl TryFrom<SerializedAggregatorTask> for AggregatorTask {
         AggregatorTask::new(
             task_id,
             serialized_task.peer_aggregator_endpoint,
+            serialized_task.own_aggregator_endpoint,
             serialized_task.batch_mode,
             serialized_task.vdaf,
             SecretBytes::new(URL_SAFE_NO_PAD.decode(vdaf_verify_key)?),
@@ -1138,6 +1227,7 @@ pub mod test_util {
             AggregatorTask::new_with_common_parameters(
                 self.common_parameters.clone(),
                 to_dap_url(&self.helper_aggregator_endpoint),
+                to_dap_url(&self.leader_aggregator_endpoint),
                 AggregatorTaskParameters::Leader {
                     aggregator_auth_token: self.aggregator_auth_token.clone(),
                     collector_auth_token_hash: AuthenticationTokenHash::from(
@@ -1153,6 +1243,7 @@ pub mod test_util {
             AggregatorTask::new_with_common_parameters(
                 self.common_parameters.clone(),
                 to_dap_url(&self.leader_aggregator_endpoint),
+                to_dap_url(&self.helper_aggregator_endpoint),
                 AggregatorTaskParameters::Helper {
                     aggregator_auth_token_hash: AuthenticationTokenHash::from(
                         &self.aggregator_auth_token,
@@ -1168,6 +1259,7 @@ pub mod test_util {
             AggregatorTask::new_with_common_parameters(
                 self.common_parameters.clone(),
                 to_dap_url(&self.leader_aggregator_endpoint),
+                to_dap_url(&self.helper_aggregator_endpoint),
                 AggregatorTaskParameters::TaskprovHelper {
                     aggregation_mode: self.helper_aggregation_mode,
                 },
@@ -1423,6 +1515,16 @@ pub mod test_util {
             self
         }
 
+        /// Gets the `task_info` field for the eventual task.
+        pub fn task_info(&self) -> &[u8] {
+            &self.0.common_parameters.task_info
+        }
+
+        /// Gets the task interval for the eventual task.
+        pub fn task_interval(&self) -> Option<&Interval> {
+            self.0.common_parameters.task_interval.as_ref()
+        }
+
         /// Gets the colector HPKE keypair for the eventual task.
         pub fn collector_hpke_keypair(&self) -> &HpkeKeypair {
             self.0.collector_hpke_keypair()
@@ -1451,12 +1553,13 @@ mod tests {
     use chrono::TimeDelta;
     use janus_core::{
         auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
+        task_config::build_task_configuration,
         test_util::roundtrip_encoding,
         vdaf::vdaf_dp_strategies,
     };
     use janus_messages::{
         BatchConfig, Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId,
-        HpkePublicKey, Interval, TaskId, Time, TimePrecision, Url as DapUrl,
+        HpkePublicKey, Interval, TaskId, Time, TimePrecision, Url as DapUrl, VdafConfig,
     };
     use rand::random;
     use serde_json::json;
@@ -1553,6 +1656,151 @@ mod tests {
     }
 
     #[test]
+    fn own_endpoint_is_this_aggregators_endpoint() {
+        // Each aggregator's own endpoint is its own side of the pair (not the peer's); a swap here
+        // would produce a mismatched TaskConfiguration and break every AAD decryption.
+        let task = TaskBuilder::new(
+            BatchMode::TimeInterval,
+            AggregationMode::Synchronous,
+            VdafInstance::Prio3Count,
+        )
+        .with_leader_aggregator_endpoint("https://leader.example.com/".parse().unwrap())
+        .with_helper_aggregator_endpoint("https://helper.example.com/".parse().unwrap())
+        .build();
+
+        let leader = task.leader_view().unwrap();
+        assert_eq!(
+            leader.own_aggregator_endpoint().as_str(),
+            "https://leader.example.com/"
+        );
+        assert_eq!(
+            leader.peer_aggregator_endpoint().as_str(),
+            "https://helper.example.com/"
+        );
+
+        let helper = task.helper_view().unwrap();
+        assert_eq!(
+            helper.own_aggregator_endpoint().as_str(),
+            "https://helper.example.com/"
+        );
+        assert_eq!(
+            helper.peer_aggregator_endpoint().as_str(),
+            "https://leader.example.com/"
+        );
+    }
+
+    #[test]
+    fn own_endpoint_stored_verbatim() {
+        // The production constructor must not re-encode the own endpoint: a non-canonical value
+        // (mixed-case host, no trailing slash) is bound verbatim into the task's TaskConfiguration
+        // (DAP-18 §4.1). A `url::Url`-normalizing path would silently canonicalize it.
+        let noncanonical = "https://Example.COM/DAP";
+        let task = TaskBuilder::new(
+            BatchMode::TimeInterval,
+            AggregationMode::Synchronous,
+            VdafInstance::Prio3Count,
+        )
+        .build()
+        .leader_view()
+        .unwrap();
+        let task = AggregatorTask::new(
+            *task.id(),
+            task.peer_aggregator_endpoint().clone(),
+            noncanonical.try_into().unwrap(),
+            *task.batch_mode(),
+            task.vdaf().clone(),
+            task.opaque_vdaf_verify_key().clone(),
+            task.task_interval().copied(),
+            task.report_expiry_age().copied(),
+            task.min_batch_size(),
+            *task.time_precision(),
+            *task.tolerable_clock_skew(),
+            task.task_info().to_vec(),
+            task.aggregator_parameters().clone(),
+        )
+        .unwrap();
+        assert_eq!(task.own_aggregator_endpoint().as_str(), noncanonical);
+    }
+
+    #[test]
+    fn task_configuration_synthesized_for_api_task() {
+        // For an API-provisioned task, task_configuration() synthesizes from stored parameters,
+        // pairing own/peer endpoints into leader/helper by role. Both aggregators' views must
+        // produce byte-identical configurations, or their AADs would not match.
+        let task = TaskBuilder::new(
+            BatchMode::TimeInterval,
+            AggregationMode::Synchronous,
+            VdafInstance::Prio3Count,
+        )
+        .with_leader_aggregator_endpoint("https://leader.example.com/".parse().unwrap())
+        .with_helper_aggregator_endpoint("https://helper.example.com/".parse().unwrap())
+        .build();
+
+        let leader_config = task.leader_view().unwrap().task_configuration().unwrap();
+        assert_eq!(
+            leader_config.leader_aggregator_endpoint().as_str(),
+            "https://leader.example.com/"
+        );
+        assert_eq!(
+            leader_config.helper_aggregator_endpoint().as_str(),
+            "https://helper.example.com/"
+        );
+        assert_eq!(
+            leader_config,
+            task.helper_view().unwrap().task_configuration().unwrap()
+        );
+    }
+
+    #[test]
+    fn task_configuration_verbatim_for_taskprov() {
+        // A taskprov task binds the received wire configuration verbatim, not one synthesized from
+        // its stored parameters. Prove this by giving the wire config a distinct task_info: if the
+        // task re-synthesized, it would use the task's own task_info instead.
+        let wire = build_task_configuration(
+            b"wire-specific-task-info".to_vec(),
+            "https://leader.example.com/".try_into().unwrap(),
+            "https://helper.example.com/".try_into().unwrap(),
+            TimePrecision::from_seconds(3600),
+            100,
+            BatchConfig::TimeInterval,
+            VdafConfig::Prio3Count,
+            None,
+        )
+        .unwrap();
+
+        let task = TaskBuilder::new(
+            BatchMode::TimeInterval,
+            AggregationMode::Synchronous,
+            VdafInstance::Prio3Count,
+        )
+        .build()
+        .taskprov_helper_view()
+        .unwrap()
+        .with_taskprov_task_config(wire.clone());
+
+        assert_eq!(task.task_configuration().unwrap(), wire);
+        assert_eq!(
+            task.task_configuration().unwrap().task_info(),
+            b"wire-specific-task-info"
+        );
+    }
+
+    #[test]
+    fn task_configuration_taskprov_without_config_errors() {
+        // A taskprov task whose verbatim wire config is absent must fail loudly rather than
+        // silently synthesize a (non-byte-faithful) config from its stored parameters.
+        let task = TaskBuilder::new(
+            BatchMode::TimeInterval,
+            AggregationMode::Synchronous,
+            VdafInstance::Prio3Count,
+        )
+        .build()
+        .taskprov_helper_view()
+        .unwrap();
+        assert_matches!(task.task_configuration(), Err(Error::InvalidParameter(_)));
+    }
+
+    #[test]
     fn aggregator_request_paths() {
         for (prefix, task) in [
             (
@@ -1645,6 +1893,7 @@ mod tests {
         AggregatorTask::new(
             TaskId::from([0; 32]),
             peer_aggregator_endpoint,
+            "https://example.com/".parse().unwrap(),
             BatchMode::TimeInterval,
             VdafInstance::Prio3Count,
             SecretBytes::new(b"1234567812345678".to_vec()),
@@ -1709,13 +1958,15 @@ mod tests {
             &[
                 Token::Struct {
                     name: "SerializedAggregatorTask",
-                    len: 18,
+                    len: 19,
                 },
                 Token::Str("task_id"),
                 Token::Some,
                 Token::Str("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
                 Token::Str("peer_aggregator_endpoint"),
                 Token::Str("https://example.net/"),
+                Token::Str("own_aggregator_endpoint"),
+                Token::Str("https://example.com/"),
                 Token::Str("batch_mode"),
                 Token::UnitVariant {
                     name: "BatchMode",
@@ -1820,6 +2071,7 @@ mod tests {
             &AggregatorTask::new(
                 TaskId::from([255; 32]),
                 "https://example.com/".parse().unwrap(),
+                "https://example.net/".parse().unwrap(),
                 BatchMode::LeaderSelected {
                     batch_time_window_size: None,
                 },
@@ -1863,13 +2115,15 @@ mod tests {
             &[
                 Token::Struct {
                     name: "SerializedAggregatorTask",
-                    len: 18,
+                    len: 19,
                 },
                 Token::Str("task_id"),
                 Token::Some,
                 Token::Str("__________________________________________8"),
                 Token::Str("peer_aggregator_endpoint"),
                 Token::Str("https://example.com/"),
+                Token::Str("own_aggregator_endpoint"),
+                Token::Str("https://example.net/"),
                 Token::Str("batch_mode"),
                 Token::StructVariant {
                     name: "BatchMode",

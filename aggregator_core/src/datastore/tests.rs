@@ -343,6 +343,88 @@ async fn roundtrip_task(ephemeral_datastore: EphemeralDatastore) {
 
 #[rstest_reuse::apply(schema_versions_template)]
 #[tokio::test]
+async fn roundtrip_task_own_endpoint_verbatim(ephemeral_datastore: EphemeralDatastore) {
+    // A non-canonical own endpoint (mixed-case host, no trailing slash) must survive a DB
+    // round-trip byte-identical: the bytes are bound into the task's TaskConfiguration for HPKE
+    // AADs, and any re-encoding in the datastore write/read path would break decryption (DAP-18
+    // §4.1).
+    install_test_trace_subscriber();
+    let ds = ephemeral_datastore.datastore(MockClock::default()).await;
+
+    let noncanonical = "https://Example.COM/DAP";
+    let base = TaskBuilder::new(
+        task::BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
+        VdafInstance::Prio3Count,
+    )
+    .build()
+    .leader_view()
+    .unwrap();
+    let task = AggregatorTask::new(
+        *base.id(),
+        base.peer_aggregator_endpoint().clone(),
+        noncanonical.try_into().unwrap(),
+        *base.batch_mode(),
+        base.vdaf().clone(),
+        base.opaque_vdaf_verify_key().clone(),
+        base.task_interval().copied(),
+        base.report_expiry_age().copied(),
+        base.min_batch_size(),
+        *base.time_precision(),
+        *base.tolerable_clock_skew(),
+        base.task_info().to_vec(),
+        base.aggregator_parameters().clone(),
+    )
+    .unwrap();
+    ds.put_aggregator_task(&task).await.unwrap();
+
+    let retrieved = ds
+        .run_unnamed_tx(|tx| {
+            let task_id = *task.id();
+            Box::pin(async move { tx.get_aggregator_task(&task_id).await })
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(retrieved.own_aggregator_endpoint().as_str(), noncanonical);
+}
+
+#[rstest_reuse::apply(schema_versions_template)]
+#[tokio::test]
+async fn roundtrip_taskprov_task_config(ephemeral_datastore: EphemeralDatastore) {
+    // The verbatim taskprov TaskConfiguration must survive a DB round-trip: it is bound into HPKE
+    // AADs and is not byte-reconstructible from the task's other stored columns.
+    install_test_trace_subscriber();
+    let ds = ephemeral_datastore.datastore(MockClock::default()).await;
+
+    let base = TaskBuilder::new(
+        task::BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
+        VdafInstance::Prio3Count,
+    )
+    .build();
+    // Source a TaskConfiguration to store from a non-taskprov view (synthesizing one for a taskprov
+    // task is now rejected); any valid config exercises the column's byte round-trip.
+    let task_config = base.leader_view().unwrap().task_configuration().unwrap();
+    let task = base
+        .taskprov_helper_view()
+        .unwrap()
+        .with_taskprov_task_config(task_config.clone());
+    ds.put_aggregator_task(&task).await.unwrap();
+
+    let retrieved = ds
+        .run_unnamed_tx(|tx| {
+            let task_id = *task.id();
+            Box::pin(async move { tx.get_aggregator_task(&task_id).await })
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(retrieved.taskprov_task_config(), Some(&task_config));
+}
+
+#[rstest_reuse::apply(schema_versions_template)]
+#[tokio::test]
 async fn set_task_deactivate_at(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
     let ds = ephemeral_datastore.datastore(MockClock::default()).await;

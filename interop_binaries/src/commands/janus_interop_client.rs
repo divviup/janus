@@ -16,7 +16,7 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use clap::Parser;
 use educe::Educe;
 use janus_core::vdaf::{VdafInstance, new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128};
-use janus_messages::{TaskId, Time, TimePrecision, Url as DapUrl};
+use janus_messages::{BatchConfig, TaskId, Time, TimePrecision, Url as DapUrl};
 use prio::{
     codec::Decode,
     field::Field64,
@@ -88,6 +88,10 @@ async fn handle_upload_generic<V: prio::vdaf::Client<16>>(
     let task_id = TaskId::get_decoded(&task_id_bytes).context("invalid length of TaskId")?;
     let time_precision = TimePrecision::from_seconds(request.time_precision);
 
+    let vdaf_config = VdafInstance::from(request.vdaf.clone())
+        .to_vdaf_config()
+        .map_err(|err| anyhow::anyhow!("unsupported VDAF for TaskConfiguration: {err}"))?;
+
     let client = janus_client::Client::builder(
         task_id,
         request.leader,
@@ -96,6 +100,13 @@ async fn handle_upload_generic<V: prio::vdaf::Client<16>>(
         vdaf,
     )
     .with_http_client(http_client.clone())
+    // The interop upload request does not yet carry task_info, min_batch_size, batch_config, or
+    // task_interval; these placeholders make the client build, but interop AAD byte-identity needs
+    // test-design support to provide the real values.
+    .with_task_info(Vec::new())
+    .with_min_batch_size(0)
+    .with_batch_config(BatchConfig::TimeInterval)
+    .with_vdaf_config(vdaf_config)
     .build()
     .await
     .context("failed to construct client")?;
