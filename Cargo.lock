@@ -1463,6 +1463,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "educe"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "92c3e1715a2bf74bc8f68cd7bae12ff144f02669c602106ad1fa16f2ba62e646"
+dependencies = [
+ "enum-ordinalize",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "either"
 version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1519,18 +1531,18 @@ dependencies = [
 
 [[package]]
 name = "enum-ordinalize"
-version = "4.3.2"
+version = "4.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a1091a7bb1f8f2c4b28f1fe2cef4980ca2d410a3d727d67ecc3178c9b0800f0"
+checksum = "07f808d588c10e464ea6f7d3eaed500049eff30aaac103460f61828c2d65b3eb"
 dependencies = [
  "enum-ordinalize-derive",
 ]
 
 [[package]]
 name = "enum-ordinalize-derive"
-version = "4.3.2"
+version = "4.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ca9601fb2d62598ee17836250842873a413586e5d7ed88b356e38ddbb0ec631"
+checksum = "42e528e2d34ba8a67a1a650b86beae8ef69fc5fdb638016f386b973226590432"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2594,7 +2606,7 @@ dependencies = [
  "console-subscriber",
  "deadpool",
  "deadpool-postgres",
- "educe",
+ "educe 0.7.4",
  "futures",
  "hex",
  "http",
@@ -2669,7 +2681,7 @@ dependencies = [
  "axum 0.8.9",
  "base64 0.22.1",
  "chrono",
- "educe",
+ "educe 0.7.4",
  "futures",
  "git-version",
  "http",
@@ -2705,7 +2717,7 @@ dependencies = [
  "clap",
  "deadpool",
  "deadpool-postgres",
- "educe",
+ "educe 0.7.4",
  "futures",
  "hex",
  "http",
@@ -2749,7 +2761,7 @@ dependencies = [
  "assert_matches",
  "backon",
  "bhttp",
- "educe",
+ "educe 0.7.4",
  "hex-literal",
  "http",
  "itertools 0.15.0",
@@ -2777,7 +2789,7 @@ dependencies = [
  "backon",
  "base64 0.22.1",
  "chrono",
- "educe",
+ "educe 0.7.4",
  "hpke-dispatch",
  "janus_collector",
  "janus_core",
@@ -2809,7 +2821,7 @@ dependencies = [
  "chrono",
  "clap",
  "constcat",
- "educe",
+ "educe 0.7.4",
  "futures",
  "hex",
  "hpke-dispatch",
@@ -2857,7 +2869,7 @@ dependencies = [
  "chrono",
  "clap",
  "divviup-client",
- "educe",
+ "educe 0.7.4",
  "futures",
  "hex",
  "http",
@@ -2901,7 +2913,7 @@ dependencies = [
  "backon",
  "base64 0.22.1",
  "clap",
- "educe",
+ "educe 0.7.4",
  "futures",
  "hex",
  "http",
@@ -2935,7 +2947,7 @@ checksum = "1ba00b1afce8186c370173dfe65953718525ed8f1c0a0b83afb75e17757c48da"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
- "educe",
+ "educe 0.6.0",
  "hex",
  "num_enum",
  "prio 0.16.8",
@@ -2953,7 +2965,7 @@ dependencies = [
  "assert_matches",
  "base64 0.22.1",
  "chrono",
- "educe",
+ "educe 0.7.4",
  "hex",
  "janus_messages 0.9.0-prerelease-1",
  "num_enum",
@@ -5493,7 +5505,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
