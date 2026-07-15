@@ -1849,9 +1849,10 @@ impl<const SEED_SIZE: usize, B: BatchMode, A: AsyncAggregator<SEED_SIZE>>
     /// collection job. The Leader forwards this to the Helper and binds it into aggregate-share
     /// AADs, where it must be byte-identical to the Collector's original request.
     ///
-    /// Collection job extensions are rejected unless empty (DAP-19 §4.6.2), so no extensions are
-    /// stored and the reconstruction carries none. If that enforcement ever relaxes, the original
-    /// extensions must be persisted and replayed here, or the AAD will silently mismatch.
+    /// Collection job extensions are rejected unless empty (DAP-19 §4.6.2), so no extensions
+    /// are stored and the reconstruction carries none. If that enforcement ever relaxes
+    /// (Issue #4715), the original extensions must be persisted and replayed here, or the AAD
+    /// will silently mismatch.
     pub fn to_collection_job_req(&self) -> Result<CollectionJobReq<B>, CodecError> {
         Ok(CollectionJobReq::new(
             self.query.clone(),

@@ -3639,7 +3639,8 @@ impl VdafOps {
                 // On the poll path we no longer have the Collector's original CollectionJobReq
                 // (there is no incoming AggregateShareReq), so reconstruct it from the stored job.
                 // This must be byte-identical to the request the Collector sent; see
-                // `query_for_collection_identifier`.
+                // `query_for_collection_identifier`. When we support extensions (Issue #4715)
+                // this will need to change.
                 CollectionJobReq::new(
                     B::query_for_collection_identifier(aggregate_share_job.batch_identifier()),
                     aggregate_share_job
@@ -3811,9 +3812,9 @@ impl VdafOps {
 
         // DAP-19 §4.6.4: the Helper verifies the Leader-chosen batch selector against the query in
         // the CollectionJobReq, which the AAD binds. The spec defines consistency per batch mode
-        // and would permit any time-interval selector within the queried interval, but we require
-        // exact round-tripping: the poll path rebuilds the AAD's query from the stored selector
-        // alone, so a narrower selector would decrypt here and fail there.
+        // and would permit any time-interval selector within the queried interval, but Janus
+        // requires exact round-tripping, otherwise the poll path rebuilds the AAD's query from
+        // the stored selector alone, so a narrower selector would decrypt here and fail there.
         if B::query_for_collection_identifier(
             aggregate_share_req.batch_selector().batch_identifier(),
         ) != *aggregate_share_req.collection_job_req().query()
@@ -3882,7 +3883,8 @@ impl VdafOps {
                         .await?
                     {
                         // Duplicate aggregate share job found - verify the aggregate share ID
-                        // matches
+                        // matches. Note, when we add collection extensions, those will need
+                        // to be checked here as well. (Issue #4715)
                         if aggregate_share_job.aggregate_share_id() != &aggregate_share_id
                         {
                             // Mismatch here indicates a duplicate request with a different
