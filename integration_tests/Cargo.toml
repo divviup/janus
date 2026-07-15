@@ -60,4 +60,4 @@ tracing.workspace = true
 # TODO(divviup/divviup-api#...): Remove once divviup-client is migrated off Trillium.
 trillium-rustls.workspace = true
 # trillium-tokio must remain at 0.4.x to match divviup-client's trillium-server-common 0.5.x stack.
-trillium-tokio = "0.4"
+trillium-tokio = "0.5"
