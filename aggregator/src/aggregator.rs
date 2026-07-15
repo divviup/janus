@@ -3819,9 +3819,12 @@ impl VdafOps {
             aggregate_share_req.batch_selector().batch_identifier(),
         ) != *aggregate_share_req.collection_job_req().query()
         {
-            return Err(Error::InvalidMessage(
-                Some(*task.id()),
-                "batch selector is inconsistent with the collection job request's query",
+            return Err(Error::BatchInvalid(
+                *task.id(),
+                format!(
+                    "{}, which is inconsistent with the collection job request's query",
+                    aggregate_share_req.batch_selector().batch_identifier()
+                ),
             ));
         }
 

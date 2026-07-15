@@ -1366,9 +1366,8 @@ async fn aggregate_share_request_batch_selector_inconsistent_with_query() {
             take_problem_details(&mut response).await,
             json!({
                 "status": StatusCode::BAD_REQUEST.as_u16(),
-                "type": "urn:ietf:params:ppm:dap:error:invalidMessage",
-                "title": "The message type for a response was incorrect or the payload was malformed.",
-                "detail": "batch selector is inconsistent with the collection job request's query",
+                "type": "urn:ietf:params:ppm:dap:error:batchInvalid",
+                "title": "The batch implied by the query is invalid.",
                 "taskid": format!("{}", task.id()),
             })
         );
