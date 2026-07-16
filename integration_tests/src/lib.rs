@@ -1,6 +1,9 @@
 //! This crate contains functionality useful for Janus integration tests.
 
-use std::time;
+use std::{
+    net::{Ipv4Addr, SocketAddr},
+    time,
+};
 
 use janus_aggregator_core::task::BatchMode;
 use janus_client::OhttpConfig;
@@ -36,12 +39,19 @@ pub struct TaskParameters {
 /// Components of one aggregator's DAP endpoint.
 #[derive(Debug)]
 pub enum AggregatorEndpointFragments {
-    /// The aggregator is in a virtual network, (a Docker network or a Kind cluster) so different
-    /// URLs must be used depending on whether it is accessed from within the same virtual network
-    /// or via a port forward on localhost. It is assumed that the port will always be 8080 within
-    /// the virtual network. The port number of forwarded ports will be supplied later. The scheme
-    /// is assumed to always be 'http:'.
+    /// The aggregator is in a Kind cluster, reached from the host via a port forward on localhost
+    /// (ephemeral port, supplied later) and from within the cluster at its service name on port
+    /// 8080. The scheme is always 'http:'.
     VirtualNetwork { host: String, path: String },
+    /// The aggregator is in a Docker network, serving on `port` both within the network (at `host`)
+    /// and from the host (via a fixed `host:port -> container:port` mapping). The single
+    /// `http://{host}:{port}{path}` URL is byte-identical for all parties; the host reaches it by
+    /// resolving `host` to loopback. The scheme is always 'http:'.
+    DockerNetwork {
+        host: String,
+        port: u16,
+        path: String,
+    },
     /// The aggregator is running on localhost. No port forwarding is involved, so the same URL is
     /// used in all circumstances. The port number will be supplied later. The scheme is assumed to
     /// always be 'http:'.
@@ -63,6 +73,9 @@ impl AggregatorEndpointFragments {
             | AggregatorEndpointFragments::Localhost { path } => {
                 Url::parse(&format!("http://127.0.0.1:{port}{path}")).unwrap()
             }
+            AggregatorEndpointFragments::DockerNetwork { host, port, path } => {
+                Url::parse(&format!("http://{host}:{port}{path}")).unwrap()
+            }
             AggregatorEndpointFragments::Remote { url } => url.clone(),
         }
     }
@@ -75,6 +88,9 @@ impl AggregatorEndpointFragments {
         match self {
             AggregatorEndpointFragments::VirtualNetwork { host, path } => {
                 Url::parse(&format!("http://{host}:8080{path}")).unwrap()
+            }
+            AggregatorEndpointFragments::DockerNetwork { host, port, path } => {
+                Url::parse(&format!("http://{host}:{port}{path}")).unwrap()
             }
             AggregatorEndpointFragments::Localhost { .. } => panic!(
                 "cannot combine an aggregator running on localhost with a client or leader running \
@@ -92,10 +108,23 @@ impl AggregatorEndpointFragments {
             AggregatorEndpointFragments::VirtualNetwork {
                 path: self_path, ..
             }
+            | AggregatorEndpointFragments::DockerNetwork {
+                path: self_path, ..
+            }
             | AggregatorEndpointFragments::Localhost { path: self_path } => *self_path = path,
             AggregatorEndpointFragments::Remote { .. } => {
                 panic!("cannot set path for remote aggregator")
             }
+        }
+    }
+
+    /// Set the serving port. Only valid for [`AggregatorEndpointFragments::DockerNetwork`].
+    pub fn set_port(&mut self, port: u16) {
+        match self {
+            AggregatorEndpointFragments::DockerNetwork {
+                port: self_port, ..
+            } => *self_port = port,
+            _ => panic!("only DockerNetwork endpoints have a settable port"),
         }
     }
 }
@@ -132,5 +161,52 @@ impl EndpointFragments {
             self.leader.endpoint_for_virtual_network(),
             self.helper.endpoint_for_virtual_network(),
         )
+    }
+
+    /// Leader and helper endpoints, and an optional HTTP client, for an in-process client or
+    /// collector on the host. For [`AggregatorEndpointFragments::DockerNetwork`] aggregators this
+    /// returns the byte-identical virtual-network endpoints plus a client that resolves their
+    /// hostnames to loopback; otherwise the localhost port-forward endpoints and no client.
+    pub fn in_process_config(
+        &self,
+        leader_port: u16,
+        helper_port: u16,
+    ) -> (Url, Url, Option<reqwest::Client>) {
+        match (&self.leader, &self.helper) {
+            (
+                AggregatorEndpointFragments::DockerNetwork {
+                    host: leader_host,
+                    port: leader_serving_port,
+                    ..
+                },
+                AggregatorEndpointFragments::DockerNetwork {
+                    host: helper_host,
+                    port: helper_serving_port,
+                    ..
+                },
+            ) => {
+                let http_client = reqwest::Client::builder()
+                    .resolve(
+                        leader_host,
+                        SocketAddr::from((Ipv4Addr::LOCALHOST, *leader_serving_port)),
+                    )
+                    .resolve(
+                        helper_host,
+                        SocketAddr::from((Ipv4Addr::LOCALHOST, *helper_serving_port)),
+                    )
+                    .build()
+                    .unwrap();
+                (
+                    self.leader.endpoint_for_virtual_network(),
+                    self.helper.endpoint_for_virtual_network(),
+                    Some(http_client),
+                )
+            }
+            _ => (
+                self.leader.endpoint_for_host(leader_port),
+                self.helper.endpoint_for_host(helper_port),
+                None,
+            ),
+        }
     }
 }

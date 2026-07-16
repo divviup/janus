@@ -1,3 +1,5 @@
+#[cfg(feature = "testcontainer")]
+use std::net::{Ipv4Addr, TcpListener};
 use std::{iter, time::Duration};
 
 use janus_aggregator_core::task::{AggregationMode, BatchMode, test_util::TaskBuilder};
@@ -19,6 +21,8 @@ use prio::{
     field::{Field128, FieldElementWithInteger},
     vdaf::prio3::Prio3,
 };
+#[cfg(feature = "testcontainer")]
+use testcontainers::TestcontainersError;
 
 use crate::{
     common::{
@@ -44,31 +48,94 @@ struct JanusContainerPair {
 #[cfg(feature = "testcontainer")]
 impl JanusContainerPair {
     /// Set up a new pair of containerized Janus test instances, and set up a new task in each using
-    /// the given VDAF and batch mode.
+    /// the given VDAF and batch mode. Each aggregator serves on a distinct port, so the host-side
+    /// in-process client and collector reach them at the same virtual-network endpoint strings the
+    /// aggregators use among themselves.
     pub async fn new(
         test_name: &str,
         batch_mode: BatchMode,
         aggregation_mode: AggregationMode,
         vdaf: VdafInstance,
     ) -> JanusContainerPair {
-        let (task_parameters, task_builder) = build_test_task(
+        // Each aggregator publishes a host port chosen just before its container starts, so that
+        // port is occasionally taken in the interim (under parallel tests). Retry the whole pair
+        // with fresh ports on such a failure.
+        const MAX_ATTEMPTS: usize = 5;
+        for attempt in 1..=MAX_ATTEMPTS {
+            match Self::try_new(test_name, batch_mode, aggregation_mode, vdaf.clone()).await {
+                Ok(pair) => return pair,
+                Err(error) if attempt < MAX_ATTEMPTS => {
+                    tracing::warn!(?error, attempt, "containerized Janus pair failed to start")
+                }
+                Err(error) => panic!("containerized Janus pair failed to start: {error}"),
+            }
+        }
+        unreachable!()
+    }
+
+    async fn try_new(
+        test_name: &str,
+        batch_mode: BatchMode,
+        aggregation_mode: AggregationMode,
+        vdaf: VdafInstance,
+    ) -> Result<JanusContainerPair, TestcontainersError> {
+        let (mut task_parameters, task_builder) = build_test_task(
             TaskBuilder::new(batch_mode, aggregation_mode, vdaf),
-            TestContext::VirtualNetwork,
+            TestContext::DockerNetwork,
             Duration::from_millis(500),
             Duration::from_secs(60),
         );
-        let task = task_builder.build();
+
+        let leader_port = reserve_ephemeral_port();
+        let helper_port = reserve_ephemeral_port();
+        task_parameters
+            .endpoint_fragments
+            .leader
+            .set_port(leader_port);
+        task_parameters
+            .endpoint_fragments
+            .helper
+            .set_port(helper_port);
+
+        let task = task_builder
+            .with_leader_aggregator_endpoint(
+                task_parameters
+                    .endpoint_fragments
+                    .leader
+                    .endpoint_for_virtual_network(),
+            )
+            .with_helper_aggregator_endpoint(
+                task_parameters
+                    .endpoint_fragments
+                    .helper
+                    .endpoint_for_virtual_network(),
+            )
+            .build();
 
         let network = generate_network_name();
-        let leader = JanusContainer::new(test_name, &network, &task, Role::Leader).await;
-        let helper = JanusContainer::new(test_name, &network, &task, Role::Helper).await;
+        let leader =
+            JanusContainer::new_on_port(test_name, &network, &task, Role::Leader, leader_port)
+                .await?;
+        let helper =
+            JanusContainer::new_on_port(test_name, &network, &task, Role::Helper, helper_port)
+                .await?;
 
-        Self {
+        Ok(Self {
             task_parameters,
             leader,
             helper,
-        }
+        })
     }
+}
+
+/// Reserve a free ephemeral TCP port on loopback for a container to publish.
+#[cfg(feature = "testcontainer")]
+fn reserve_ephemeral_port() -> u16 {
+    TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
 }
 
 /// A pair of Janus instances, running in-process, against which integration tests may be run.
@@ -176,8 +243,6 @@ async fn run_in_process_test(
 /// aggregation.
 #[tokio::test(flavor = "multi_thread")]
 #[cfg(feature = "testcontainer")]
-#[ignore = "host client/collector can't build byte-identical AADs against container aggregators; \
-            re-enabled by the follow-up PR that containerizes the client + collector"]
 async fn janus_janus_sync_count() {
     run_container_test(
         "janus_janus_sync_count",
@@ -192,8 +257,6 @@ async fn janus_janus_sync_count() {
 /// aggregation.
 #[tokio::test(flavor = "multi_thread")]
 #[cfg(feature = "testcontainer")]
-#[ignore = "host client/collector can't build byte-identical AADs against container aggregators; \
-            re-enabled by the follow-up PR that containerizes the client + collector"]
 async fn janus_janus_async_count() {
     // TODO(#3436): allow callers to specify asynchronous aggregation mode (requires updated
     // interop test design)
@@ -236,8 +299,6 @@ async fn janus_in_process_async_count() {
 /// aggregation.
 #[tokio::test(flavor = "multi_thread")]
 #[cfg(feature = "testcontainer")]
-#[ignore = "host client/collector can't build byte-identical AADs against container aggregators; \
-            re-enabled by the follow-up PR that containerizes the client + collector"]
 async fn janus_janus_sync_sum_16() {
     run_container_test(
         "janus_janus_sync_sum_16",
@@ -254,8 +315,6 @@ async fn janus_janus_sync_sum_16() {
 /// aggregation.
 #[tokio::test(flavor = "multi_thread")]
 #[cfg(feature = "testcontainer")]
-#[ignore = "host client/collector can't build byte-identical AADs against container aggregators; \
-            re-enabled by the follow-up PR that containerizes the client + collector"]
 async fn janus_janus_async_sum_16() {
     run_container_test(
         "janus_janus_async_sum_16",
@@ -302,8 +361,6 @@ async fn janus_in_process_async_sum_16() {
 /// synchronous aggregation.
 #[tokio::test(flavor = "multi_thread")]
 #[cfg(feature = "testcontainer")]
-#[ignore = "host client/collector can't build byte-identical AADs against container aggregators; \
-            re-enabled by the follow-up PR that containerizes the client + collector"]
 async fn janus_janus_sync_histogram_4_buckets() {
     run_container_test(
         "janus_janus_sync_histogram_4_buckets",
@@ -322,8 +379,6 @@ async fn janus_janus_sync_histogram_4_buckets() {
 /// asynchronous aggregation.
 #[tokio::test(flavor = "multi_thread")]
 #[cfg(feature = "testcontainer")]
-#[ignore = "host client/collector can't build byte-identical AADs against container aggregators; \
-            re-enabled by the follow-up PR that containerizes the client + collector"]
 async fn janus_janus_async_histogram_4_buckets() {
     run_container_test(
         "janus_janus_async_histogram_4_buckets",
@@ -376,8 +431,6 @@ async fn janus_in_process_async_histogram_4_buckets() {
 /// using synchronous aggregation.
 #[tokio::test(flavor = "multi_thread")]
 #[cfg(feature = "testcontainer")]
-#[ignore = "host client/collector can't build byte-identical AADs against container aggregators; \
-            re-enabled by the follow-up PR that containerizes the client + collector"]
 async fn janus_janus_leader_selected_sync() {
     run_container_test(
         "janus_janus_leader_selected_sync",
@@ -394,8 +447,6 @@ async fn janus_janus_leader_selected_sync() {
 /// using asynchronous aggregation.
 #[tokio::test(flavor = "multi_thread")]
 #[cfg(feature = "testcontainer")]
-#[ignore = "host client/collector can't build byte-identical AADs against container aggregators; \
-            re-enabled by the follow-up PR that containerizes the client + collector"]
 async fn janus_janus_leader_selected_async() {
     run_container_test(
         "janus_janus_leader_selected_async",
@@ -442,8 +493,6 @@ async fn janus_in_process_leader_selected_async() {
 /// aggregation.
 #[tokio::test(flavor = "multi_thread")]
 #[cfg(feature = "testcontainer")]
-#[ignore = "host client/collector can't build byte-identical AADs against container aggregators; \
-            re-enabled by the follow-up PR that containerizes the client + collector"]
 async fn janus_janus_sync_sum_vec() {
     run_container_test(
         "janus_janus_sync_sum_vec",
@@ -463,8 +512,6 @@ async fn janus_janus_sync_sum_vec() {
 /// aggregation.
 #[tokio::test(flavor = "multi_thread")]
 #[cfg(feature = "testcontainer")]
-#[ignore = "host client/collector can't build byte-identical AADs against container aggregators; \
-            re-enabled by the follow-up PR that containerizes the client + collector"]
 async fn janus_janus_async_sum_vec() {
     run_container_test(
         "janus_janus_async_sum_vec",
