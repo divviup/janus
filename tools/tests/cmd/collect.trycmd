@@ -54,7 +54,7 @@ HPKE Configuration:
           
           This can be obtained with the command `divviup collector-credential generate`.
           
-          [aliases: --hpke-config-json]
+          [alias: --hpke-config-json]
 
       --collector-credential <COLLECTOR_CREDENTIAL>
           Private collector credentials
