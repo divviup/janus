@@ -151,7 +151,7 @@ jobs:
       uses: docker/bake-action@v7.5.0
       with:
         files: docker-bake.hcl
-        workdir: .
+        source: .
         targets: janus
         load: true
     - run: docker run --rm janus_aggregator --help
@@ -178,7 +178,7 @@ jobs:
       uses: docker/bake-action@v7.5.0
       with:
         files: docker-bake.hcl
-        workdir: .
+        source: .
         targets: interop_binaries_ci
 
   rustsec_advisories:
