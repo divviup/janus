@@ -230,6 +230,7 @@ target "janus_db_migrator_release" {
 target "janus_interop_client" {
   args = {
     BINARY = "janus_interop_client"
+    GIT_REVISION = "${GIT_REVISION}"
   }
   dockerfile = "Dockerfile.interop"
   cache-from = [
@@ -249,6 +250,9 @@ target "janus_interop_client_release" {
 }
 
 target "janus_interop_aggregator" {
+  args = {
+    GIT_REVISION = "${GIT_REVISION}"
+  }
   dockerfile = "Dockerfile.interop_aggregator"
   cache-from = [
     "type=gha,scope=main-interop",
@@ -270,6 +274,7 @@ target "janus_interop_aggregator_release" {
 target "janus_interop_collector" {
   args = {
     BINARY = "janus_interop_collector"
+    GIT_REVISION = "${GIT_REVISION}"
   }
   dockerfile = "Dockerfile.interop"
   cache-from = [
@@ -292,6 +297,7 @@ target "janus_interop_client_small" {
   args = {
     PROFILE = "small"
     BINARY  = "janus_interop_client"
+    GIT_REVISION = "${GIT_REVISION}"
   }
   cache-from = [
     "type=gha,scope=main-interop-small",
@@ -304,6 +310,7 @@ target "janus_interop_client_small" {
 target "janus_interop_aggregator_small" {
   args = {
     PROFILE = "small"
+    GIT_REVISION = "${GIT_REVISION}"
   }
   cache-from = [
     "type=gha,scope=main-interop-small",
@@ -318,6 +325,7 @@ target "janus_interop_collector_small" {
   args = {
     PROFILE = "small"
     BINARY  = "janus_interop_collector"
+    GIT_REVISION = "${GIT_REVISION}"
   }
   cache-from = [
     "type=gha,scope=main-interop-small",
@@ -331,6 +339,7 @@ target "janus_interop_client_ci" {
   args = {
     PROFILE = "ci"
     BINARY  = "janus_interop_client"
+    GIT_REVISION = "${GIT_REVISION}"
   }
   cache-from = [
     "type=gha,scope=main-interop-ci",
@@ -343,6 +352,7 @@ target "janus_interop_client_ci" {
 target "janus_interop_aggregator_ci" {
   args = {
     PROFILE = "ci"
+    GIT_REVISION = "${GIT_REVISION}"
   }
   cache-from = [
     "type=gha,scope=main-interop-ci",
@@ -357,6 +367,7 @@ target "janus_interop_collector_ci" {
   args = {
     PROFILE = "ci"
     BINARY  = "janus_interop_collector"
+    GIT_REVISION = "${GIT_REVISION}"
   }
   cache-from = [
     "type=gha,scope=main-interop-ci",
