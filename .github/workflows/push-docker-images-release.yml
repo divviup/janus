@@ -31,7 +31,7 @@ jobs:
       uses: docker/bake-action@v7.3.0
       with:
         files: docker-bake.hcl
-        workdir: .
+        source: .
         targets: release
         load: true
         # Note that we can't push all tags simultaneously, since we use two
