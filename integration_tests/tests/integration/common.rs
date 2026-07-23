@@ -167,7 +167,7 @@ where
 
 pub async fn submit_measurements_and_verify_aggregate_generic<V>(
     task_parameters: &TaskParameters,
-    leader_port: u16,
+    (leader_port, helper_port): (u16, u16),
     vdaf: V,
     test_case: &AggregationTestCase<V>,
     client_implementation: &ClientImplementation<V>,
@@ -184,7 +184,7 @@ pub async fn submit_measurements_and_verify_aggregate_generic<V>(
 
     verify_aggregate_generic(
         task_parameters,
-        leader_port,
+        (leader_port, helper_port),
         vdaf,
         test_case,
         before_timestamp,
@@ -216,7 +216,7 @@ where
 
 pub async fn verify_aggregate_generic<V>(
     task_parameters: &TaskParameters,
-    leader_port: u16,
+    (leader_port, helper_port): (u16, u16),
     vdaf: V,
     test_case: &AggregationTestCase<V>,
     before_timestamp: Time,
@@ -226,7 +226,7 @@ pub async fn verify_aggregate_generic<V>(
 {
     let (report_count, aggregate_result) = collect_aggregate_result_generic(
         task_parameters,
-        leader_port,
+        (leader_port, helper_port),
         vdaf,
         before_timestamp,
         &test_case.aggregation_parameter,
@@ -242,7 +242,7 @@ pub async fn verify_aggregate_generic<V>(
 
 pub async fn collect_aggregate_result_generic<V>(
     task_parameters: &TaskParameters,
-    leader_port: u16,
+    (leader_port, helper_port): (u16, u16),
     vdaf: V,
     before_timestamp: Time,
     aggregation_parameter: &V::AggregationParam,
@@ -251,9 +251,9 @@ where
     V: vdaf::Client<16> + vdaf::Collector + InteropClientEncoding,
     V::AggregateResult: PartialEq,
 {
-    let leader_endpoint = task_parameters
+    let (leader_endpoint, helper_endpoint) = task_parameters
         .endpoint_fragments
-        .leader_endpoint_for_host(leader_port);
+        .endpoints_for_host_client(leader_port, helper_port);
     let collector = Collector::builder(
         task_parameters.task_id,
         leader_endpoint.as_str().try_into().unwrap(),
@@ -262,10 +262,9 @@ where
         vdaf,
         task_parameters.time_precision,
     )
-    // The helper endpoint and task_info are threaded through for AAD byte-identity in a later
-    // stage; placeholders for now.
-    .with_helper_endpoint("http://unused.helper.example/".try_into().unwrap())
-    .with_task_info(Vec::new())
+    .with_helper_endpoint(helper_endpoint.as_str().try_into().unwrap())
+    .with_task_info(task_parameters.task_info.clone())
+    .with_task_interval(task_parameters.task_interval)
     .with_min_batch_size(task_parameters.min_batch_size)
     .with_batch_config(task_parameters.batch_mode.to_batch_config())
     .with_vdaf_config(task_parameters.vdaf.to_vdaf_config().unwrap())
@@ -392,7 +391,7 @@ pub async fn submit_measurements_and_verify_aggregate(
 
             submit_measurements_and_verify_aggregate_generic(
                 task_parameters,
-                leader_port,
+                (leader_port, helper_port),
                 vdaf,
                 &test_case,
                 &client_implementation,
@@ -426,7 +425,7 @@ pub async fn submit_measurements_and_verify_aggregate(
 
             submit_measurements_and_verify_aggregate_generic(
                 task_parameters,
-                leader_port,
+                (leader_port, helper_port),
                 vdaf,
                 &test_case,
                 &client_implementation,
@@ -480,7 +479,7 @@ pub async fn submit_measurements_and_verify_aggregate(
 
             submit_measurements_and_verify_aggregate_generic(
                 task_parameters,
-                leader_port,
+                (leader_port, helper_port),
                 vdaf,
                 &test_case,
                 &client_implementation,
@@ -534,7 +533,7 @@ pub async fn submit_measurements_and_verify_aggregate(
 
             submit_measurements_and_verify_aggregate_generic(
                 task_parameters,
-                leader_port,
+                (leader_port, helper_port),
                 vdaf,
                 &test_case,
                 &client_implementation,
@@ -574,7 +573,7 @@ pub async fn submit_measurements_and_verify_aggregate(
 
             submit_measurements_and_verify_aggregate_generic(
                 task_parameters,
-                leader_port,
+                (leader_port, helper_port),
                 vdaf,
                 &test_case,
                 &client_implementation,
@@ -602,7 +601,7 @@ pub async fn submit_measurements_and_verify_aggregate(
 
             submit_measurements_and_verify_aggregate_generic(
                 task_parameters,
-                leader_port,
+                (leader_port, helper_port),
                 vdaf,
                 &test_case,
                 &client_implementation,

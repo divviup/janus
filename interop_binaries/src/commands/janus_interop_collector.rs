@@ -36,7 +36,8 @@ use serde::{Deserialize, Serialize};
 use tokio::{net::TcpListener, runtime::Runtime, sync::Mutex, task::JoinHandle};
 
 use crate::{
-    HpkeConfigRegistry, Keyring, NumberAsString, VdafObject, install_tracing_subscriber,
+    HpkeConfigRegistry, INTEROP_TASK_INFO, Keyring, NumberAsString, VdafObject,
+    install_tracing_subscriber, interop_batch_config,
     status::{COMPLETE, ERROR, IN_PROGRESS, SUCCESS},
 };
 
@@ -46,11 +47,22 @@ struct AddTaskRequest {
     task_id: String,
     #[educe(Debug(method(std::fmt::Display::fmt)))]
     leader: DapUrl,
+    // The collector never connects to the helper, but its endpoint is bound into the
+    // AggregateShareAad, so it must match the aggregators' byte-for-byte. Optional (serde default)
+    // so a non-Janus runner that omits it still parses. (See issue #4713)
+    #[educe(Debug(method(std::fmt::Display::fmt)))]
+    #[serde(default = "unused_helper_endpoint")]
+    helper: DapUrl,
     vdaf: VdafObject,
     collector_authentication_token: String,
-    #[serde(rename = "batch_mode")]
-    _batch_mode: u8,
+    batch_mode: u8,
+    #[serde(default)]
+    min_batch_size: u64,
     time_precision: u64,
+}
+
+fn unused_helper_endpoint() -> DapUrl {
+    "http://unused.helper.example/".try_into().unwrap()
 }
 
 #[derive(Debug, Serialize)]
@@ -127,9 +139,12 @@ struct TaskState {
     task_id: TaskId,
     keypair: HpkeKeypair,
     leader_url: DapUrl,
+    helper_url: DapUrl,
     vdaf: VdafObject,
     auth_token: AuthenticationToken,
     time_precision: TimePrecision,
+    min_batch_size: u64,
+    batch_config: BatchConfig,
 }
 
 /// A collection job handle.
@@ -179,13 +194,18 @@ async fn handle_add_task(
         AuthenticationToken::new_dap_auth_token_from_string(request.collector_authentication_token)
             .context("invalid header value in \"collector_authentication_token\"")?;
 
+    let batch_config = interop_batch_config(request.batch_mode)?;
+
     entry.or_insert(TaskState {
         task_id,
         keypair,
         leader_url: request.leader,
+        helper_url: request.helper,
         vdaf: request.vdaf,
         auth_token,
         time_precision: TimePrecision::from_seconds(request.time_precision),
+        min_batch_size: request.min_batch_size,
+        batch_config,
     });
 
     Ok(hpke_config)
@@ -217,14 +237,10 @@ where
         vdaf,
         time_precision,
     )
-    // The interop add-task request does not yet carry the helper endpoint, task_info,
-    // min_batch_size, batch_config, or task_interval; these placeholders make the collector
-    // build, but interop AAD byte-identity needs test-design support to provide the real
-    // values.
-    .with_helper_endpoint("http://unused.helper.example/".try_into().unwrap())
-    .with_task_info(Vec::new())
-    .with_min_batch_size(0)
-    .with_batch_config(BatchConfig::TimeInterval)
+    .with_helper_endpoint(task_state.helper_url.clone())
+    .with_task_info(INTEROP_TASK_INFO.to_vec())
+    .with_min_batch_size(task_state.min_batch_size)
+    .with_batch_config(task_state.batch_config.clone())
     .with_vdaf_config(vdaf_config)
     .with_http_client(http_client.clone())
     .with_http_request_backoff(

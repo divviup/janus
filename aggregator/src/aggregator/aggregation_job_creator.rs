@@ -970,6 +970,7 @@ mod tests {
         );
         let leader_report = Arc::new(LeaderStoredReport::generate(
             *leader_task.id(),
+            leader_task.task_configuration().unwrap(),
             leader_report_metadata,
             helper_hpke_keypair.config(),
             Vec::new(),
@@ -1175,6 +1176,7 @@ mod tests {
                 );
                 LeaderStoredReport::generate(
                     *task.id(),
+                    task.task_configuration().unwrap(),
                     report_metadata,
                     helper_hpke_keypair.config(),
                     Vec::new(),
@@ -1356,6 +1358,7 @@ mod tests {
         );
         let first_report = Arc::new(LeaderStoredReport::generate(
             *task.id(),
+            task.task_configuration().unwrap(),
             first_report_metadata,
             helper_hpke_keypair.config(),
             Vec::new(),
@@ -1373,6 +1376,7 @@ mod tests {
         );
         let second_report = Arc::new(LeaderStoredReport::generate(
             *task.id(),
+            task.task_configuration().unwrap(),
             second_report_metadata,
             helper_hpke_keypair.config(),
             Vec::new(),
@@ -1559,6 +1563,7 @@ mod tests {
         );
         let report = Arc::new(LeaderStoredReport::generate(
             *task.id(),
+            task.task_configuration().unwrap(),
             report_metadata,
             helper_hpke_keypair.config(),
             Vec::new(),
@@ -1724,6 +1729,7 @@ mod tests {
                 );
                 LeaderStoredReport::generate(
                     *task.id(),
+                    task.task_configuration().unwrap(),
                     report_metadata,
                     helper_hpke_keypair.config(),
                     Vec::new(),
@@ -1912,6 +1918,7 @@ mod tests {
                 );
                 LeaderStoredReport::generate(
                     *task.id(),
+                    task.task_configuration().unwrap(),
                     report_metadata,
                     helper_hpke_keypair.config(),
                     Vec::new(),
@@ -2112,6 +2119,7 @@ mod tests {
                 );
                 LeaderStoredReport::generate(
                     *task.id(),
+                    task.task_configuration().unwrap(),
                     report_metadata,
                     helper_hpke_keypair.config(),
                     Vec::new(),
@@ -2277,6 +2285,7 @@ mod tests {
                 );
                 LeaderStoredReport::generate(
                     *task.id(),
+                    task.task_configuration().unwrap(),
                     report_metadata,
                     helper_hpke_keypair.config(),
                     Vec::new(),
@@ -2392,6 +2401,7 @@ mod tests {
         );
         let last_report = Arc::new(LeaderStoredReport::generate(
             *task.id(),
+            task.task_configuration().unwrap(),
             last_report_metadata,
             helper_hpke_keypair.config(),
             Vec::new(),
@@ -2541,6 +2551,7 @@ mod tests {
                 );
                 LeaderStoredReport::generate(
                     *task.id(),
+                    task.task_configuration().unwrap(),
                     report_metadata,
                     helper_hpke_keypair.config(),
                     Vec::new(),
@@ -2659,6 +2670,7 @@ mod tests {
                 );
                 LeaderStoredReport::generate(
                     *task.id(),
+                    task.task_configuration().unwrap(),
                     report_metadata,
                     helper_hpke_keypair.config(),
                     Vec::new(),
@@ -2824,6 +2836,7 @@ mod tests {
                 );
                 LeaderStoredReport::generate(
                     *task.id(),
+                    task.task_configuration().unwrap(),
                     report_metadata,
                     helper_hpke_keypair.config(),
                     Vec::new(),
@@ -2845,6 +2858,7 @@ mod tests {
                 );
                 LeaderStoredReport::generate(
                     *task.id(),
+                    task.task_configuration().unwrap(),
                     report_metadata,
                     helper_hpke_keypair.config(),
                     Vec::new(),

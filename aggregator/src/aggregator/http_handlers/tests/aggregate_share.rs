@@ -19,9 +19,10 @@ use janus_core::{
 };
 use janus_messages::{
     AggregateShare as AggregateShareMessage, AggregateShareAad, AggregateShareId,
-    AggregateShareReq, BatchSelector, Duration, Interval, MediaType, ReportIdChecksum, Role, Time,
+    AggregateShareReq, BatchId, BatchSelector, CollectionJobExtension, CollectionJobExtensionType,
+    CollectionJobReq, Duration, Interval, MediaType, Query, ReportIdChecksum, Role, Time,
     TimePrecision,
-    batch_mode::{self, TimeInterval},
+    batch_mode::{self, LeaderSelected, TimeInterval},
 };
 use prio::{
     codec::{Decode, Encode},
@@ -78,10 +79,15 @@ async fn aggregate_share_request_to_leader() {
     datastore.put_aggregator_task(&leader_task).await.unwrap();
 
     let request = AggregateShareReq::new(
+        CollectionJobReq::new(
+            Query::new_time_interval(
+                Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
+            ),
+            Vec::new(),
+        ),
         BatchSelector::new_time_interval(
             Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
         ),
-        Vec::new(),
         0,
         ReportIdChecksum::default(),
     );
@@ -125,6 +131,17 @@ async fn aggregate_share_request_invalid_batch_interval() {
     datastore.put_aggregator_task(&helper_task).await.unwrap();
 
     let request = AggregateShareReq::new(
+        CollectionJobReq::new(
+            Query::new_time_interval(
+                Interval::new(
+                    clock.now().to_time(task.time_precision()),
+                    // Collect request will be rejected because batch interval is too small
+                    Duration::from_seconds(task.time_precision().as_seconds() - 1, &time_precision),
+                )
+                .unwrap(),
+            ),
+            Vec::new(),
+        ),
         BatchSelector::new_time_interval(
             Interval::new(
                 clock.now().to_time(task.time_precision()),
@@ -133,7 +150,6 @@ async fn aggregate_share_request_invalid_batch_interval() {
             )
             .unwrap(),
         ),
-        Vec::new(),
         0,
         ReportIdChecksum::default(),
     );
@@ -159,10 +175,15 @@ async fn aggregate_share_request_invalid_batch_interval() {
     let response = put_aggregate_share_request(
         &task,
         &AggregateShareReq::new(
+            CollectionJobReq::new(
+                Query::new_time_interval(
+                    Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
+                ),
+                Vec::new(),
+            ),
             BatchSelector::new_time_interval(
                 Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
             ),
-            Vec::new(),
             0,
             ReportIdChecksum::default(),
         ),
@@ -196,10 +217,15 @@ async fn aggregate_share_request() {
 
     // There are no batch aggregations in the datastore yet
     let request = AggregateShareReq::new(
+        CollectionJobReq::new(
+            Query::new_time_interval(
+                Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
+            ),
+            dummy::AggregationParam(0).get_encoded().unwrap(),
+        ),
         BatchSelector::new_time_interval(
             Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
         ),
-        dummy::AggregationParam(0).get_encoded().unwrap(),
         0,
         ReportIdChecksum::default(),
     );
@@ -329,6 +355,16 @@ async fn aggregate_share_request() {
 
     // Specified interval includes too few reports.
     let request = AggregateShareReq::new(
+        CollectionJobReq::new(
+            Query::new_time_interval(
+                Interval::new(
+                    Time::from_time_precision_units(0),
+                    Duration::from_seconds(1000, task.time_precision()),
+                )
+                .unwrap(),
+            ),
+            dummy::AggregationParam(0).get_encoded().unwrap(),
+        ),
         BatchSelector::new_time_interval(
             Interval::new(
                 Time::from_time_precision_units(0),
@@ -336,7 +372,6 @@ async fn aggregate_share_request() {
             )
             .unwrap(),
         ),
-        dummy::AggregationParam(0).get_encoded().unwrap(),
         5,
         ReportIdChecksum::default(),
     );
@@ -366,6 +401,16 @@ async fn aggregate_share_request() {
         MisalignedRequestTestCase {
             name: "Interval is big enough but the checksums don't match",
             request: AggregateShareReq::new(
+                CollectionJobReq::new(
+                    Query::new_time_interval(
+                        Interval::new(
+                            Time::from_time_precision_units(0),
+                            Duration::from_seconds(2000, task.time_precision()),
+                        )
+                        .unwrap(),
+                    ),
+                    dummy::AggregationParam(0).get_encoded().unwrap(),
+                ),
                 BatchSelector::new_time_interval(
                     Interval::new(
                         Time::from_time_precision_units(0),
@@ -373,7 +418,6 @@ async fn aggregate_share_request() {
                     )
                     .unwrap(),
                 ),
-                dummy::AggregationParam(0).get_encoded().unwrap(),
                 10,
                 ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
             ),
@@ -383,6 +427,16 @@ async fn aggregate_share_request() {
         MisalignedRequestTestCase {
             name: "Interval is big enough but report count doesn't match",
             request: AggregateShareReq::new(
+                CollectionJobReq::new(
+                    Query::new_time_interval(
+                        Interval::new(
+                            Time::from_seconds_since_epoch(2000, task.time_precision()),
+                            Duration::from_seconds(2000, task.time_precision()),
+                        )
+                        .unwrap(),
+                    ),
+                    dummy::AggregationParam(0).get_encoded().unwrap(),
+                ),
                 BatchSelector::new_time_interval(
                     Interval::new(
                         Time::from_seconds_since_epoch(2000, task.time_precision()),
@@ -390,7 +444,6 @@ async fn aggregate_share_request() {
                     )
                     .unwrap(),
                 ),
-                dummy::AggregationParam(0).get_encoded().unwrap(),
                 20,
                 ReportIdChecksum::get_decoded(&[4 ^ 8; 32]).unwrap(),
             ),
@@ -440,6 +493,16 @@ async fn aggregate_share_request() {
         (
             "first and second batchess",
             AggregateShareReq::new(
+                CollectionJobReq::new(
+                    Query::new_time_interval(
+                        Interval::new(
+                            Time::from_time_precision_units(0),
+                            Duration::from_seconds(2000, task.time_precision()),
+                        )
+                        .unwrap(),
+                    ),
+                    dummy::AggregationParam(0).get_encoded().unwrap(),
+                ),
                 BatchSelector::new_time_interval(
                     Interval::new(
                         Time::from_time_precision_units(0),
@@ -447,7 +510,6 @@ async fn aggregate_share_request() {
                     )
                     .unwrap(),
                 ),
-                dummy::AggregationParam(0).get_encoded().unwrap(),
                 10,
                 ReportIdChecksum::get_decoded(&[3 ^ 2; 32]).unwrap(),
             ),
@@ -456,6 +518,16 @@ async fn aggregate_share_request() {
         (
             "third and fourth batches",
             AggregateShareReq::new(
+                CollectionJobReq::new(
+                    Query::new_time_interval(
+                        Interval::new(
+                            Time::from_seconds_since_epoch(2000, task.time_precision()),
+                            Duration::from_seconds(2000, task.time_precision()),
+                        )
+                        .unwrap(),
+                    ),
+                    dummy::AggregationParam(0).get_encoded().unwrap(),
+                ),
                 BatchSelector::new_time_interval(
                     Interval::new(
                         Time::from_seconds_since_epoch(2000, task.time_precision()),
@@ -463,7 +535,6 @@ async fn aggregate_share_request() {
                     )
                     .unwrap(),
                 ),
-                dummy::AggregationParam(0).get_encoded().unwrap(),
                 10,
                 ReportIdChecksum::get_decoded(&[8 ^ 4; 32]).unwrap(),
             ),
@@ -500,8 +571,8 @@ async fn aggregate_share_request() {
                 aggregate_share_resp.encrypted_aggregate_share(),
                 &AggregateShareAad::new(
                     *task.id(),
-                    dummy::AggregationParam(0).get_encoded().unwrap(),
-                    request.batch_selector().clone(),
+                    task.helper_view().unwrap().task_configuration().unwrap(),
+                    request.collection_job_req().clone(),
                 )
                 .get_encoded()
                 .unwrap(),
@@ -570,6 +641,16 @@ async fn aggregate_share_request() {
     // Requests for collection intervals that overlap with but are not identical to previous
     // collection intervals fail.
     let all_batch_request = AggregateShareReq::new(
+        CollectionJobReq::new(
+            Query::new_time_interval(
+                Interval::new(
+                    Time::from_time_precision_units(0),
+                    Duration::from_seconds(4000, task.time_precision()),
+                )
+                .unwrap(),
+            ),
+            dummy::AggregationParam(0).get_encoded().unwrap(),
+        ),
         BatchSelector::new_time_interval(
             Interval::new(
                 Time::from_time_precision_units(0),
@@ -577,7 +658,6 @@ async fn aggregate_share_request() {
             )
             .unwrap(),
         ),
-        dummy::AggregationParam(0).get_encoded().unwrap(),
         20,
         ReportIdChecksum::get_decoded(&[8 ^ 4 ^ 3 ^ 2; 32]).unwrap(),
     );
@@ -603,6 +683,16 @@ async fn aggregate_share_request() {
     // for all the batches. Further requests for any batches will cause query count violations.
     for query_count_violation_request in [
         AggregateShareReq::new(
+            CollectionJobReq::new(
+                Query::new_time_interval(
+                    Interval::new(
+                        Time::from_time_precision_units(0),
+                        Duration::from_seconds(2000, task.time_precision()),
+                    )
+                    .unwrap(),
+                ),
+                dummy::AggregationParam(1).get_encoded().unwrap(),
+            ),
             BatchSelector::new_time_interval(
                 Interval::new(
                     Time::from_time_precision_units(0),
@@ -610,11 +700,20 @@ async fn aggregate_share_request() {
                 )
                 .unwrap(),
             ),
-            dummy::AggregationParam(1).get_encoded().unwrap(),
             10,
             ReportIdChecksum::get_decoded(&[3 ^ 2; 32]).unwrap(),
         ),
         AggregateShareReq::new(
+            CollectionJobReq::new(
+                Query::new_time_interval(
+                    Interval::new(
+                        Time::from_seconds_since_epoch(2000, task.time_precision()),
+                        Duration::from_seconds(2000, task.time_precision()),
+                    )
+                    .unwrap(),
+                ),
+                dummy::AggregationParam(1).get_encoded().unwrap(),
+            ),
             BatchSelector::new_time_interval(
                 Interval::new(
                     Time::from_seconds_since_epoch(2000, task.time_precision()),
@@ -622,7 +721,6 @@ async fn aggregate_share_request() {
                 )
                 .unwrap(),
             ),
-            dummy::AggregationParam(1).get_encoded().unwrap(),
             10,
             ReportIdChecksum::get_decoded(&[4 ^ 8; 32]).unwrap(),
         ),
@@ -705,8 +803,11 @@ async fn aggregate_share_request_duplicate_with_different_id() {
         .unwrap();
 
     let request = AggregateShareReq::new(
+        CollectionJobReq::new(
+            Query::new_time_interval(batch_interval),
+            aggregation_param.get_encoded().unwrap(),
+        ),
         BatchSelector::new_time_interval(batch_interval),
-        aggregation_param.get_encoded().unwrap(),
         report_count,
         checksum,
     );
@@ -784,8 +885,11 @@ async fn aggregate_share_request_get_poll_after_put() {
         .unwrap();
 
     let request = AggregateShareReq::new(
+        CollectionJobReq::new(
+            Query::new_time_interval(batch_interval),
+            aggregation_param.get_encoded().unwrap(),
+        ),
         BatchSelector::new_time_interval(batch_interval),
-        aggregation_param.get_encoded().unwrap(),
         report_count,
         checksum,
     );
@@ -844,8 +948,8 @@ async fn aggregate_share_request_get_poll_after_put() {
         aggregate_share_resp.encrypted_aggregate_share(),
         &AggregateShareAad::new(
             *task.id(),
-            dummy::AggregationParam(0).get_encoded().unwrap(),
-            request.batch_selector().clone(),
+            task.helper_view().unwrap().task_configuration().unwrap(),
+            request.collection_job_req().clone(),
         )
         .get_encoded()
         .unwrap(),
@@ -870,6 +974,222 @@ async fn aggregate_share_request_get_poll_after_put() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
+}
+
+// Leader-selected counterpart of the above: the poll path's reconstructed query must be
+// byte-identical or the decrypt fails.
+#[tokio::test]
+async fn aggregate_share_request_get_poll_after_put_leader_selected() {
+    let HttpHandlerTest {
+        clock: _,
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        router,
+        ..
+    } = HttpHandlerTest::new().await;
+
+    let task = TaskBuilder::new(
+        BatchMode::LeaderSelected {
+            batch_time_window_size: None,
+        },
+        AggregationMode::Synchronous,
+        VdafInstance::Fake { rounds: 1 },
+    )
+    .with_helper_aggregator_endpoint("https://helper.example.com/".parse().unwrap())
+    .build();
+
+    let helper_task = task.helper_view().unwrap();
+    datastore.put_aggregator_task(&helper_task).await.unwrap();
+
+    let batch_id = BatchId::from([9u8; 32]);
+    let client_timestamp_interval = Interval::minimal(Time::from_time_precision_units(0)).unwrap();
+    let aggregation_param = dummy::AggregationParam(0);
+    let report_count = 5;
+    let checksum = ReportIdChecksum::get_decoded(&[3; 32]).unwrap();
+
+    datastore
+        .run_unnamed_tx(|tx| {
+            let helper_task = helper_task.clone();
+
+            Box::pin(async move {
+                tx.put_batch_aggregation(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
+                    *helper_task.id(),
+                    batch_id,
+                    aggregation_param,
+                    0,
+                    client_timestamp_interval,
+                    BatchAggregationState::Aggregating {
+                        aggregate_share: Some(dummy::AggregateShare(16)),
+                        report_count,
+                        checksum,
+                        aggregation_jobs_created: 1,
+                        aggregation_jobs_terminated: 1,
+                    },
+                ))
+                .await
+                .unwrap();
+                tx.put_outstanding_batch(helper_task.id(), &batch_id, &None)
+                    .await
+                    .unwrap();
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+
+    let request = AggregateShareReq::new(
+        CollectionJobReq::new(
+            Query::new_leader_selected(),
+            aggregation_param.get_encoded().unwrap(),
+        ),
+        BatchSelector::new_leader_selected(batch_id),
+        report_count,
+        checksum,
+    );
+
+    let aggregate_share_id = AggregateShareId::from([42u8; 16]);
+
+    // PUT binds the forwarded CollectionJobReq; poll (GET) reconstructs it from the stored job.
+    let response = put_aggregate_share_request(&task, &request, &aggregate_share_id, &router).await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let mut response = router
+        .clone()
+        .oneshot(
+            Request::get(
+                task.aggregate_shares_uri(&aggregate_share_id)
+                    .unwrap()
+                    .path(),
+            )
+            .with_authentication_token(task.aggregator_auth_token())
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let aggregate_share_resp: AggregateShareMessage = decode_response_body(&mut response).await;
+    hpke::open(
+        task.collector_hpke_keypair(),
+        &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
+        aggregate_share_resp.encrypted_aggregate_share(),
+        &AggregateShareAad::new(
+            *task.id(),
+            task.helper_view().unwrap().task_configuration().unwrap(),
+            request.collection_job_req().clone(),
+        )
+        .get_encoded()
+        .unwrap(),
+    )
+    .unwrap();
+}
+
+// Proves the TaskConfiguration in the aggregate-share AAD works: a mismatched one must not open
+// the helper's share.
+#[tokio::test]
+async fn aggregate_share_aad_task_configuration_mismatch_fails() {
+    let HttpHandlerTest {
+        clock: _,
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        router,
+        ..
+    } = HttpHandlerTest::new().await;
+
+    let task = TaskBuilder::new(
+        BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
+        VdafInstance::Fake { rounds: 1 },
+    )
+    .with_helper_aggregator_endpoint("https://helper.example.com/".parse().unwrap())
+    .with_min_batch_size(1)
+    .build();
+    let helper_task = task.helper_view().unwrap();
+    datastore.put_aggregator_task(&helper_task).await.unwrap();
+
+    let batch_interval = Interval::minimal(Time::from_time_precision_units(0)).unwrap();
+    let aggregation_param = dummy::AggregationParam(0);
+    let report_count = 5;
+    let checksum = ReportIdChecksum::get_decoded(&[3; 32]).unwrap();
+
+    datastore
+        .run_unnamed_tx(|tx| {
+            let helper_task = helper_task.clone();
+            Box::pin(async move {
+                tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                    *helper_task.id(),
+                    batch_interval,
+                    aggregation_param,
+                    0,
+                    batch_interval,
+                    BatchAggregationState::Aggregating {
+                        aggregate_share: Some(dummy::AggregateShare(16)),
+                        report_count,
+                        checksum,
+                        aggregation_jobs_created: 1,
+                        aggregation_jobs_terminated: 1,
+                    },
+                ))
+                .await
+                .unwrap();
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+
+    let request = AggregateShareReq::new(
+        CollectionJobReq::new(
+            Query::new_time_interval(batch_interval),
+            aggregation_param.get_encoded().unwrap(),
+        ),
+        BatchSelector::new_time_interval(batch_interval),
+        report_count,
+        checksum,
+    );
+
+    let mut response =
+        put_aggregate_share_request(&task, &request, &AggregateShareId::from([7u8; 16]), &router)
+            .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let aggregate_share_resp: AggregateShareMessage = decode_response_body(&mut response).await;
+
+    // A task identical except for `min_batch_size` yields a different TaskConfiguration, so its AAD
+    // must not open the helper's share.
+    let mismatched_task_configuration = TaskBuilder::new(
+        BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
+        VdafInstance::Fake { rounds: 1 },
+    )
+    .with_helper_aggregator_endpoint("https://helper.example.com/".parse().unwrap())
+    .with_min_batch_size(2)
+    .build()
+    .helper_view()
+    .unwrap()
+    .task_configuration()
+    .unwrap();
+    assert_ne!(
+        mismatched_task_configuration,
+        task.helper_view().unwrap().task_configuration().unwrap(),
+    );
+
+    let result = hpke::open(
+        task.collector_hpke_keypair(),
+        &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
+        aggregate_share_resp.encrypted_aggregate_share(),
+        &AggregateShareAad::new(
+            *task.id(),
+            mismatched_task_configuration,
+            request.collection_job_req().clone(),
+        )
+        .get_encoded()
+        .unwrap(),
+    );
+    assert!(
+        result.is_err(),
+        "mismatched TaskConfiguration must not decrypt"
+    );
 }
 
 #[tokio::test]
@@ -978,6 +1298,139 @@ async fn aggregate_share_delete_nonexistant() {
             "title": "The aggregate share ID is not recognized.",
             "taskid": format!("{}", task.id()),
             "aggregate_share_id": format!("{}", nonexistent_aggregate_share_id),
+        })
+    );
+}
+
+#[tokio::test]
+async fn aggregate_share_request_batch_selector_inconsistent_with_query() {
+    let HttpHandlerTest {
+        clock: _,
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        router,
+        ..
+    } = HttpHandlerTest::new().await;
+
+    let task = TaskBuilder::new(
+        BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
+        VdafInstance::Fake { rounds: 1 },
+    )
+    .with_helper_aggregator_endpoint("https://helper.example.com/".parse().unwrap())
+    .build();
+    datastore
+        .put_aggregator_task(&task.helper_view().unwrap())
+        .await
+        .unwrap();
+
+    let interval = |start, duration| {
+        Interval::new(
+            Time::from_time_precision_units(start),
+            Duration::from_time_precision_units(duration),
+        )
+        .unwrap()
+    };
+    let queried_interval = interval(10, 10);
+
+    for selected_interval in [
+        interval(30, 10), // disjoint from the queried interval
+        // A strict sub-interval. This is permitted by DAP-19 4.6.4 but not by Janus.
+        interval(12, 5),
+        interval(5, 20), // a superset of the queried interval
+    ] {
+        let request = AggregateShareReq::new(
+            CollectionJobReq::new(
+                Query::new_time_interval(queried_interval),
+                dummy::AggregationParam(0).get_encoded().unwrap(),
+            ),
+            BatchSelector::new_time_interval(selected_interval),
+            0,
+            ReportIdChecksum::default(),
+        );
+
+        let mut response = put_aggregate_share_request(
+            &task,
+            &request,
+            &AggregateShareId::from([0u8; 16]),
+            &router,
+        )
+        .await;
+
+        assert_eq!(
+            response.status(),
+            StatusCode::BAD_REQUEST,
+            "selector {selected_interval} should be rejected"
+        );
+        assert_eq!(
+            take_problem_details(&mut response).await,
+            json!({
+                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "type": "urn:ietf:params:ppm:dap:error:batchInvalid",
+                "title": "The batch implied by the query is invalid.",
+                "taskid": format!("{}", task.id()),
+            })
+        );
+    }
+}
+
+// The helper validates the collector's extensions itself rather than trusting the leader
+// (DAP-19 §4.6.4).
+#[tokio::test]
+async fn aggregate_share_request_unsupported_extension() {
+    let HttpHandlerTest {
+        clock: _,
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        router,
+        ..
+    } = HttpHandlerTest::new().await;
+
+    let task = TaskBuilder::new(
+        BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
+        VdafInstance::Fake { rounds: 1 },
+    )
+    .with_helper_aggregator_endpoint("https://helper.example.com/".parse().unwrap())
+    .build();
+    datastore
+        .put_aggregator_task(&task.helper_view().unwrap())
+        .await
+        .unwrap();
+
+    let batch_interval = Interval::new(
+        Time::from_time_precision_units(10),
+        Duration::from_time_precision_units(10),
+    )
+    .unwrap();
+
+    let request = AggregateShareReq::new(
+        CollectionJobReq::new(
+            Query::new_time_interval(batch_interval),
+            dummy::AggregationParam(0).get_encoded().unwrap(),
+        )
+        .with_extensions(Vec::from([CollectionJobExtension::new(
+            CollectionJobExtensionType::Unknown(0xbeef),
+            Vec::from([0]),
+        )])),
+        BatchSelector::new_time_interval(batch_interval),
+        0,
+        ReportIdChecksum::default(),
+    );
+
+    let mut response =
+        put_aggregate_share_request(&task, &request, &AggregateShareId::from([0u8; 16]), &router)
+            .await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        take_problem_details(&mut response).await,
+        json!({
+            "status": StatusCode::BAD_REQUEST.as_u16(),
+            "type": "urn:ietf:params:ppm:dap:error:unsupportedExtension",
+            "title": "The message includes an unsupported extension.",
+            "detail": "collection job contains an unsupported extension type",
+            "taskid": format!("{}", task.id()),
         })
     );
 }

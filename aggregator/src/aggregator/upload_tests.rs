@@ -151,7 +151,12 @@ async fn upload() {
         .await
         .unwrap()
         .unwrap();
-    assert!(got_report.eq_report(&vdaf, &hpke_keypair, &report));
+    assert!(got_report.eq_report(
+        &vdaf,
+        &hpke_keypair,
+        &task.leader_view().unwrap().task_configuration().unwrap(),
+        &report,
+    ));
 
     // Report uploads are idempotent.
     aggregator
@@ -192,7 +197,12 @@ async fn upload() {
         })
         .await
         .unwrap();
-    assert!(got_report.unwrap().eq_report(&vdaf, &hpke_keypair, &report));
+    assert!(got_report.unwrap().eq_report(
+        &vdaf,
+        &hpke_keypair,
+        &task.leader_view().unwrap().task_configuration().unwrap(),
+        &report,
+    ));
 
     assert_eq!(
         got_counter,
@@ -1011,6 +1021,7 @@ async fn upload_report_leader_input_share_decode_failure() {
                 .unwrap(),
             &InputShareAad::new(
                 *task.id(),
+                task.task_configuration().unwrap(),
                 report.metadata().clone(),
                 report.public_share().to_vec(),
             )

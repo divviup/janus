@@ -188,9 +188,12 @@ impl VdafInstance {
 
             #[cfg(feature = "test-util")]
             VdafInstance::Fake { rounds } => VdafConfig::Fake { rounds: *rounds },
+            // These test-only variants only differ from `Fake` in that they force a VDAF
+            // verification failure; for wire purposes (and the TaskConfiguration bound into HPKE
+            // AADs) they are represented as `Fake` so a config can be built at all.
             #[cfg(feature = "test-util")]
             VdafInstance::FakeFailsVerifyInit | VdafInstance::FakeFailsVerifyStep => {
-                return Err("VDAF instance has no VdafConfig representation");
+                VdafConfig::Fake { rounds: 1 }
             }
         })
     }
@@ -775,9 +778,14 @@ mod tests {
             .is_err()
         );
 
-        // The fake-failure VDAFs have no VdafConfig representation.
-        assert!(VdafInstance::FakeFailsVerifyInit.to_vdaf_config().is_err());
-        assert!(VdafInstance::FakeFailsVerifyStep.to_vdaf_config().is_err());
+        assert_eq!(
+            VdafInstance::FakeFailsVerifyInit.to_vdaf_config().unwrap(),
+            VdafConfig::Fake { rounds: 1 }
+        );
+        assert_eq!(
+            VdafInstance::FakeFailsVerifyStep.to_vdaf_config().unwrap(),
+            VdafConfig::Fake { rounds: 1 }
+        );
         assert_eq!(
             VdafInstance::Fake { rounds: 3 }.to_vdaf_config().unwrap(),
             VdafConfig::Fake { rounds: 3 }

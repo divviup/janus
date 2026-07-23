@@ -12,9 +12,9 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    AggregateShareAad, BatchSelector, CollectionJobExtension, CollectionJobExtensionType,
-    CollectionJobId, CollectionJobReq, CollectionJobResp, Duration, Interval, MediaType, Query,
-    Role, Time, batch_mode::TimeInterval,
+    AggregateShareAad, CollectionJobExtension, CollectionJobExtensionType, CollectionJobId,
+    CollectionJobReq, CollectionJobResp, Duration, Interval, MediaType, Query, Role, Time,
+    batch_mode::TimeInterval,
 };
 use prio::{
     codec::{Decode, Encode},
@@ -451,8 +451,11 @@ async fn collection_job_success_time_interval() {
                     &helper_aggregate_share_bytes,
                     &AggregateShareAad::new(
                         *task.id(),
-                        aggregation_param.get_encoded().unwrap(),
-                        BatchSelector::new_time_interval(batch_interval),
+                        task.helper_view().unwrap().task_configuration().unwrap(),
+                        CollectionJobReq::new(
+                            Query::new_time_interval(batch_interval),
+                            aggregation_param.get_encoded().unwrap(),
+                        ),
                     )
                     .get_encoded()
                     .unwrap(),
@@ -517,8 +520,16 @@ async fn collection_job_success_time_interval() {
         &leader_encrypted_aggregate_share,
         &AggregateShareAad::new(
             *test_case.task.id(),
-            aggregation_param.get_encoded().unwrap(),
-            BatchSelector::new_time_interval(batch_interval),
+            test_case
+                .task
+                .leader_view()
+                .unwrap()
+                .task_configuration()
+                .unwrap(),
+            CollectionJobReq::new(
+                Query::new_time_interval(batch_interval),
+                aggregation_param.get_encoded().unwrap(),
+            ),
         )
         .get_encoded()
         .unwrap(),
@@ -535,8 +546,16 @@ async fn collection_job_success_time_interval() {
         &helper_encrypted_aggregate_share,
         &AggregateShareAad::new(
             *test_case.task.id(),
-            aggregation_param.get_encoded().unwrap(),
-            BatchSelector::new_time_interval(batch_interval),
+            test_case
+                .task
+                .helper_view()
+                .unwrap()
+                .task_configuration()
+                .unwrap(),
+            CollectionJobReq::new(
+                Query::new_time_interval(batch_interval),
+                aggregation_param.get_encoded().unwrap(),
+            ),
         )
         .get_encoded()
         .unwrap(),

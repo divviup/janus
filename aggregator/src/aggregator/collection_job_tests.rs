@@ -26,8 +26,8 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    AggregateShareAad, AggregationJobStep, BatchId, BatchSelector, CollectionJobId,
-    CollectionJobReq, CollectionJobResp, Interval, MediaType, Query, Role, Time, TimePrecision,
+    AggregateShareAad, AggregationJobStep, BatchId, CollectionJobId, CollectionJobReq,
+    CollectionJobResp, Interval, MediaType, Query, Role, Time, TimePrecision,
     batch_mode::{BatchMode as BatchModeTrait, LeaderSelected, TimeInterval},
 };
 use prio::{
@@ -394,8 +394,11 @@ async fn collection_job_success_leader_selected() {
                         &helper_aggregate_share_bytes,
                         &AggregateShareAad::new(
                             *task.id(),
-                            aggregation_param.get_encoded().unwrap(),
-                            BatchSelector::new_leader_selected(batch_id),
+                            task.helper_view().unwrap().task_configuration().unwrap(),
+                            CollectionJobReq::new(
+                                Query::new_leader_selected(),
+                                aggregation_param.get_encoded().unwrap(),
+                            ),
                         )
                         .get_encoded()
                         .unwrap(),
@@ -465,8 +468,16 @@ async fn collection_job_success_leader_selected() {
             &leader_encrypted_aggregate_share,
             &AggregateShareAad::new(
                 *test_case.task.id(),
-                aggregation_param.get_encoded().unwrap(),
-                BatchSelector::new_leader_selected(batch_id),
+                test_case
+                    .task
+                    .leader_view()
+                    .unwrap()
+                    .task_configuration()
+                    .unwrap(),
+                CollectionJobReq::new(
+                    Query::new_leader_selected(),
+                    aggregation_param.get_encoded().unwrap(),
+                ),
             )
             .get_encoded()
             .unwrap(),
@@ -483,8 +494,16 @@ async fn collection_job_success_leader_selected() {
             &helper_encrypted_aggregate_share,
             &AggregateShareAad::new(
                 *test_case.task.id(),
-                aggregation_param.get_encoded().unwrap(),
-                BatchSelector::new_leader_selected(batch_id),
+                test_case
+                    .task
+                    .leader_view()
+                    .unwrap()
+                    .task_configuration()
+                    .unwrap(),
+                CollectionJobReq::new(
+                    Query::new_leader_selected(),
+                    aggregation_param.get_encoded().unwrap(),
+                ),
             )
             .get_encoded()
             .unwrap(),

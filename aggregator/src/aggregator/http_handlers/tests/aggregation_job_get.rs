@@ -186,6 +186,7 @@ async fn aggregation_job_get_unready() {
     let leader_message = transcript.leader_verify_transitions[0].message().unwrap();
     let report_share = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
+        task.helper_view().unwrap().task_configuration().unwrap(),
         report_metadata.clone(),
         hpke_keypair.config(),
         &transcript.public_share,

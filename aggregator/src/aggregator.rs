@@ -53,10 +53,10 @@ use janus_core::{
 use janus_messages::{
     AggregateShare, AggregateShareAad, AggregateShareId, AggregateShareReq,
     AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq, AggregationJobResp,
-    AggregationJobStep, BatchSelector, CollectionJobId, CollectionJobReq, CollectionJobResp,
-    Duration, ExtensionType, HpkeConfig, HpkeConfigList, InputShareAad, Interval,
-    PartialBatchSelector, PlaintextInputShare, Report, ReportError, ReportUploadStatus, Role,
-    TaskConfiguration, TaskId, UploadErrors, Url as DapUrl, VerifyResp,
+    AggregationJobStep, CollectionJobExtension, CollectionJobId, CollectionJobReq,
+    CollectionJobResp, Duration, ExtensionType, HpkeConfig, HpkeConfigList, InputShareAad,
+    Interval, PartialBatchSelector, PlaintextInputShare, Report, ReportError, ReportUploadStatus,
+    Role, TaskConfiguration, TaskId, UploadErrors, Url as DapUrl, VerifyResp,
     batch_mode::{LeaderSelected, TimeInterval},
     extensions_are_strictly_increasing,
 };
@@ -1945,6 +1945,8 @@ impl VdafOps {
 
         let input_share_aad = InputShareAad::new(
             *task.id(),
+            task.task_configuration()
+                .map_err(|e| UploadError::Internal(Arc::new(e.into())))?,
             report.metadata().clone(),
             report.public_share().to_vec(),
         )
@@ -3176,24 +3178,7 @@ impl VdafOps {
         collection_job_id: &CollectionJobId,
         req: Arc<CollectionJobReq<B>>,
     ) -> Result<Vec<u8>, Error> {
-        // Collection job extensions must be in strictly increasing order of extension type, which
-        // also rejects duplicates, and every extension type must be supported (DAP-19 §4.6.2). No
-        // collection job extension types are defined yet, so any extension is unsupported.
-        if !req
-            .extensions()
-            .is_sorted_by(|a, b| a.extension_type() < b.extension_type())
-        {
-            return Err(Error::InvalidExtension(
-                Some(*task.id()),
-                "collection job extensions are not in strictly increasing order of extension type",
-            ));
-        }
-        if !req.extensions().is_empty() {
-            return Err(Error::UnsupportedExtension(
-                Some(*task.id()),
-                "collection job contains an unsupported extension type",
-            ));
-        }
+        validate_collection_job_extensions(task.id(), req.extensions())?;
 
         let aggregation_param = Arc::new(
             A::AggregationParam::get_decoded(req.aggregation_parameter())
@@ -3422,11 +3407,10 @@ impl VdafOps {
                         .map_err(Error::MessageEncode)?,
                     &AggregateShareAad::new(
                         *collection_job.task_id(),
+                        task.task_configuration()?,
                         collection_job
-                            .aggregation_parameter()
-                            .get_encoded()
+                            .to_collection_job_req()
                             .map_err(Error::MessageEncode)?,
-                        BatchSelector::<B>::new(collection_job.batch_identifier().clone()),
                     )
                     .get_encoded()
                     .map_err(Error::MessageEncode)?,
@@ -3651,11 +3635,19 @@ impl VdafOps {
                 .map_err(Error::MessageEncode)?,
             &AggregateShareAad::new(
                 *task.id(),
-                aggregate_share_job
-                    .aggregation_parameter()
-                    .get_encoded()
-                    .map_err(Error::MessageEncode)?,
-                BatchSelector::<B>::new(aggregate_share_job.batch_identifier().clone()),
+                task.task_configuration()?,
+                // On the poll path we no longer have the Collector's original CollectionJobReq
+                // (there is no incoming AggregateShareReq), so reconstruct it from the stored job.
+                // This must be byte-identical to the request the Collector sent; see
+                // `query_for_collection_identifier`. When we support extensions (Issue #4715)
+                // this will need to change.
+                CollectionJobReq::new(
+                    B::query_for_collection_identifier(aggregate_share_job.batch_identifier()),
+                    aggregate_share_job
+                        .aggregation_parameter()
+                        .get_encoded()
+                        .map_err(Error::MessageEncode)?,
+                ),
             )
             .get_encoded()
             .map_err(Error::MessageEncode)?,
@@ -3811,6 +3803,31 @@ impl VdafOps {
         aggregate_share_id: &AggregateShareId,
         dp_strategy: Arc<S>,
     ) -> Result<AggregateShare, Error> {
+        // DAP-19 §4.6.4: the Helper validates the Collector's extensions independently of the
+        // Leader.
+        validate_collection_job_extensions(
+            task.id(),
+            aggregate_share_req.collection_job_req().extensions(),
+        )?;
+
+        // DAP-19 §4.6.4: the Helper verifies the Leader-chosen batch selector against the query in
+        // the CollectionJobReq, which the AAD binds. The spec defines consistency per batch mode
+        // and would permit any time-interval selector within the queried interval, but Janus
+        // requires exact round-tripping, otherwise the poll path rebuilds the AAD's query from
+        // the stored selector alone, so a narrower selector would decrypt here and fail there.
+        if B::query_for_collection_identifier(
+            aggregate_share_req.batch_selector().batch_identifier(),
+        ) != *aggregate_share_req.collection_job_req().query()
+        {
+            return Err(Error::BatchInvalid(
+                *task.id(),
+                format!(
+                    "{}, which is inconsistent with the collection job request's query",
+                    aggregate_share_req.batch_selector().batch_identifier()
+                ),
+            ));
+        }
+
         // §4.4.4.3: check that the batch interval meets the requirements from §4.6
         if !B::validate_collection_identifier(
             aggregate_share_req.batch_selector().batch_identifier(),
@@ -3869,7 +3886,8 @@ impl VdafOps {
                         .await?
                     {
                         // Duplicate aggregate share job found - verify the aggregate share ID
-                        // matches
+                        // matches. Note, when we add collection extensions, those will need
+                        // to be checked here as well. (Issue #4715)
                         if aggregate_share_job.aggregate_share_id() != &aggregate_share_id
                         {
                             // Mismatch here indicates a duplicate request with a different
@@ -4006,11 +4024,8 @@ impl VdafOps {
                 .map_err(Error::MessageEncode)?,
             &AggregateShareAad::new(
                 *task.id(),
-                aggregate_share_job
-                    .aggregation_parameter()
-                    .get_encoded()
-                    .map_err(Error::MessageEncode)?,
-                aggregate_share_req.batch_selector().clone(),
+                task.task_configuration()?,
+                aggregate_share_req.collection_job_req().clone(),
             )
             .get_encoded()
             .map_err(Error::MessageEncode)?,
@@ -4049,6 +4064,30 @@ impl VdafOps {
             })?;
         Ok(())
     }
+}
+
+/// Validates a collection job's extensions, per DAP-19 §4.6.2. Both the Leader (on collection job
+/// creation) and the Helper (on aggregate share requests, independently of the Leader) must apply
+/// this.
+fn validate_collection_job_extensions(
+    task_id: &TaskId,
+    extensions: &[CollectionJobExtension],
+) -> Result<(), Error> {
+    // Strictly increasing order also rejects duplicates.
+    if !extensions.is_sorted_by(|a, b| a.extension_type() < b.extension_type()) {
+        return Err(Error::InvalidExtension(
+            Some(*task_id),
+            "collection job extensions are not in strictly increasing order of extension type",
+        ));
+    }
+    // No collection job extension types are defined yet, so any extension is unsupported.
+    if !extensions.is_empty() {
+        return Err(Error::UnsupportedExtension(
+            Some(*task_id),
+            "collection job contains an unsupported extension type",
+        ));
+    }
+    Ok(())
 }
 
 fn write_task_aggregation_counter<C: Clock>(
