@@ -40,11 +40,15 @@ COPY interop_binaries /src/interop_binaries
 COPY messages /src/messages
 COPY tools /src/tools
 COPY xtask /src/xtask
+ARG GIT_REVISION=unknown
+ENV GIT_REVISION=${GIT_REVISION}
 RUN cargo build --profile $PROFILE -p janus_interop_binaries
 
 FROM alpine:3.24.1 AS final
 ARG BINARY
 ARG PROFILE
+ARG GIT_REVISION=unknown
+LABEL revision=${GIT_REVISION}
 RUN mkdir /logs
 COPY --from=builder /src/target/$PROFILE/janus_interop /janus_interop
 RUN ln -s /janus_interop /janus_interop_client && \
