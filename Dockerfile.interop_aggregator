@@ -39,6 +39,8 @@ COPY interop_binaries /src/interop_binaries
 COPY messages /src/messages
 COPY tools /src/tools
 COPY xtask /src/xtask
+ARG GIT_REVISION=unknown
+ENV GIT_REVISION=${GIT_REVISION}
 RUN cargo build --profile $PROFILE -p janus_aggregator
 
 FROM chef AS builder-interop
@@ -58,6 +60,8 @@ COPY interop_binaries /src/interop_binaries
 COPY messages /src/messages
 COPY tools /src/tools
 COPY xtask /src/xtask
+ARG GIT_REVISION=unknown
+ENV GIT_REVISION=${GIT_REVISION}
 RUN cargo build --profile $PROFILE -p janus_interop_binaries
 
 FROM rust:1.97.0-alpine AS sqlx
@@ -70,6 +74,8 @@ RUN cargo install sqlx-cli \
     --no-default-features --features postgres
 
 FROM postgres:15-alpine AS final
+ARG GIT_REVISION=unknown
+LABEL revision=${GIT_REVISION}
 RUN mkdir /logs && mkdir /etc/janus
 RUN apk add --no-cache supervisor && rm -rf /tmp/* /var/cache/apk/*
 COPY db /etc/janus/migrations
