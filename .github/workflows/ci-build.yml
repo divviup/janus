@@ -176,7 +176,7 @@ jobs:
       uses: docker/bake-action@v7.3.0
       with:
         files: docker-bake.hcl
-        workdir: .
+        source: .
         targets: janus
         load: true
     # Independent smoke checks; run in parallel.
@@ -204,7 +204,7 @@ jobs:
       uses: docker/bake-action@v7.3.0
       with:
         files: docker-bake.hcl
-        workdir: .
+        source: .
         targets: interop_binaries_ci
 
   rustsec_advisories:
