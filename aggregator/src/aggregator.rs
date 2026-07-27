@@ -3639,8 +3639,8 @@ impl VdafOps {
                 // On the poll path we no longer have the Collector's original CollectionJobReq
                 // (there is no incoming AggregateShareReq), so reconstruct it from the stored job.
                 // This must be byte-identical to the request the Collector sent; see
-                // `query_for_collection_identifier`. When we support extensions (Issue #4715)
-                // this will need to change.
+                // `query_for_collection_identifier` (and Issue #4743). When we support
+                // extensions (Issue #4715) this will need to change.
                 CollectionJobReq::new(
                     B::query_for_collection_identifier(aggregate_share_job.batch_identifier()),
                     aggregate_share_job
