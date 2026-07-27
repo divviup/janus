@@ -135,8 +135,8 @@ async fn aggregate_share_request_invalid_batch_interval() {
             Query::new_time_interval(
                 Interval::new(
                     clock.now().to_time(task.time_precision()),
-                    // Collect request will be rejected because batch interval is too small
-                    Duration::from_seconds(task.time_precision().as_seconds() - 1, &time_precision),
+                    // Collect request will be rejected because the batch interval is too small.
+                    Duration::ZERO,
                 )
                 .unwrap(),
             ),
@@ -145,8 +145,8 @@ async fn aggregate_share_request_invalid_batch_interval() {
         BatchSelector::new_time_interval(
             Interval::new(
                 clock.now().to_time(task.time_precision()),
-                // Collect request will be rejected because batch interval is too small
-                Duration::from_seconds(task.time_precision().as_seconds() - 1, &time_precision),
+                // Collect request will be rejected because the batch interval is too small.
+                Duration::ZERO,
             )
             .unwrap(),
         ),
@@ -571,7 +571,7 @@ async fn aggregate_share_request() {
                 aggregate_share_resp.encrypted_aggregate_share(),
                 &AggregateShareAad::new(
                     *task.id(),
-                    task.helper_view().unwrap().task_configuration().unwrap(),
+                    task.task_configuration(),
                     request.collection_job_req().clone(),
                 )
                 .get_encoded()
@@ -948,7 +948,7 @@ async fn aggregate_share_request_get_poll_after_put() {
         aggregate_share_resp.encrypted_aggregate_share(),
         &AggregateShareAad::new(
             *task.id(),
-            task.helper_view().unwrap().task_configuration().unwrap(),
+            task.task_configuration(),
             request.collection_job_req().clone(),
         )
         .get_encoded()
@@ -1076,7 +1076,7 @@ async fn aggregate_share_request_get_poll_after_put_leader_selected() {
         aggregate_share_resp.encrypted_aggregate_share(),
         &AggregateShareAad::new(
             *task.id(),
-            task.helper_view().unwrap().task_configuration().unwrap(),
+            task.task_configuration(),
             request.collection_job_req().clone(),
         )
         .get_encoded()
@@ -1165,14 +1165,8 @@ async fn aggregate_share_aad_task_configuration_mismatch_fails() {
     .with_helper_aggregator_endpoint("https://helper.example.com/".parse().unwrap())
     .with_min_batch_size(2)
     .build()
-    .helper_view()
-    .unwrap()
-    .task_configuration()
-    .unwrap();
-    assert_ne!(
-        mismatched_task_configuration,
-        task.helper_view().unwrap().task_configuration().unwrap(),
-    );
+    .task_configuration();
+    assert_ne!(mismatched_task_configuration, task.task_configuration(),);
 
     let result = hpke::open(
         task.collector_hpke_keypair(),

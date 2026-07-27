@@ -962,7 +962,8 @@ pub mod test_util {
     };
     use janus_messages::{
         AggregateShareId, AggregationJobId, AggregationJobStep, CollectionJobId, Duration,
-        HpkeConfigId, Interval, Role, TaskId, Time, TimePrecision, Url as DapUrl,
+        HpkeConfigId, Interval, Role, TaskConfiguration, TaskId, Time, TimePrecision,
+        Url as DapUrl,
     };
     use rand::{RngExt, distr::StandardUniform, random, rng};
     use url::Url;
@@ -1252,6 +1253,13 @@ pub mod test_util {
                     aggregation_mode: self.helper_aggregation_mode,
                 },
             )
+        }
+
+        /// The task's [`TaskConfiguration`], as bound into HPKE AADs. Identical across aggregator
+        /// views, so this collapses the frequent
+        /// `helper_view().unwrap().task_configuration().unwrap()` chain in tests.
+        pub fn task_configuration(&self) -> TaskConfiguration {
+            self.leader_view().unwrap().task_configuration().unwrap()
         }
 
         /// Render a taskprov helper aggregator's view of this task.

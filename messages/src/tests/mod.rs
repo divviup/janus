@@ -35,37 +35,43 @@ pub(crate) fn test_task_configuration() -> TaskConfiguration {
 }
 
 /// The wire encoding of [`test_task_configuration`], mirroring
-/// [`task::roundtrip_task_configuration`].
-pub(crate) const TASK_CONFIGURATION_HEX: &str = concat!(
-    concat!(
-        // task_info
-        "06",           // length
-        "666F6F626172"  // opaque data
-    ),
-    concat!(
-        // leader_aggregator_url
-        "0014",                                     // length
-        "68747470733A2F2F6578616D706C652E636F6D2F"  // contents
-    ),
-    concat!(
-        // helper_aggregator_url
-        "001C",                                                     // length
-        "68747470733A2F2F616E6F746865722E6578616D706C652E636F6D2F"  // contents
-    ),
-    "0000000000000E10", // time_precision
-    "0000000000002710", // min_batch_size
-    "01",               // batch_mode
-    "0000",             // batch_config
-    "00000001",         // vdaf_type
-    "0000",             // vdaf_config
-    concat!(
-        // extensions (task_interval extension)
-        "0014", // length
+/// [`task::roundtrip_task_configuration`]. A macro rather than a `const` so it can be spliced into
+/// other `concat!` fixtures, which only accept literals.
+macro_rules! task_configuration_hex {
+    () => {
         concat!(
-            "0001",             // extension_type (TaskInterval)
-            "0010",             // extension_data length
-            "0000000000000115", // start
-            "000000000000001C", // duration
-        ),
-    ),
-);
+            concat!(
+                // task_info
+                "06",           // length
+                "666F6F626172"  // opaque data
+            ),
+            concat!(
+                // leader_aggregator_url
+                "0014",                                     // length
+                "68747470733A2F2F6578616D706C652E636F6D2F"  // contents
+            ),
+            concat!(
+                // helper_aggregator_url
+                "001C",                                                     // length
+                "68747470733A2F2F616E6F746865722E6578616D706C652E636F6D2F"  // contents
+            ),
+            "0000000000000E10", // time_precision
+            "0000000000002710", // min_batch_size
+            "01",               // batch_mode
+            "0000",             // batch_config
+            "00000001",         // vdaf_type
+            "0000",             // vdaf_config
+            concat!(
+                // extensions (task_interval extension)
+                "0014", // length
+                concat!(
+                    "0001",             // extension_type (TaskInterval)
+                    "0010",             // extension_data length
+                    "0000000000000115", // start
+                    "000000000000001C", // duration
+                ),
+            ),
+        )
+    };
+}
+pub(crate) use task_configuration_hex;

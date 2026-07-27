@@ -394,7 +394,7 @@ async fn collection_job_success_leader_selected() {
                         &helper_aggregate_share_bytes,
                         &AggregateShareAad::new(
                             *task.id(),
-                            task.helper_view().unwrap().task_configuration().unwrap(),
+                            task.task_configuration(),
                             CollectionJobReq::new(
                                 Query::new_leader_selected(),
                                 aggregation_param.get_encoded().unwrap(),
@@ -468,12 +468,7 @@ async fn collection_job_success_leader_selected() {
             &leader_encrypted_aggregate_share,
             &AggregateShareAad::new(
                 *test_case.task.id(),
-                test_case
-                    .task
-                    .leader_view()
-                    .unwrap()
-                    .task_configuration()
-                    .unwrap(),
+                test_case.task.task_configuration(),
                 CollectionJobReq::new(
                     Query::new_leader_selected(),
                     aggregation_param.get_encoded().unwrap(),
@@ -494,12 +489,7 @@ async fn collection_job_success_leader_selected() {
             &helper_encrypted_aggregate_share,
             &AggregateShareAad::new(
                 *test_case.task.id(),
-                test_case
-                    .task
-                    .leader_view()
-                    .unwrap()
-                    .task_configuration()
-                    .unwrap(),
+                test_case.task.task_configuration(),
                 CollectionJobReq::new(
                     Query::new_leader_selected(),
                     aggregation_param.get_encoded().unwrap(),

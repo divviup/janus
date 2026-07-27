@@ -1,6 +1,6 @@
 use prio::codec::Decode;
 
-use super::{TASK_CONFIGURATION_HEX, test_task_configuration};
+use super::{task_configuration_hex, test_task_configuration};
 use crate::{
     AggregateShare, AggregateShareAad, AggregateShareReq, BatchId, BatchSelector,
     CollectionJobExtension, CollectionJobExtensionType, CollectionJobReq, CollectionJobResp,
@@ -800,16 +800,16 @@ fn roundtrip_aggregate_share() {
 
 #[test]
 fn roundtrip_aggregate_share_aad() {
-    // The embedded TaskConfiguration bytes are spliced in from `TASK_CONFIGURATION_HEX` (verified
-    // in `task::roundtrip_task_configuration`) via `format!`, since `concat!` cannot reference a
-    // const.
+    // The embedded TaskConfiguration bytes are spliced in from `task_configuration_hex!` (verified
+    // in `task::roundtrip_task_configuration`).
 
     // TimeInterval.
-    let time_interval_encoding = format!(
-        "{task_id}{task_configuration}{collection_job_req}",
-        task_id = "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C",
-        task_configuration = TASK_CONFIGURATION_HEX,
-        collection_job_req = concat!(
+    let time_interval_encoding = concat!(
+        // task_id
+        "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C",
+        task_configuration_hex!(),
+        // collection_job_req
+        concat!(
             concat!(
                 // query
                 "01",   // batch_mode
@@ -843,15 +843,16 @@ fn roundtrip_aggregate_share_aad() {
                 extensions: Vec::new(),
             },
         },
-        time_interval_encoding.as_str(),
+        time_interval_encoding,
     )]);
 
     // LeaderSelected.
-    let leader_selected_encoding = format!(
-        "{task_id}{task_configuration}{collection_job_req}",
-        task_id = "0000000000000000000000000000000000000000000000000000000000000000",
-        task_configuration = TASK_CONFIGURATION_HEX,
-        collection_job_req = concat!(
+    let leader_selected_encoding = concat!(
+        // task_id
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        task_configuration_hex!(),
+        // collection_job_req
+        concat!(
             concat!(
                 // query
                 "02",   // batch_mode
@@ -875,6 +876,6 @@ fn roundtrip_aggregate_share_aad() {
                 extensions: Vec::new(),
             },
         },
-        leader_selected_encoding.as_str(),
+        leader_selected_encoding,
     )])
 }

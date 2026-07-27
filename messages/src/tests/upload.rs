@@ -1,6 +1,6 @@
 use prio::codec::Encode;
 
-use super::{TASK_CONFIGURATION_HEX, test_task_configuration};
+use super::{task_configuration_hex, test_task_configuration};
 use crate::{
     Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, InputShareAad, PlaintextInputShare,
     Report, ReportError, ReportId, ReportMetadata, ReportUploadStatus, TaskId, Time, TimePrecision,
@@ -318,14 +318,14 @@ fn roundtrip_report() {
 
 #[test]
 fn roundtrip_input_share_aad() {
-    // The embedded TaskConfiguration bytes are spliced in from `TASK_CONFIGURATION_HEX` (verified
-    // in `task::roundtrip_task_configuration`) via `format!`, since `concat!` cannot reference a
-    // const.
-    let encoding = format!(
-        "{task_id}{task_configuration}{metadata}{public_share}",
-        task_id = "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C",
-        task_configuration = TASK_CONFIGURATION_HEX,
-        metadata = concat!(
+    // The embedded TaskConfiguration bytes are spliced in from `task_configuration_hex!` (verified
+    // in `task::roundtrip_task_configuration`).
+    let encoding = concat!(
+        // task_id
+        "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C",
+        task_configuration_hex!(),
+        // metadata
+        concat!(
             "0102030405060708090A0B0C0D0E0F10", // report_id
             "000000000000D431",                 // time
             concat!(
@@ -341,7 +341,8 @@ fn roundtrip_input_share_aad() {
                 ),
             ),
         ),
-        public_share = concat!(
+        // public_share
+        concat!(
             "00000004", // length
             "30313233", // opaque data
         ),
@@ -357,7 +358,7 @@ fn roundtrip_input_share_aad() {
             ),
             public_share: Vec::from("0123"),
         },
-        encoding.as_str(),
+        encoding,
     )])
 }
 

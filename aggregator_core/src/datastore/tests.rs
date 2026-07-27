@@ -405,7 +405,7 @@ async fn roundtrip_taskprov_task_config(ephemeral_datastore: EphemeralDatastore)
     .build();
     // Source a TaskConfiguration to store from a non-taskprov view (synthesizing one for a taskprov
     // task is now rejected); any valid config exercises the column's byte round-trip.
-    let task_config = base.leader_view().unwrap().task_configuration().unwrap();
+    let task_config = base.task_configuration();
     let task = base
         .taskprov_helper_view()
         .unwrap()
