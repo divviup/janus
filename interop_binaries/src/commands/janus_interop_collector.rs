@@ -48,21 +48,14 @@ struct AddTaskRequest {
     #[educe(Debug(method(std::fmt::Display::fmt)))]
     leader: DapUrl,
     // The collector never connects to the helper, but its endpoint is bound into the
-    // AggregateShareAad, so it must match the aggregators' byte-for-byte. Optional (serde default)
-    // so a non-Janus runner that omits it still parses. (See issue #4713)
+    // AggregateShareAad, so it must match the aggregators' byte-for-byte.
     #[educe(Debug(method(std::fmt::Display::fmt)))]
-    #[serde(default = "unused_helper_endpoint")]
     helper: DapUrl,
     vdaf: VdafObject,
     collector_authentication_token: String,
     batch_mode: u8,
-    #[serde(default)]
     min_batch_size: u64,
     time_precision: u64,
-}
-
-fn unused_helper_endpoint() -> DapUrl {
-    "http://unused.helper.example/".try_into().unwrap()
 }
 
 #[derive(Debug, Serialize)]
