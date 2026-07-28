@@ -246,9 +246,11 @@ async fn run(
         .json(&json!({
             "task_id": task_id_encoded,
             "leader": internal_leader_endpoint,
+            "helper": internal_helper_endpoint,
             "vdaf": vdaf_object,
             "collector_authentication_token": collector_auth_token,
             "batch_mode": batch_mode_json,
+            "min_batch_size": measurements.len(),
             "time_precision": TIME_PRECISION,
         }))
         .send()
@@ -386,6 +388,8 @@ async fn run(
                 "vdaf": vdaf_object,
                 "measurement": measurement,
                 "time_precision": TIME_PRECISION,
+                "batch_mode": batch_mode_json,
+                "min_batch_size": measurements.len(),
             }))
             .send()
             .await

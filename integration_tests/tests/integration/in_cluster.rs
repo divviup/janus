@@ -986,7 +986,7 @@ async fn in_cluster_histogram_dp_noise() {
     .await;
     let (report_count, aggregate_result) = collect_aggregate_result_generic(
         &janus_pair.task_parameters,
-        janus_pair.leader.port(),
+        (janus_pair.leader.port(), janus_pair.helper.port()),
         vdaf,
         before_timestamp,
         &(),
@@ -1065,7 +1065,7 @@ async fn in_cluster_sumvec_dp_noise() {
     .await;
     let (report_count, aggregate_result) = collect_aggregate_result_generic(
         &janus_pair.task_parameters,
-        janus_pair.leader.port(),
+        (janus_pair.leader.port(), janus_pair.helper.port()),
         vdaf,
         before_timestamp,
         &(),

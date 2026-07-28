@@ -302,6 +302,7 @@ async fn prepare_report(
 
     let aad = InputShareAad::new(
         task_id,
+        task.task_configuration(),
         report_metadata.clone(),
         encoded_public_share.clone(),
     )

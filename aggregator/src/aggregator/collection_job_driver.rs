@@ -381,11 +381,10 @@ impl CollectionJobDriver {
                     content_type: AggregateShareReq::<B>::MEDIA_TYPE,
                     body: Bytes::from(
                         AggregateShareReq::<B>::new(
-                            BatchSelector::new(collection_job.batch_identifier().clone()),
                             collection_job
-                                .aggregation_parameter()
-                                .get_encoded()
+                                .to_collection_job_req()
                                 .map_err(Error::MessageEncode)?,
+                            BatchSelector::new(collection_job.batch_identifier().clone()),
                             leader_aggregate_share.report_count,
                             leader_aggregate_share.checksum,
                         )
@@ -952,9 +951,9 @@ mod tests {
         vdaf::VdafInstance,
     };
     use janus_messages::{
-        AggregateShare, AggregateShareReq, AggregationJobStep, BatchSelector, Duration, Interval,
-        MediaType, Query, ReportIdChecksum, TimePrecision, batch_mode::TimeInterval,
-        problem_type::DapProblemType,
+        AggregateShare, AggregateShareReq, AggregationJobStep, BatchSelector, CollectionJobReq,
+        Duration, Interval, MediaType, Query, ReportIdChecksum, TimePrecision,
+        batch_mode::TimeInterval, problem_type::DapProblemType,
     };
     use postgres_types::Timestamp;
     use prio::{
@@ -1402,8 +1401,11 @@ mod tests {
         assert_eq!(expected_aggregate_share_id, aggregate_share_id);
 
         let leader_request = AggregateShareReq::new(
+            CollectionJobReq::new(
+                Query::new_time_interval(batch_interval),
+                aggregation_param.get_encoded().unwrap(),
+            ),
             BatchSelector::new_time_interval(batch_interval),
-            aggregation_param.get_encoded().unwrap(),
             10,
             ReportIdChecksum::get_decoded(&[3 ^ 2; 32]).unwrap(),
         );
@@ -2110,8 +2112,11 @@ mod tests {
         let aggregation_param = dummy::AggregationParam(0);
 
         let leader_request = AggregateShareReq::new(
+            CollectionJobReq::new(
+                Query::new_time_interval(batch_interval),
+                aggregation_param.get_encoded().unwrap(),
+            ),
             BatchSelector::new_time_interval(batch_interval),
-            aggregation_param.get_encoded().unwrap(),
             10,
             ReportIdChecksum::get_decoded(&[3 ^ 2; 32]).unwrap(),
         );
@@ -2219,8 +2224,11 @@ mod tests {
         let aggregation_param = dummy::AggregationParam(0);
 
         let leader_request = AggregateShareReq::new(
+            CollectionJobReq::new(
+                Query::new_time_interval(batch_interval),
+                aggregation_param.get_encoded().unwrap(),
+            ),
             BatchSelector::new_time_interval(batch_interval),
-            aggregation_param.get_encoded().unwrap(),
             10,
             ReportIdChecksum::get_decoded(&[3 ^ 2; 32]).unwrap(),
         );

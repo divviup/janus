@@ -23,10 +23,10 @@ use janus_core::{
     vdaf::{VERIFY_KEY_LENGTH_PRIO3, VdafInstance, vdaf_dp_strategies},
 };
 use janus_messages::{
-    AggregateShareAad, AggregationJobId, AggregationJobStep, BatchId, BatchSelector,
-    CollectionJobId, Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, Interval,
-    Query, ReportError, ReportId, ReportIdChecksum, ReportMetadata, ReportShare, Role, TaskId,
-    Time, TimePrecision, VerifyContinue, VerifyInit, VerifyResp, VerifyStepResult,
+    AggregateShareAad, AggregationJobId, AggregationJobStep, BatchId, CollectionJobId, Duration,
+    Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, Interval, Query, ReportError, ReportId,
+    ReportIdChecksum, ReportMetadata, ReportShare, Role, TaskId, Time, TimePrecision,
+    VerifyContinue, VerifyInit, VerifyResp, VerifyStepResult,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
 };
 use postgres_types::Timestamp;
@@ -405,7 +405,7 @@ async fn roundtrip_taskprov_task_config(ephemeral_datastore: EphemeralDatastore)
     .build();
     // Source a TaskConfiguration to store from a non-taskprov view (synthesizing one for a taskprov
     // task is now rejected); any valid config exercises the column's byte round-trip.
-    let task_config = base.leader_view().unwrap().task_configuration().unwrap();
+    let task_config = base.task_configuration();
     let task = base
         .taskprov_helper_view()
         .unwrap()
@@ -3655,8 +3655,8 @@ async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
                 &[0, 1, 2, 3, 4, 5],
                 &AggregateShareAad::new(
                     *task.id(),
-                    ().get_encoded().unwrap(),
-                    BatchSelector::new_time_interval(first_batch_interval),
+                    task.task_configuration().unwrap(),
+                    first_collection_job.to_collection_job_req().unwrap(),
                 )
                 .get_encoded()
                 .unwrap(),

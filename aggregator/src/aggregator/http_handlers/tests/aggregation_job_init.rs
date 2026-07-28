@@ -24,9 +24,9 @@ use janus_core::{
 };
 use janus_messages::{
     AggregateShareReq, AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, BatchId,
-    BatchSelector, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, InputShareAad, Interval,
-    MediaType, PartialBatchSelector, ReportError, ReportIdChecksum, ReportMetadata, ReportShare,
-    Role, Time, VerifyInit, VerifyStepResult,
+    BatchSelector, CollectionJobReq, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId,
+    InputShareAad, Interval, MediaType, PartialBatchSelector, Query, ReportError, ReportIdChecksum,
+    ReportMetadata, ReportShare, Role, Time, VerifyInit, VerifyStepResult,
     batch_mode::{LeaderSelected, TimeInterval},
 };
 use prio::{codec::Encode, vdaf::dummy};
@@ -275,6 +275,7 @@ async fn aggregate_init_sync() {
         &input_share_bytes,
         &InputShareAad::new(
             *task.id(),
+            task.helper_view().unwrap().task_configuration().unwrap(),
             verify_init_2.report_share().metadata().clone(),
             transcript_2.public_share.get_encoded().unwrap(),
         )
@@ -295,6 +296,7 @@ async fn aggregate_init_sync() {
 
     let report_share_3 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
+        task.helper_view().unwrap().task_configuration().unwrap(),
         verify_init_3.report_share().metadata().clone(),
         &wrong_hpke_config,
         &transcript_3.public_share,
@@ -325,6 +327,7 @@ async fn aggregate_init_sync() {
     );
     let report_share_5 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
+        task.helper_view().unwrap().task_configuration().unwrap(),
         report_metadata_5,
         hpke_keypair.config(),
         &transcript_5.public_share,
@@ -360,9 +363,14 @@ async fn aggregate_init_sync() {
         hpke_keypair.config(),
         public_share_6.clone(),
         &transcript_6.helper_input_share.get_encoded().unwrap(),
-        &InputShareAad::new(*task.id(), report_metadata_6, public_share_6)
-            .get_encoded()
-            .unwrap(),
+        &InputShareAad::new(
+            *task.id(),
+            task.helper_view().unwrap().task_configuration().unwrap(),
+            report_metadata_6,
+            public_share_6,
+        )
+        .get_encoded()
+        .unwrap(),
     );
 
     let verify_init_6 = VerifyInit::new(
@@ -392,6 +400,7 @@ async fn aggregate_init_sync() {
     );
     let report_share_7 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
+        task.helper_view().unwrap().task_configuration().unwrap(),
         report_metadata_7,
         hpke_keypair.config(),
         &transcript_7.public_share,
@@ -423,6 +432,7 @@ async fn aggregate_init_sync() {
     );
     let report_share_8 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
+        task.helper_view().unwrap().task_configuration().unwrap(),
         report_metadata_8,
         hpke_keypair.config(),
         &transcript_8.public_share,
@@ -458,6 +468,7 @@ async fn aggregate_init_sync() {
     );
     let report_share_9 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
+        task.helper_view().unwrap().task_configuration().unwrap(),
         report_metadata_9,
         hpke_keypair.config(),
         &transcript_9.public_share,
@@ -489,6 +500,7 @@ async fn aggregate_init_sync() {
     );
     let report_share_10 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
+        task.helper_view().unwrap().task_configuration().unwrap(),
         report_metadata_10,
         hpke_keypair.config(),
         &transcript_10.public_share,
@@ -520,6 +532,7 @@ async fn aggregate_init_sync() {
     );
     let report_share_11 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
+        task.helper_view().unwrap().task_configuration().unwrap(),
         report_metadata_11,
         hpke_keypair.config(),
         &transcript_11.public_share,
@@ -1382,8 +1395,8 @@ async fn aggregate_init_partially_replayed_aggregation_init() {
     }
 
     let request = AggregateShareReq::new(
+        CollectionJobReq::new(Query::new_leader_selected(), agg_param.clone()),
         BatchSelector::new_leader_selected(batch_id),
-        agg_param.clone(),
         5,
         ReportIdChecksum::from_report_ids(&report_ids),
     );

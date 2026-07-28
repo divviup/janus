@@ -572,6 +572,7 @@ impl<V: vdaf::Client<16>> Client<V> {
             Vec::new(), // No extensions supported yet.
         );
         let encoded_public_share = public_share.get_encoded()?;
+        let task_configuration = self.parameters.task_configuration()?;
 
         let (leader_encrypted_input_share, helper_encrypted_input_share) = [
             (leader_hpke_config, &Role::Leader),
@@ -590,6 +591,7 @@ impl<V: vdaf::Client<16>> Client<V> {
                 .get_encoded()?,
                 &InputShareAad::new(
                     self.parameters.task_id,
+                    task_configuration.clone(),
                     report_metadata.clone(),
                     encoded_public_share.clone(),
                 )

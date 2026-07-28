@@ -113,6 +113,7 @@ async fn aggregation_job_driver() {
     );
     let accepted_report = LeaderStoredReport::generate(
         *task.id(),
+        task.leader_view().unwrap().task_configuration().unwrap(),
         accepted_report_metadata,
         helper_hpke_keypair.config(),
         Vec::new(),
@@ -145,6 +146,7 @@ async fn aggregation_job_driver() {
             );
             let rejected_report = LeaderStoredReport::generate(
                 *task.id(),
+                task.leader_view().unwrap().task_configuration().unwrap(),
                 rejected_report_metadata,
                 helper_hpke_keypair.config(),
                 Vec::new(),
@@ -538,6 +540,7 @@ async fn leader_sync_time_interval_aggregation_job_init_single_step() {
     let helper_hpke_keypair = HpkeKeypair::test();
     let report = LeaderStoredReport::generate(
         *task.id(),
+        task.leader_view().unwrap().task_configuration().unwrap(),
         report_metadata,
         helper_hpke_keypair.config(),
         Vec::new(),
@@ -545,6 +548,7 @@ async fn leader_sync_time_interval_aggregation_job_init_single_step() {
     );
     let repeated_public_extension_report = LeaderStoredReport::generate(
         *task.id(),
+        task.leader_view().unwrap().task_configuration().unwrap(),
         ReportMetadata::new(
             random(),
             time,
@@ -559,6 +563,7 @@ async fn leader_sync_time_interval_aggregation_job_init_single_step() {
     );
     let repeated_private_extension_report = LeaderStoredReport::generate(
         *task.id(),
+        task.leader_view().unwrap().task_configuration().unwrap(),
         ReportMetadata::new(random(), time, Vec::new()),
         helper_hpke_keypair.config(),
         Vec::from([
@@ -569,6 +574,7 @@ async fn leader_sync_time_interval_aggregation_job_init_single_step() {
     );
     let repeated_public_private_extension_report = LeaderStoredReport::generate(
         *task.id(),
+        task.leader_view().unwrap().task_configuration().unwrap(),
         ReportMetadata::new(
             random(),
             time,
@@ -998,6 +1004,7 @@ async fn leader_sync_time_interval_aggregation_job_init_two_steps() {
     let helper_hpke_keypair = HpkeKeypair::test();
     let report = LeaderStoredReport::generate(
         *task.id(),
+        task.leader_view().unwrap().task_configuration().unwrap(),
         report_metadata,
         helper_hpke_keypair.config(),
         Vec::new(),
@@ -1308,6 +1315,7 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
     let helper_hpke_keypair = HpkeKeypair::test();
     let gc_eligible_report = LeaderStoredReport::generate(
         *task.id(),
+        task.leader_view().unwrap().task_configuration().unwrap(),
         gc_eligible_report_metadata,
         helper_hpke_keypair.config(),
         Vec::new(),
@@ -1315,6 +1323,7 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
     );
     let gc_ineligible_report = LeaderStoredReport::generate(
         *task.id(),
+        task.leader_view().unwrap().task_configuration().unwrap(),
         gc_ineligible_report_metadata,
         helper_hpke_keypair.config(),
         Vec::new(),
@@ -1697,6 +1706,7 @@ async fn leader_sync_leader_selected_aggregation_job_init_single_step() {
     let helper_hpke_keypair = HpkeKeypair::test();
     let report = LeaderStoredReport::generate(
         *task.id(),
+        task.leader_view().unwrap().task_configuration().unwrap(),
         report_metadata,
         helper_hpke_keypair.config(),
         Vec::new(),
@@ -2027,6 +2037,7 @@ async fn leader_sync_leader_selected_aggregation_job_init_two_steps() {
     let helper_hpke_keypair = HpkeKeypair::test();
     let report = LeaderStoredReport::generate(
         *task.id(),
+        task.leader_view().unwrap().task_configuration().unwrap(),
         report_metadata,
         helper_hpke_keypair.config(),
         Vec::new(),
@@ -2304,6 +2315,7 @@ async fn leader_sync_time_interval_aggregation_job_continue() {
     let helper_hpke_keypair = HpkeKeypair::test();
     let report = LeaderStoredReport::generate(
         *task.id(),
+        task.leader_view().unwrap().task_configuration().unwrap(),
         report_metadata,
         helper_hpke_keypair.config(),
         Vec::new(),
@@ -2658,6 +2670,7 @@ async fn leader_sync_leader_selected_aggregation_job_continue() {
     let helper_hpke_keypair = HpkeKeypair::test();
     let report = LeaderStoredReport::generate(
         *task.id(),
+        task.leader_view().unwrap().task_configuration().unwrap(),
         report_metadata,
         helper_hpke_keypair.config(),
         Vec::new(),
@@ -2952,6 +2965,7 @@ async fn leader_async_aggregation_job_init_to_pending() {
     let helper_hpke_keypair = HpkeKeypair::test();
     let report = LeaderStoredReport::generate(
         *task.id(),
+        task.leader_view().unwrap().task_configuration().unwrap(),
         report_metadata,
         helper_hpke_keypair.config(),
         Vec::new(),
@@ -3209,6 +3223,7 @@ async fn leader_async_aggregation_job_init_to_pending_two_step() {
     let helper_hpke_keypair = HpkeKeypair::test();
     let report = LeaderStoredReport::generate(
         *task.id(),
+        task.leader_view().unwrap().task_configuration().unwrap(),
         report_metadata,
         helper_hpke_keypair.config(),
         Vec::new(),
@@ -3467,6 +3482,7 @@ async fn leader_async_aggregation_job_continue_to_pending() {
     let helper_hpke_keypair = HpkeKeypair::test();
     let report = LeaderStoredReport::generate(
         *task.id(),
+        task.leader_view().unwrap().task_configuration().unwrap(),
         report_metadata,
         helper_hpke_keypair.config(),
         Vec::new(),
@@ -3728,6 +3744,7 @@ async fn leader_async_aggregation_job_init_poll_to_pending() {
     let helper_hpke_keypair = HpkeKeypair::test();
     let report = LeaderStoredReport::generate(
         *task.id(),
+        task.leader_view().unwrap().task_configuration().unwrap(),
         report_metadata,
         helper_hpke_keypair.config(),
         Vec::new(),
@@ -3972,6 +3989,7 @@ async fn leader_async_aggregation_job_init_poll_to_pending_two_step() {
     let helper_hpke_keypair = HpkeKeypair::test();
     let report = LeaderStoredReport::generate(
         *task.id(),
+        task.leader_view().unwrap().task_configuration().unwrap(),
         report_metadata,
         helper_hpke_keypair.config(),
         Vec::new(),
@@ -4216,6 +4234,7 @@ async fn leader_async_aggregation_job_init_poll_to_finished() {
     let helper_hpke_keypair = HpkeKeypair::test();
     let report = LeaderStoredReport::generate(
         *task.id(),
+        task.leader_view().unwrap().task_configuration().unwrap(),
         report_metadata,
         helper_hpke_keypair.config(),
         Vec::new(),
@@ -4477,6 +4496,7 @@ async fn leader_async_aggregation_job_init_poll_to_continue() {
     let helper_hpke_keypair = HpkeKeypair::test();
     let report = LeaderStoredReport::generate(
         *task.id(),
+        task.leader_view().unwrap().task_configuration().unwrap(),
         report_metadata,
         helper_hpke_keypair.config(),
         Vec::new(),
@@ -4738,6 +4758,7 @@ async fn leader_async_aggregation_job_continue_poll_to_pending() {
     let helper_hpke_keypair = HpkeKeypair::test();
     let report = LeaderStoredReport::generate(
         *task.id(),
+        task.leader_view().unwrap().task_configuration().unwrap(),
         report_metadata,
         helper_hpke_keypair.config(),
         Vec::new(),
@@ -4991,6 +5012,7 @@ async fn leader_async_aggregation_job_continue_poll_to_finished() {
     let helper_hpke_keypair = HpkeKeypair::test();
     let report = LeaderStoredReport::generate(
         *task.id(),
+        task.leader_view().unwrap().task_configuration().unwrap(),
         report_metadata,
         helper_hpke_keypair.config(),
         Vec::new(),
@@ -5247,6 +5269,7 @@ async fn helper_async_init_processing_to_finished() {
 
     let report_share = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
+        task.helper_view().unwrap().task_configuration().unwrap(),
         report_metadata,
         hpke_keypair.config(),
         &transcript.public_share,
@@ -5490,6 +5513,7 @@ async fn helper_async_init_processing_to_continue() {
 
     let report_share = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
+        task.helper_view().unwrap().task_configuration().unwrap(),
         report_metadata,
         hpke_keypair.config(),
         &transcript.public_share,
@@ -5730,6 +5754,7 @@ async fn helper_async_continue_processing_to_finished() {
 
     let report_share = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
+        task.helper_view().unwrap().task_configuration().unwrap(),
         report_metadata,
         hpke_keypair.config(),
         &transcript.public_share,
@@ -5983,6 +6008,7 @@ async fn setup_cancel_aggregation_job_test() -> CancelAggregationJobTestCase {
     let helper_hpke_keypair = HpkeKeypair::test();
     let report = LeaderStoredReport::generate(
         *task.id(),
+        task.task_configuration().unwrap(),
         report_metadata,
         helper_hpke_keypair.config(),
         Vec::new(),
@@ -6265,6 +6291,7 @@ async fn abandon_failing_aggregation_job_with_retryable_error() {
     );
     let report = LeaderStoredReport::generate(
         *task.id(),
+        task.leader_view().unwrap().task_configuration().unwrap(),
         report_metadata,
         helper_hpke_keypair.config(),
         Vec::new(),
@@ -6516,6 +6543,7 @@ async fn abandon_failing_aggregation_job_with_fatal_error() {
     );
     let report = LeaderStoredReport::generate(
         *task.id(),
+        task.leader_view().unwrap().task_configuration().unwrap(),
         report_metadata,
         helper_hpke_keypair.config(),
         Vec::new(),

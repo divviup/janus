@@ -484,6 +484,7 @@ async fn upload_handler() {
                 .unwrap(),
             &InputShareAad::new(
                 *task.id(),
+                leader_task.task_configuration().unwrap(),
                 bad_leader_input_share_report.metadata().clone(),
                 bad_leader_input_share_report.public_share().to_vec(),
             )

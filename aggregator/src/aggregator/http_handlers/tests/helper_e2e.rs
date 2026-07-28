@@ -4,8 +4,8 @@ use janus_aggregator_core::task::{AggregationMode, BatchMode, test_util::TaskBui
 use janus_core::{report_id::ReportIdChecksumExt, vdaf::VdafInstance};
 use janus_messages::{
     AggregateShareId, AggregateShareReq, AggregationJobInitializeReq, AggregationJobResp,
-    BatchSelector, PartialBatchSelector, ReportError, ReportIdChecksum, VerifyStepResult,
-    batch_mode::LeaderSelected,
+    BatchSelector, CollectionJobReq, PartialBatchSelector, Query, ReportError, ReportIdChecksum,
+    VerifyStepResult, batch_mode::LeaderSelected,
 };
 use prio::{
     codec::{Decode, Encode},
@@ -82,15 +82,21 @@ async fn helper_aggregation_report_share_replay() {
         ReportIdChecksum::for_report_id(replayed_report.report_share().metadata().id())
             .updated_with(other_report_1.report_share().metadata().id());
     let agg_share_req_1 = AggregateShareReq::<LeaderSelected>::new(
+        CollectionJobReq::new(
+            Query::new_leader_selected(),
+            agg_param.get_encoded().unwrap(),
+        ),
         BatchSelector::new(batch_id_1),
-        agg_param.get_encoded().unwrap(),
         2,
         checksum_1,
     );
     let checksum_2 = ReportIdChecksum::for_report_id(other_report_2.report_share().metadata().id());
     let agg_share_req_2 = AggregateShareReq::<LeaderSelected>::new(
+        CollectionJobReq::new(
+            Query::new_leader_selected(),
+            agg_param.get_encoded().unwrap(),
+        ),
         BatchSelector::new(batch_id_2),
-        agg_param.get_encoded().unwrap(),
         1,
         checksum_2,
     );

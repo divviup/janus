@@ -100,9 +100,9 @@ use janus_core::{
     url_for_join,
 };
 use janus_messages::{
-    AggregateShareAad, BatchConfig, BatchSelector, CollectionJobExtension, CollectionJobId,
-    CollectionJobReq, CollectionJobResp, Interval, MediaType, PartialBatchSelector, Query, Role,
-    TaskConfiguration, TaskId, TimePrecision, Url as DapUrl, VdafConfig,
+    AggregateShareAad, BatchConfig, CollectionJobExtension, CollectionJobId, CollectionJobReq,
+    CollectionJobResp, Interval, MediaType, PartialBatchSelector, Query, Role, TaskConfiguration,
+    TaskId, TimePrecision, Url as DapUrl, VdafConfig,
     batch_mode::{BatchMode, TimeInterval},
 };
 use prio::{
@@ -737,6 +737,13 @@ impl<V: vdaf::Collector> Collector<V> {
 
         let collect_response = CollectionJobResp::<B>::get_decoded(body)?;
 
+        let aggregate_share_aad = AggregateShareAad::new(
+            self.task_id,
+            self.task_configuration()?,
+            CollectionJobReq::new(job.query.clone(), job.aggregation_parameter.get_encoded()?),
+        )
+        .get_encoded()?;
+
         let aggregate_shares = [
             (Role::Leader, collect_response.leader_encrypted_agg_share),
             (Role::Helper, collect_response.helper_encrypted_agg_share),
@@ -747,15 +754,7 @@ impl<V: vdaf::Collector> Collector<V> {
                 &self.hpke_keypair,
                 &HpkeApplicationInfo::new(&hpke::Label::AggregateShare, &role, &Role::Collector),
                 &encrypted_aggregate_share,
-                &AggregateShareAad::new(
-                    self.task_id,
-                    job.aggregation_parameter.get_encoded()?,
-                    BatchSelector::<B>::new(B::batch_identifier_for_collection(
-                        &job.query,
-                        collect_response.partial_batch_selector.batch_identifier(),
-                    )),
-                )
-                .get_encoded()?,
+                &aggregate_share_aad,
             )?;
             V::AggregateShare::get_decoded_with_param(
                 &(&self.vdaf, &job.aggregation_parameter),
@@ -933,7 +932,7 @@ mod tests {
         test_util::{VdafTranscript, install_test_trace_subscriber, run_vdaf},
     };
     use janus_messages::{
-        AggregateShareAad, BatchConfig, BatchId, BatchSelector, CollectionJobId, CollectionJobReq,
+        AggregateShareAad, BatchConfig, BatchId, CollectionJobId, CollectionJobReq,
         CollectionJobResp, Duration, HpkeCiphertext, Interval, MediaType, PartialBatchSelector,
         Query, Role, TaskId, Time, TimePrecision, Url as DapUrl, VdafConfig,
         batch_mode::{LeaderSelected, TimeInterval},
@@ -998,8 +997,11 @@ mod tests {
     {
         let associated_data = AggregateShareAad::new(
             collector.task_id,
-            aggregation_parameter.get_encoded().unwrap(),
-            BatchSelector::new_time_interval(batch_interval),
+            collector.task_configuration().unwrap(),
+            CollectionJobReq::new(
+                Query::new_time_interval(batch_interval),
+                aggregation_parameter.get_encoded().unwrap(),
+            ),
         );
         CollectionJobResp {
             partial_batch_selector: PartialBatchSelector::new_time_interval(),
@@ -1034,8 +1036,11 @@ mod tests {
     {
         let associated_data = AggregateShareAad::new(
             collector.task_id,
-            aggregation_parameter.get_encoded().unwrap(),
-            BatchSelector::new_leader_selected(batch_id),
+            collector.task_configuration().unwrap(),
+            CollectionJobReq::new(
+                Query::new_leader_selected(),
+                aggregation_parameter.get_encoded().unwrap(),
+            ),
         );
         CollectionJobResp {
             partial_batch_selector: PartialBatchSelector::new_leader_selected(batch_id),
@@ -1756,8 +1761,11 @@ mod tests {
 
         let associated_data = AggregateShareAad::new(
             collector.task_id,
-            ().get_encoded().unwrap(),
-            BatchSelector::new_time_interval(batch_interval),
+            collector.task_configuration().unwrap(),
+            CollectionJobReq::new(
+                Query::new_time_interval(batch_interval),
+                ().get_encoded().unwrap(),
+            ),
         );
         let collect_resp = CollectionJobResp {
             partial_batch_selector: PartialBatchSelector::new_time_interval(),

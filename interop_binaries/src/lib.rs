@@ -20,7 +20,7 @@ use janus_core::{
     vdaf::{VdafInstance, vdaf_dp_strategies},
 };
 use janus_messages::{
-    HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId, Role, TaskId,
+    BatchConfig, HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId, Role, TaskId, Url as DapUrl,
     batch_mode::{BatchMode as _, LeaderSelected, TimeInterval},
 };
 use prio::codec::Encode;
@@ -30,9 +30,24 @@ use testcontainers::{ContainerAsync, Image};
 use tokio::sync::Mutex;
 use tracing_log::LogTracer;
 use tracing_subscriber::{EnvFilter, Registry, prelude::*};
-use url::Url;
 
 pub mod commands;
+
+/// The interop test API has no `task_info` concept, so every Janus interop binary (aggregator,
+/// client, and collector) uses this fixed, non-empty placeholder. It must be identical across all
+/// three so the `TaskConfiguration` bound into the HPKE AADs is byte-identical on every party.
+pub const INTEROP_TASK_INFO: &[u8] = b"task-info";
+
+/// Maps an interop-test batch-mode code to the [`BatchConfig`] that a Janus interop binary must
+/// bind into its `TaskConfiguration`. Mirrors `BatchMode::to_batch_config` so the client and
+/// collector agree byte-for-byte with the aggregator.
+pub fn interop_batch_config(batch_mode: u8) -> anyhow::Result<BatchConfig> {
+    match batch_mode {
+        code if code == TimeInterval::CODE as u8 => Ok(BatchConfig::TimeInterval),
+        code if code == LeaderSelected::CODE as u8 => Ok(BatchConfig::LeaderSelected),
+        _ => Err(anyhow::anyhow!("invalid batch mode: {batch_mode}")),
+    }
+}
 
 #[cfg(feature = "testcontainer")]
 pub mod testcontainer;
@@ -256,9 +271,9 @@ impl From<AggregatorRole> for Role {
 pub struct AggregatorAddTaskRequest {
     pub task_id: TaskId, // uses unpadded base64url
     #[educe(Debug(method(std::fmt::Display::fmt)))]
-    pub leader: Url,
+    pub leader: DapUrl,
     #[educe(Debug(method(std::fmt::Display::fmt)))]
-    pub helper: Url,
+    pub helper: DapUrl,
     pub vdaf: VdafObject,
     pub leader_authentication_token: String,
     #[serde(default)]
@@ -281,8 +296,16 @@ impl AggregatorAddTaskRequest {
         };
         Self {
             task_id: *task.id(),
-            leader: task.leader_aggregator_endpoint().clone(),
-            helper: task.helper_aggregator_endpoint().clone(),
+            leader: task
+                .leader_aggregator_endpoint()
+                .as_str()
+                .try_into()
+                .unwrap(),
+            helper: task
+                .helper_aggregator_endpoint()
+                .as_str()
+                .try_into()
+                .unwrap(),
             vdaf: task.vdaf().clone().into(),
             leader_authentication_token: String::from_utf8(
                 task.aggregator_auth_token().as_ref().to_vec(),

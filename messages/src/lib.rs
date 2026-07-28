@@ -2090,15 +2090,22 @@ impl<B: BatchMode> Decode for CollectionJobResp<B> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InputShareAad {
     task_id: TaskId,
+    task_configuration: TaskConfiguration,
     metadata: ReportMetadata,
     public_share: Vec<u8>,
 }
 
 impl InputShareAad {
     /// Constructs a new input share AAD.
-    pub fn new(task_id: TaskId, metadata: ReportMetadata, public_share: Vec<u8>) -> Self {
+    pub fn new(
+        task_id: TaskId,
+        task_configuration: TaskConfiguration,
+        metadata: ReportMetadata,
+        public_share: Vec<u8>,
+    ) -> Self {
         Self {
             task_id,
+            task_configuration,
             metadata,
             public_share,
         }
@@ -2107,6 +2114,11 @@ impl InputShareAad {
     /// Retrieves the task ID associated with this input share AAD.
     pub fn task_id(&self) -> &TaskId {
         &self.task_id
+    }
+
+    /// Retrieves the task configuration associated with this input share AAD.
+    pub fn task_configuration(&self) -> &TaskConfiguration {
+        &self.task_configuration
     }
 
     /// Retrieves the report metadata associated with this input share AAD.
@@ -2123,6 +2135,7 @@ impl InputShareAad {
 impl Encode for InputShareAad {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         self.task_id.encode(bytes)?;
+        self.task_configuration.encode(bytes)?;
         self.metadata.encode(bytes)?;
         encode_u32_items(bytes, &(), &self.public_share)
     }
@@ -2130,6 +2143,7 @@ impl Encode for InputShareAad {
     fn encoded_len(&self) -> Option<usize> {
         Some(
             self.task_id.encoded_len()?
+                + self.task_configuration.encoded_len()?
                 + self.metadata.encoded_len()?
                 + 4
                 + self.public_share.len(),
@@ -2140,11 +2154,13 @@ impl Encode for InputShareAad {
 impl Decode for InputShareAad {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let task_id = TaskId::decode(bytes)?;
+        let task_configuration = TaskConfiguration::decode(bytes)?;
         let metadata = ReportMetadata::decode(bytes)?;
         let public_share = decode_u32_items(&(), bytes)?;
 
         Ok(Self {
             task_id,
+            task_configuration,
             metadata,
             public_share,
         })
@@ -2156,21 +2172,21 @@ impl Decode for InputShareAad {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AggregateShareAad<B: BatchMode> {
     task_id: TaskId,
-    aggregation_parameter: Vec<u8>,
-    batch_selector: BatchSelector<B>,
+    task_configuration: TaskConfiguration,
+    collection_job_req: CollectionJobReq<B>,
 }
 
 impl<B: BatchMode> AggregateShareAad<B> {
     /// Constructs a new aggregate share AAD.
     pub fn new(
         task_id: TaskId,
-        aggregation_parameter: Vec<u8>,
-        batch_selector: BatchSelector<B>,
+        task_configuration: TaskConfiguration,
+        collection_job_req: CollectionJobReq<B>,
     ) -> Self {
         Self {
             task_id,
-            aggregation_parameter,
-            batch_selector,
+            task_configuration,
+            collection_job_req,
         }
     }
 
@@ -2179,30 +2195,29 @@ impl<B: BatchMode> AggregateShareAad<B> {
         &self.task_id
     }
 
-    /// Retrieves the aggregation parameter associated with this aggregate share AAD.
-    pub fn aggregation_parameter(&self) -> &[u8] {
-        &self.aggregation_parameter
+    /// Retrieves the task configuration associated with this aggregate share AAD.
+    pub fn task_configuration(&self) -> &TaskConfiguration {
+        &self.task_configuration
     }
 
-    /// Retrieves the batch selector associated with this aggregate share AAD.
-    pub fn batch_selector(&self) -> &BatchSelector<B> {
-        &self.batch_selector
+    /// Retrieves the collection job request associated with this aggregate share AAD.
+    pub fn collection_job_req(&self) -> &CollectionJobReq<B> {
+        &self.collection_job_req
     }
 }
 
 impl<B: BatchMode> Encode for AggregateShareAad<B> {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         self.task_id.encode(bytes)?;
-        encode_u32_items(bytes, &(), &self.aggregation_parameter)?;
-        self.batch_selector.encode(bytes)
+        self.task_configuration.encode(bytes)?;
+        self.collection_job_req.encode(bytes)
     }
 
     fn encoded_len(&self) -> Option<usize> {
         Some(
             self.task_id.encoded_len()?
-                + 4
-                + self.aggregation_parameter.len()
-                + self.batch_selector.encoded_len()?,
+                + self.task_configuration.encoded_len()?
+                + self.collection_job_req.encoded_len()?,
         )
     }
 }
@@ -2210,13 +2225,13 @@ impl<B: BatchMode> Encode for AggregateShareAad<B> {
 impl<B: BatchMode> Decode for AggregateShareAad<B> {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let task_id = TaskId::decode(bytes)?;
-        let aggregation_parameter = decode_u32_items(&(), bytes)?;
-        let batch_selector = BatchSelector::decode(bytes)?;
+        let task_configuration = TaskConfiguration::decode(bytes)?;
+        let collection_job_req = CollectionJobReq::decode(bytes)?;
 
         Ok(Self {
             task_id,
-            aggregation_parameter,
-            batch_selector,
+            task_configuration,
+            collection_job_req,
         })
     }
 }
@@ -2902,9 +2917,8 @@ impl<B: BatchMode> Decode for BatchSelector<B> {
 #[derive(Clone, Educe, PartialEq, Eq)]
 #[educe(Debug)]
 pub struct AggregateShareReq<B: BatchMode> {
+    collection_job_req: CollectionJobReq<B>,
     batch_selector: BatchSelector<B>,
-    #[educe(Debug(ignore))]
-    aggregation_parameter: Vec<u8>,
     report_count: u64,
     checksum: ReportIdChecksum,
 }
@@ -2912,17 +2926,22 @@ pub struct AggregateShareReq<B: BatchMode> {
 impl<B: BatchMode> AggregateShareReq<B> {
     /// Constructs a new aggregate share request from its components.
     pub fn new(
+        collection_job_req: CollectionJobReq<B>,
         batch_selector: BatchSelector<B>,
-        aggregation_parameter: Vec<u8>,
         report_count: u64,
         checksum: ReportIdChecksum,
     ) -> Self {
         Self {
+            collection_job_req,
             batch_selector,
-            aggregation_parameter,
             report_count,
             checksum,
         }
+    }
+
+    /// Gets the collection job request associated with this aggregate share request.
+    pub fn collection_job_req(&self) -> &CollectionJobReq<B> {
+        &self.collection_job_req
     }
 
     /// Gets the batch selector associated with this aggregate share request.
@@ -2932,7 +2951,7 @@ impl<B: BatchMode> AggregateShareReq<B> {
 
     /// Gets the aggregation parameter associated with this aggregate share request.
     pub fn aggregation_parameter(&self) -> &[u8] {
-        &self.aggregation_parameter
+        self.collection_job_req.aggregation_parameter()
     }
 
     /// Gets the report count associated with this aggregate share request.
@@ -2952,17 +2971,16 @@ impl<B: BatchMode> MediaType for AggregateShareReq<B> {
 
 impl<B: BatchMode> Encode for AggregateShareReq<B> {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
+        self.collection_job_req.encode(bytes)?;
         self.batch_selector.encode(bytes)?;
-        encode_u32_items(bytes, &(), &self.aggregation_parameter)?;
         self.report_count.encode(bytes)?;
         self.checksum.encode(bytes)
     }
 
     fn encoded_len(&self) -> Option<usize> {
         Some(
-            self.batch_selector.encoded_len()?
-                + 4
-                + self.aggregation_parameter.len()
+            self.collection_job_req.encoded_len()?
+                + self.batch_selector.encoded_len()?
                 + self.report_count.encoded_len()?
                 + self.checksum.encoded_len()?,
         )
@@ -2971,14 +2989,14 @@ impl<B: BatchMode> Encode for AggregateShareReq<B> {
 
 impl<B: BatchMode> Decode for AggregateShareReq<B> {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let collection_job_req = CollectionJobReq::decode(bytes)?;
         let batch_selector = BatchSelector::decode(bytes)?;
-        let aggregation_parameter = decode_u32_items(&(), bytes)?;
         let report_count = u64::decode(bytes)?;
         let checksum = ReportIdChecksum::decode(bytes)?;
 
         Ok(Self {
+            collection_job_req,
             batch_selector,
-            aggregation_parameter,
             report_count,
             checksum,
         })

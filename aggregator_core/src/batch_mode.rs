@@ -159,6 +159,15 @@ pub trait CollectableBatchMode: AccumulableBatchMode {
         query: &Query<Self>,
     ) -> Result<Option<Self::BatchIdentifier>, datastore::Error>;
 
+    /// Reconstructs the Collector's original collection [`Query`] from a stored batch identifier.
+    ///
+    /// The Helper serves aggregate shares on both the PUT path (where it has the forwarded
+    /// [`CollectionJobReq`](janus_messages::CollectionJobReq)) and the poll/GET path (where it only
+    /// has the stored [`AggregateShareJob`](crate::datastore::models::AggregateShareJob)). On the
+    /// latter it rebuilds the query with this method, which must be exact: the aggregate-share AAD
+    /// is byte-identical to the Collector's original or the decrypt fails.
+    fn query_for_collection_identifier(batch_identifier: &Self::BatchIdentifier) -> Query<Self>;
+
     /// Some batch modes (e.g. [`TimeInterval`]) can receive a batch identifier in collection
     /// requests which refers to multiple batches. This method takes a batch identifier received in
     /// a collection request and provides an iterator over the individual batches' identifiers.
@@ -262,6 +271,10 @@ impl CollectableBatchMode for TimeInterval {
         Ok(Some(*query.batch_interval()))
     }
 
+    fn query_for_collection_identifier(batch_interval: &Self::BatchIdentifier) -> Query<Self> {
+        Query::new_time_interval(*batch_interval)
+    }
+
     fn batch_identifiers_for_collection_identifier(
         batch_interval: &Self::BatchIdentifier,
     ) -> Self::Iter {
@@ -331,6 +344,10 @@ impl CollectableBatchMode for LeaderSelected {
             .await
     }
 
+    fn query_for_collection_identifier(_batch_id: &Self::BatchIdentifier) -> Query<Self> {
+        Query::new_leader_selected()
+    }
+
     fn batch_identifiers_for_collection_identifier(batch_id: &Self::BatchIdentifier) -> Self::Iter {
         iter::once(*batch_id)
     }
@@ -351,9 +368,20 @@ impl CollectableBatchMode for LeaderSelected {
 
 #[cfg(test)]
 mod tests {
-    use janus_messages::{Duration, Interval, Time, batch_mode::TimeInterval};
+    use janus_messages::{
+        BatchId, CollectionJobReq, Duration, Interval, Query, Time, TimePrecision,
+        batch_mode::{LeaderSelected, TimeInterval},
+    };
+    use prio::{
+        codec::Encode,
+        vdaf::dummy::{AggregationParam, Vdaf},
+    };
+    use rand::random;
 
-    use crate::batch_mode::CollectableBatchMode;
+    use crate::{
+        batch_mode::CollectableBatchMode,
+        datastore::models::{CollectionJob, CollectionJobState},
+    };
 
     #[test]
     fn reject_null_collection_intervals() {
@@ -368,5 +396,82 @@ mod tests {
             )
             .unwrap()
         ));
+    }
+
+    /// The Collector's original `CollectionJobReq`, the Leader's reconstruction from its stored
+    /// collection job ([`CollectionJob::to_collection_job_req`]), and the Helper's reconstruction
+    /// from a stored batch identifier ([`CollectableBatchMode::query_for_collection_identifier`])
+    /// must all encode to identical bytes, or aggregate-share AADs will silently mismatch and
+    /// decryption will fail. This locks that invariant for both batch modes.
+    #[test]
+    fn collection_job_req_reconstruction_is_byte_identical() {
+        let aggregation_parameter = AggregationParam(7);
+        let encoded_aggregation_parameter = aggregation_parameter.get_encoded().unwrap();
+
+        let interval = Interval::new(
+            Time::from_seconds_since_epoch(54321, &TimePrecision::from_seconds(1)),
+            Duration::from_seconds(12345, &TimePrecision::from_seconds(1)),
+        )
+        .unwrap();
+        let collector_request = CollectionJobReq::<TimeInterval>::new(
+            Query::new_time_interval(interval),
+            encoded_aggregation_parameter.clone(),
+        );
+        let helper_request = CollectionJobReq::new(
+            TimeInterval::query_for_collection_identifier(&interval),
+            encoded_aggregation_parameter.clone(),
+        );
+        let leader_job = CollectionJob::<0, TimeInterval, Vdaf>::new(
+            random(),
+            random(),
+            random(),
+            Query::new_time_interval(interval),
+            aggregation_parameter,
+            interval,
+            CollectionJobState::Start,
+        );
+        assert_eq!(
+            collector_request.get_encoded().unwrap(),
+            helper_request.get_encoded().unwrap(),
+        );
+        assert_eq!(
+            collector_request.get_encoded().unwrap(),
+            leader_job
+                .to_collection_job_req()
+                .unwrap()
+                .get_encoded()
+                .unwrap(),
+        );
+
+        let batch_id = BatchId::from([5u8; 32]);
+        let collector_request = CollectionJobReq::<LeaderSelected>::new(
+            Query::new_leader_selected(),
+            encoded_aggregation_parameter.clone(),
+        );
+        let helper_request = CollectionJobReq::new(
+            LeaderSelected::query_for_collection_identifier(&batch_id),
+            encoded_aggregation_parameter,
+        );
+        let leader_job = CollectionJob::<0, LeaderSelected, Vdaf>::new(
+            random(),
+            random(),
+            random(),
+            Query::new_leader_selected(),
+            aggregation_parameter,
+            batch_id,
+            CollectionJobState::Start,
+        );
+        assert_eq!(
+            collector_request.get_encoded().unwrap(),
+            helper_request.get_encoded().unwrap(),
+        );
+        assert_eq!(
+            collector_request.get_encoded().unwrap(),
+            leader_job
+                .to_collection_job_req()
+                .unwrap()
+                .get_encoded()
+                .unwrap(),
+        );
     }
 }

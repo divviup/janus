@@ -34,10 +34,10 @@ use janus_core::{
 use janus_messages::{
     AggregateShare as AggregateShareMessage, AggregateShareAad, AggregateShareId,
     AggregateShareReq, AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq,
-    AggregationJobResp, AggregationJobStep, BatchConfig, BatchSelector, Duration, Extension,
-    ExtensionType, Interval, MediaType, PartialBatchSelector, ReportError, ReportIdChecksum,
-    ReportShare, Role, TaskConfiguration, TaskConfigurationBuilder, TaskId, Time, TimePrecision,
-    VdafConfig, VerifyContinue, VerifyInit, VerifyResp, VerifyStepResult,
+    AggregationJobResp, AggregationJobStep, BatchConfig, BatchSelector, CollectionJobReq, Duration,
+    Extension, ExtensionType, Interval, MediaType, PartialBatchSelector, Query, ReportError,
+    ReportIdChecksum, ReportShare, Role, TaskConfiguration, TaskConfigurationBuilder, TaskId, Time,
+    TimePrecision, VdafConfig, VerifyContinue, VerifyInit, VerifyResp, VerifyStepResult,
     batch_mode::LeaderSelected,
     codec::{Decode, Encode},
 };
@@ -1165,14 +1165,20 @@ async fn taskprov_aggregate_share() {
     test.datastore
         .run_unnamed_tx(|tx| {
             let task = test.task.clone();
+            let task_config = test.task_config.clone();
             let interval =
                 Interval::minimal(Time::from_seconds_since_epoch(6000, task.time_precision()))
                     .unwrap();
             let transcript = transcript.clone();
 
             Box::pin(async move {
-                tx.put_aggregator_task(&task.taskprov_helper_view().unwrap())
-                    .await?;
+                tx.put_aggregator_task(
+                    &task
+                        .taskprov_helper_view()
+                        .unwrap()
+                        .with_taskprov_task_config(task_config),
+                )
+                .await?;
 
                 tx.put_batch_aggregation(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
                     *task.id(),
@@ -1197,8 +1203,11 @@ async fn taskprov_aggregate_share() {
         .unwrap();
 
     let request = AggregateShareReq::new(
+        CollectionJobReq::new(
+            Query::new_leader_selected(),
+            aggregation_param.get_encoded().unwrap(),
+        ),
         BatchSelector::new_leader_selected(batch_id),
-        aggregation_param.get_encoded().unwrap(),
         1,
         ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
     );
@@ -1272,8 +1281,8 @@ async fn taskprov_aggregate_share() {
         aggregate_share_resp.encrypted_aggregate_share(),
         &AggregateShareAad::new(
             test.task_id,
-            aggregation_param.get_encoded().unwrap(),
-            request.batch_selector().clone(),
+            test.task_config.clone(),
+            request.collection_job_req().clone(),
         )
         .get_encoded()
         .unwrap(),
@@ -1415,8 +1424,11 @@ async fn end_to_end() {
 
     let checksum = ReportIdChecksum::for_report_id(report_share.metadata().id());
     let aggregate_share_request = AggregateShareReq::new(
+        CollectionJobReq::new(
+            Query::new_leader_selected(),
+            aggregation_param.get_encoded().unwrap(),
+        ),
         BatchSelector::new_leader_selected(batch_id),
-        aggregation_param.get_encoded().unwrap(),
         1,
         checksum,
     );
@@ -1461,8 +1473,8 @@ async fn end_to_end() {
         aggregate_share_resp.encrypted_aggregate_share(),
         &AggregateShareAad::new(
             test.task_id,
-            aggregation_param.get_encoded().unwrap(),
-            aggregate_share_request.batch_selector().clone(),
+            test.task_config.clone(),
+            aggregate_share_request.collection_job_req().clone(),
         )
         .get_encoded()
         .unwrap(),
@@ -1556,8 +1568,11 @@ async fn end_to_end_sumvec_hmac() {
 
     let checksum = ReportIdChecksum::for_report_id(report_share.metadata().id());
     let aggregate_share_request = AggregateShareReq::new(
+        CollectionJobReq::new(
+            Query::new_leader_selected(),
+            aggregation_param.get_encoded().unwrap(),
+        ),
         BatchSelector::new_leader_selected(batch_id),
-        aggregation_param.get_encoded().unwrap(),
         1,
         checksum,
     );
@@ -1602,8 +1617,8 @@ async fn end_to_end_sumvec_hmac() {
         aggregate_share_resp.encrypted_aggregate_share(),
         &AggregateShareAad::new(
             test.task_id,
-            aggregation_param.get_encoded().unwrap(),
-            aggregate_share_request.batch_selector().clone(),
+            test.task_config.clone(),
+            aggregate_share_request.collection_job_req().clone(),
         )
         .get_encoded()
         .unwrap(),
