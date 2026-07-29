@@ -67,10 +67,10 @@ pub fn build_test_task(
                         path: "/".to_string(),
                     },
                     ohttp_config: None,
+                    in_process_http_client: None,
                 },
             )
         }
-        // The port is a placeholder until the container pair assigns each aggregator a free port.
         TestContext::DockerNetwork => {
             let endpoint_random_value = hex::encode(random::<[u8; 4]>());
             let leader_host = format!("leader-{endpoint_random_value}");
@@ -81,15 +81,14 @@ pub fn build_test_task(
                 EndpointFragments {
                     leader: AggregatorEndpointFragments::DockerNetwork {
                         host: leader_host,
-                        port: 8080,
                         path: "/".to_string(),
                     },
                     helper: AggregatorEndpointFragments::DockerNetwork {
                         host: helper_host,
-                        port: 8080,
                         path: "/".to_string(),
                     },
                     ohttp_config: None,
+                    in_process_http_client: None,
                 },
             )
         }
@@ -104,6 +103,7 @@ pub fn build_test_task(
                     path: "/".to_string(),
                 },
                 ohttp_config: None,
+                in_process_http_client: None,
             },
         ),
         #[cfg(feature = "in-cluster")]
@@ -118,6 +118,7 @@ pub fn build_test_task(
                     url: task_builder.helper_aggregator_endpoint().clone(),
                 },
                 ohttp_config: None,
+                in_process_http_client: None,
             },
         ),
     };

@@ -1,5 +1,5 @@
 #[cfg(feature = "testcontainer")]
-use std::net::{Ipv4Addr, TcpListener};
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::{iter, time::Duration};
 
 use janus_aggregator_core::task::{AggregationMode, BatchMode, test_util::TaskBuilder};
@@ -22,7 +22,10 @@ use prio::{
     vdaf::prio3::Prio3,
 };
 #[cfg(feature = "testcontainer")]
-use testcontainers::TestcontainersError;
+use tokio::{
+    io::copy_bidirectional,
+    net::{TcpListener, TcpStream},
+};
 
 use crate::{
     common::{
@@ -43,99 +46,116 @@ struct JanusContainerPair {
     leader: JanusContainer,
     /// Handle to the helper's resources, which are released on drop.
     helper: JanusContainer,
+
+    /// Proxies giving the host-side client and collector a stable address for each container's
+    /// Docker-assigned host port. Released on drop.
+    _leader_proxy: SpliceProxy,
+    _helper_proxy: SpliceProxy,
 }
 
 #[cfg(feature = "testcontainer")]
 impl JanusContainerPair {
     /// Set up a new pair of containerized Janus test instances, and set up a new task in each using
-    /// the given VDAF and batch mode. Each aggregator serves on a distinct port, so the host-side
-    /// in-process client and collector reach them at the same virtual-network endpoint strings the
-    /// aggregators use among themselves.
+    /// the given VDAF and batch mode. Each aggregator serves on port 8080; the host-side in-process
+    /// client and collector reach them through per-aggregator forwarding proxies, so all parties
+    /// use the same endpoint strings.
     pub async fn new(
         test_name: &str,
         batch_mode: BatchMode,
         aggregation_mode: AggregationMode,
         vdaf: VdafInstance,
     ) -> JanusContainerPair {
-        // Each aggregator publishes a host port chosen just before its container starts, so that
-        // port is occasionally taken in the interim (under parallel tests). Retry the whole pair
-        // with fresh ports on such a failure.
-        const MAX_ATTEMPTS: usize = 5;
-        for attempt in 1..=MAX_ATTEMPTS {
-            match Self::try_new(test_name, batch_mode, aggregation_mode, vdaf.clone()).await {
-                Ok(pair) => return pair,
-                Err(error) if attempt < MAX_ATTEMPTS => {
-                    tracing::warn!(?error, attempt, "containerized Janus pair failed to start")
-                }
-                Err(error) => panic!("containerized Janus pair failed to start: {error}"),
-            }
-        }
-        unreachable!()
-    }
-
-    async fn try_new(
-        test_name: &str,
-        batch_mode: BatchMode,
-        aggregation_mode: AggregationMode,
-        vdaf: VdafInstance,
-    ) -> Result<JanusContainerPair, TestcontainersError> {
         let (mut task_parameters, task_builder) = build_test_task(
             TaskBuilder::new(batch_mode, aggregation_mode, vdaf),
             TestContext::DockerNetwork,
             Duration::from_millis(500),
             Duration::from_secs(60),
         );
-
-        let leader_port = reserve_ephemeral_port();
-        let helper_port = reserve_ephemeral_port();
-        task_parameters
-            .endpoint_fragments
-            .leader
-            .set_port(leader_port);
-        task_parameters
-            .endpoint_fragments
-            .helper
-            .set_port(helper_port);
-
-        let task = task_builder
-            .with_leader_aggregator_endpoint(
-                task_parameters
-                    .endpoint_fragments
-                    .leader
-                    .endpoint_for_virtual_network(),
-            )
-            .with_helper_aggregator_endpoint(
-                task_parameters
-                    .endpoint_fragments
-                    .helper
-                    .endpoint_for_virtual_network(),
-            )
-            .build();
+        let task = task_builder.build();
 
         let network = generate_network_name();
-        let leader =
-            JanusContainer::new_on_port(test_name, &network, &task, Role::Leader, leader_port)
-                .await?;
-        let helper =
-            JanusContainer::new_on_port(test_name, &network, &task, Role::Helper, helper_port)
-                .await?;
+        let leader = JanusContainer::new(test_name, &network, &task, Role::Leader).await;
+        let helper = JanusContainer::new(test_name, &network, &task, Role::Helper).await;
 
-        Ok(Self {
+        // Forward each aggregator's virtual-network hostname to its Docker-assigned host port, and
+        // route the client/collector's requests to those proxies.
+        let leader_proxy = SpliceProxy::spawn(leader.port()).await;
+        let helper_proxy = SpliceProxy::spawn(helper.port()).await;
+        let leader_host = task
+            .leader_aggregator_endpoint()
+            .host_str()
+            .unwrap()
+            .to_string();
+        let helper_host = task
+            .helper_aggregator_endpoint()
+            .host_str()
+            .unwrap()
+            .to_string();
+        let (leader_proxy_url, helper_proxy_url) = (leader_proxy.url(), helper_proxy.url());
+        task_parameters.endpoint_fragments.in_process_http_client = Some(
+            reqwest::Client::builder()
+                .proxy(reqwest::Proxy::custom(move |url| match url.host_str() {
+                    Some(host) if host == leader_host => Some(leader_proxy_url.clone()),
+                    Some(host) if host == helper_host => Some(helper_proxy_url.clone()),
+                    _ => None,
+                }))
+                .build()
+                .unwrap(),
+        );
+
+        Self {
             task_parameters,
             leader,
             helper,
-        })
+            _leader_proxy: leader_proxy,
+            _helper_proxy: helper_proxy,
+        }
     }
 }
 
-/// Reserve a free ephemeral TCP port on loopback for a container to publish.
+/// A loopback TCP proxy that forwards every connection to a fixed upstream port byte-for-byte,
+/// giving a host client a stable address for a container whose host port Docker assigns
+/// dynamically. Aborts its accept loop on drop.
 #[cfg(feature = "testcontainer")]
-fn reserve_ephemeral_port() -> u16 {
-    TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
+struct SpliceProxy {
+    port: u16,
+    task: tokio::task::JoinHandle<()>,
+}
+
+#[cfg(feature = "testcontainer")]
+impl SpliceProxy {
+    async fn spawn(upstream_port: u16) -> Self {
+        let listener = TcpListener::bind((Ipv6Addr::LOCALHOST, 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let task = tokio::spawn(async move {
+            while let Ok((mut inbound, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    // Docker publishes the container's port over IPv4, so dial the upstream there.
+                    match TcpStream::connect((Ipv4Addr::LOCALHOST, upstream_port)).await {
+                        Ok(mut upstream) => {
+                            let _ = copy_bidirectional(&mut inbound, &mut upstream).await;
+                        }
+                        Err(error) => {
+                            tracing::warn!(?error, "splice proxy failed to reach upstream")
+                        }
+                    }
+                });
+            }
+        });
+        Self { port, task }
+    }
+
+    /// The proxy URL to hand to `reqwest::Proxy`.
+    fn url(&self) -> String {
+        format!("http://[::1]:{}", self.port)
+    }
+}
+
+#[cfg(feature = "testcontainer")]
+impl Drop for SpliceProxy {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
 }
 
 /// A pair of Janus instances, running in-process, against which integration tests may be run.

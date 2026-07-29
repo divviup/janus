@@ -42,9 +42,7 @@ use janus_interop_binaries::{
 #[cfg(feature = "testcontainer")]
 use janus_messages::Role;
 #[cfg(feature = "testcontainer")]
-use testcontainers::{
-    ContainerRequest, ImageExt, TestcontainersError, core::ContainerPort, runners::AsyncRunner,
-};
+use testcontainers::{ContainerRequest, ImageExt, runners::AsyncRunner};
 
 #[cfg(feature = "testcontainer")]
 use crate::interop_api;
@@ -92,56 +90,6 @@ impl JanusContainer {
             _container: container,
             port,
         }
-    }
-
-    /// Like [`Self::new`], but serves DAP on `port` both within the network and, via a fixed
-    /// `host:port -> container:port` mapping, from the host. The port is applied by injecting a
-    /// copy of the interop aggregator config with its `listen_address` rewritten. Returns an error
-    /// if the container fails to start, e.g. because the host port was taken between selection and
-    /// binding.
-    pub async fn new_on_port(
-        test_name: &str,
-        network: &str,
-        task: &Task,
-        role: Role,
-        port: u16,
-    ) -> Result<JanusContainer, TestcontainersError> {
-        const BASE_CONFIG: &str = include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../interop_binaries/config/janus_interop_aggregator.yaml"
-        ));
-        let config = BASE_CONFIG.replace(
-            "listen_address: 0.0.0.0:8080",
-            &format!("listen_address: 0.0.0.0:{port}"),
-        );
-
-        let endpoint = match role {
-            Role::Leader => task.leader_aggregator_endpoint(),
-            Role::Helper => task.helper_aggregator_endpoint(),
-            _ => panic!("unexpected task role"),
-        };
-        let container = ContainerLogsDropGuard::new_janus(
-            test_name,
-            ContainerRequest::from(Aggregator::default())
-                .with_network(network)
-                .with_env_var("RUST_LOG", get_rust_log_level())
-                .with_container_name(endpoint.host_str().unwrap())
-                .with_copy_to(
-                    "/etc/janus/janus_interop_aggregator.yaml",
-                    config.into_bytes(),
-                )
-                .with_mapped_port(port, ContainerPort::Tcp(port))
-                .start()
-                .await?,
-        );
-
-        await_http_server(port).await;
-        interop_api::aggregator_add_task(port, task.clone(), role).await;
-
-        Ok(Self {
-            _container: container,
-            port,
-        })
     }
 
     /// Returns the port of the aggregator on the host.
