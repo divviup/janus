@@ -29,7 +29,9 @@ use url::Url;
 /// Different contexts or test harnesses that integration tests may be run against, which require
 /// different configuration customizations.
 pub enum TestContext {
-    /// Aggregators are running in a virtual network, like a Docker network or a Kind cluster.
+    /// Aggregators are running in a virtual network: a Docker network or a Kind cluster. Each
+    /// serves on port 8080, reachable at the same URL from within the network and from the host
+    /// (the host reaches it through a forwarding proxy).
     #[allow(dead_code)]
     VirtualNetwork,
     /// Aggregators are running natively on the same host as the test driver.
@@ -63,6 +65,9 @@ pub fn build_test_task(
                         path: "/".to_string(),
                     },
                     ohttp_config: None,
+                    // Filled in with `Some` later, once the aggregators' host ports are known
+                    // (e.g. by `JanusContainerPair::new`).
+                    in_process_http_client: None,
                 },
             )
         }
@@ -77,6 +82,7 @@ pub fn build_test_task(
                     path: "/".to_string(),
                 },
                 ohttp_config: None,
+                in_process_http_client: None,
             },
         ),
         #[cfg(feature = "in-cluster")]
@@ -91,6 +97,7 @@ pub fn build_test_task(
                     url: task_builder.helper_aggregator_endpoint().clone(),
                 },
                 ohttp_config: None,
+                in_process_http_client: None,
             },
         ),
     };
@@ -251,10 +258,10 @@ where
     V: vdaf::Client<16> + vdaf::Collector + InteropClientEncoding,
     V::AggregateResult: PartialEq,
 {
-    let (leader_endpoint, helper_endpoint) = task_parameters
+    let (leader_endpoint, helper_endpoint, http_client) = task_parameters
         .endpoint_fragments
-        .endpoints_for_host_client(leader_port, helper_port);
-    let collector = Collector::builder(
+        .in_process_config(leader_port, helper_port);
+    let mut builder = Collector::builder(
         task_parameters.task_id,
         leader_endpoint.as_str().try_into().unwrap(),
         task_parameters.collector_auth_token.clone(),
@@ -264,10 +271,10 @@ where
     )
     .with_helper_endpoint(helper_endpoint.as_str().try_into().unwrap())
     .with_task_info(task_parameters.task_info.clone())
-    .with_task_interval(task_parameters.task_interval)
     .with_min_batch_size(task_parameters.min_batch_size)
     .with_batch_config(task_parameters.batch_mode.to_batch_config())
     .with_vdaf_config(task_parameters.vdaf.to_vdaf_config().unwrap())
+    .with_task_interval(task_parameters.task_interval)
     .with_http_request_backoff(test_http_request_exponential_backoff())
     .with_collect_poll_backoff(
         ExponentialWithTotalDelayBuilder::new()
@@ -275,9 +282,11 @@ where
             .with_max_delay(task_parameters.collector_max_interval)
             .without_max_times()
             .with_total_delay(Some(task_parameters.collector_max_elapsed_time)),
-    )
-    .build()
-    .unwrap();
+    );
+    if let Some(http_client) = http_client {
+        builder = builder.with_http_client(http_client);
+    }
+    let collector = builder.build().unwrap();
 
     // Send a collect request and verify that we got the correct result.
     let (report_count, aggregate_result) = match &task_parameters.batch_mode {
