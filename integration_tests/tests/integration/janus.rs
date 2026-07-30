@@ -45,8 +45,8 @@ struct JanusContainerPair {
 impl JanusContainerPair {
     /// Set up a new pair of containerized Janus test instances, and set up a new task in each using
     /// the given VDAF and batch mode. Each aggregator serves on port 8080; the host-side in-process
-    /// client and collector reach them through per-aggregator forwarding proxies, so all parties
-    /// use the same endpoint strings.
+    /// client and collector reach them by using the Docker port forwards as HTTP  proxies, so all
+    /// parties use the same endpoint strings.
     pub async fn new(
         test_name: &str,
         batch_mode: BatchMode,
@@ -66,8 +66,7 @@ impl JanusContainerPair {
         let helper = JanusContainer::new(test_name, &network, &task, Role::Helper).await;
 
         // The host reaches each aggregator by pointing reqwest's per-request proxy at the
-        // container's Docker-assigned host port; the aggregator serves the absolute-form request
-        // reqwest sends through a proxy, so no forwarding process of our own is needed.
+        // container's Docker-assigned host port.
         let leader_host = task
             .leader_aggregator_endpoint()
             .host_str()
