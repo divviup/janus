@@ -55,7 +55,7 @@ impl JanusContainerPair {
     ) -> JanusContainerPair {
         let (mut task_parameters, task_builder) = build_test_task(
             TaskBuilder::new(batch_mode, aggregation_mode, vdaf),
-            TestContext::DockerNetwork,
+            TestContext::VirtualNetwork,
             Duration::from_millis(500),
             Duration::from_secs(60),
         );

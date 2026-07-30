@@ -29,13 +29,11 @@ use url::Url;
 /// Different contexts or test harnesses that integration tests may be run against, which require
 /// different configuration customizations.
 pub enum TestContext {
-    /// Aggregators are running in a Kind cluster, reached from the host via port forwards.
+    /// Aggregators are running in a virtual network: a Docker network or a Kind cluster. Each
+    /// serves on port 8080, reachable at the same URL from within the network and from the host
+    /// (the host reaches it through a forwarding proxy).
     #[allow(dead_code)]
     VirtualNetwork,
-    /// Aggregators are running in a Docker network, each on a distinct port reachable identically
-    /// from within the network and from the host.
-    #[allow(dead_code)]
-    DockerNetwork,
     /// Aggregators are running natively on the same host as the test driver.
     Host,
     /// Aggregators are running remotely, say in a staging environment.
@@ -67,28 +65,8 @@ pub fn build_test_task(
                         path: "/".to_string(),
                     },
                     ohttp_config: None,
-                    in_process_http_client: None,
-                },
-            )
-        }
-        TestContext::DockerNetwork => {
-            let endpoint_random_value = hex::encode(random::<[u8; 4]>());
-            let leader_host = format!("leader-{endpoint_random_value}");
-            let helper_host = format!("helper-{endpoint_random_value}");
-            (
-                Url::parse(&format!("http://{leader_host}:8080/")).unwrap(),
-                Url::parse(&format!("http://{helper_host}:8080/")).unwrap(),
-                EndpointFragments {
-                    leader: AggregatorEndpointFragments::DockerNetwork {
-                        host: leader_host,
-                        path: "/".to_string(),
-                    },
-                    helper: AggregatorEndpointFragments::DockerNetwork {
-                        host: helper_host,
-                        path: "/".to_string(),
-                    },
-                    ohttp_config: None,
-                    // Filled in with `Some` later, once the containers' host ports are known.
+                    // Filled in with `Some` later, once the aggregators' host ports are known
+                    // (e.g. by `JanusContainerPair::new`).
                     in_process_http_client: None,
                 },
             )

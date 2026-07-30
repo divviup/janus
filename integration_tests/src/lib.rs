@@ -36,18 +36,12 @@ pub struct TaskParameters {
 /// Components of one aggregator's DAP endpoint.
 #[derive(Debug)]
 pub enum AggregatorEndpointFragments {
-    /// The aggregator is in a Kind cluster.
-    ///
-    /// It is reached from the host via a port forward on localhost (ephemeral port, supplied
-    /// later) and from within the cluster at its service name on port 8080. The scheme is always
-    /// `http`.
-    VirtualNetwork { host: String, path: String },
-    /// The aggregator is in a Docker network.
+    /// The aggregator is in a virtual network: a Docker network or a Kind cluster.
     ///
     /// It serves on port 8080 at `host`. The single `http://{host}:8080{path}` URL is
-    /// byte-identical for all parties; the host reaches it through a per-aggregator forwarding
-    /// proxy (Docker assigns the host port dynamically). The scheme is always `http`.
-    DockerNetwork { host: String, path: String },
+    /// identical for all parties; the host reaches it through a per-aggregator forwarding
+    /// proxy that bridges to an ephemeral host port, and the scheme is always `http`.
+    VirtualNetwork { host: String, path: String },
     /// The aggregator is running on localhost.
     ///
     /// No port forwarding is involved, so the same URL is used in all circumstances. The port
@@ -61,19 +55,18 @@ pub enum AggregatorEndpointFragments {
 }
 
 impl AggregatorEndpointFragments {
-    /// Provides the URL for the aggregator's endpoint from the perspective of the host. If the
-    /// aggregator is in a virtual network, this will use a port forward, with the provided port
-    /// number. If the aggregator itself is running on the host, it will use the provided port
-    /// number as well. If the aggregator is running remotely, the port number is ignored and the
-    /// URL is returned.
+    /// Provides the URL for the aggregator's endpoint from the perspective of the host. A
+    /// virtual-network aggregator uses its byte-identical `http://{host}:8080` URL (the host
+    /// reaches it through a forwarding proxy, so the port number is ignored). An aggregator running
+    /// on the host uses the provided port number. A remote aggregator ignores the port number and
+    /// returns its URL.
     pub fn endpoint_for_host(&self, port: u16) -> Url {
         match self {
-            AggregatorEndpointFragments::VirtualNetwork { path, .. }
-            | AggregatorEndpointFragments::Localhost { path } => {
-                Url::parse(&format!("http://127.0.0.1:{port}{path}")).unwrap()
-            }
-            AggregatorEndpointFragments::DockerNetwork { host, path } => {
+            AggregatorEndpointFragments::VirtualNetwork { host, path } => {
                 Url::parse(&format!("http://{host}:8080{path}")).unwrap()
+            }
+            AggregatorEndpointFragments::Localhost { path } => {
+                Url::parse(&format!("http://127.0.0.1:{port}{path}")).unwrap()
             }
             AggregatorEndpointFragments::Remote { url } => url.clone(),
         }
@@ -86,9 +79,6 @@ impl AggregatorEndpointFragments {
     pub fn endpoint_for_virtual_network(&self) -> Url {
         match self {
             AggregatorEndpointFragments::VirtualNetwork { host, path } => {
-                Url::parse(&format!("http://{host}:8080{path}")).unwrap()
-            }
-            AggregatorEndpointFragments::DockerNetwork { host, path } => {
                 Url::parse(&format!("http://{host}:8080{path}")).unwrap()
             }
             AggregatorEndpointFragments::Localhost { .. } => panic!(
@@ -107,9 +97,6 @@ impl AggregatorEndpointFragments {
             AggregatorEndpointFragments::VirtualNetwork {
                 path: self_path, ..
             }
-            | AggregatorEndpointFragments::DockerNetwork {
-                path: self_path, ..
-            }
             | AggregatorEndpointFragments::Localhost { path: self_path } => *self_path = path,
             AggregatorEndpointFragments::Remote { .. } => {
                 panic!("cannot set path for remote aggregator")
@@ -124,7 +111,7 @@ pub struct EndpointFragments {
     pub helper: AggregatorEndpointFragments,
     pub ohttp_config: Option<OhttpConfig>,
     /// HTTP client an in-process client or collector should use to reach the aggregators, when
-    /// they are not directly reachable at their endpoint URLs (e.g. Docker-network aggregators
+    /// they are not directly reachable at their endpoint URLs (e.g. virtual-network aggregators
     /// reached through a forwarding proxy). `None` means connect directly.
     pub in_process_http_client: Option<reqwest::Client>,
 }
@@ -157,30 +144,17 @@ impl EndpointFragments {
     }
 
     /// Leader and helper endpoints, and the optional HTTP client, for an in-process client or
-    /// collector on the host. For [`AggregatorEndpointFragments::DockerNetwork`] aggregators this
-    /// returns the byte-identical virtual-network endpoints; otherwise the localhost port-forward
-    /// endpoints. The client is whatever was set on [`Self::in_process_http_client`].
+    /// collector on the host. Virtual-network aggregators use their service URLs via the
+    /// proxy in [`Self::in_process_http_client`] -- localhost aggregators use the given
+    /// ephemeral ports.
     pub fn in_process_config(
         &self,
         leader_port: u16,
         helper_port: u16,
     ) -> (Url, Url, Option<reqwest::Client>) {
-        let (leader_endpoint, helper_endpoint) = match (&self.leader, &self.helper) {
-            (
-                AggregatorEndpointFragments::DockerNetwork { .. },
-                AggregatorEndpointFragments::DockerNetwork { .. },
-            ) => (
-                self.leader.endpoint_for_virtual_network(),
-                self.helper.endpoint_for_virtual_network(),
-            ),
-            _ => (
-                self.leader.endpoint_for_host(leader_port),
-                self.helper.endpoint_for_host(helper_port),
-            ),
-        };
         (
-            leader_endpoint,
-            helper_endpoint,
+            self.leader.endpoint_for_host(leader_port),
+            self.helper.endpoint_for_host(helper_port),
             self.in_process_http_client.clone(),
         )
     }
