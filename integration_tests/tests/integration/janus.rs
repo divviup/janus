@@ -1,5 +1,3 @@
-#[cfg(feature = "testcontainer")]
-use std::net::{Ipv4Addr, Ipv6Addr};
 use std::{iter, time::Duration};
 
 use janus_aggregator_core::task::{AggregationMode, BatchMode, test_util::TaskBuilder};
@@ -21,11 +19,6 @@ use prio::{
     field::{Field128, FieldElementWithInteger},
     vdaf::prio3::Prio3,
 };
-#[cfg(feature = "testcontainer")]
-use tokio::{
-    io::copy_bidirectional,
-    net::{TcpListener, TcpStream},
-};
 
 use crate::{
     common::{
@@ -46,11 +39,6 @@ struct JanusContainerPair {
     leader: JanusContainer,
     /// Handle to the helper's resources, which are released on drop.
     helper: JanusContainer,
-
-    /// Proxies giving the host-side client and collector a stable address for each container's
-    /// Docker-assigned host port. Released on drop.
-    _leader_proxy: SpliceProxy,
-    _helper_proxy: SpliceProxy,
 }
 
 #[cfg(feature = "testcontainer")]
@@ -77,10 +65,9 @@ impl JanusContainerPair {
         let leader = JanusContainer::new(test_name, &network, &task, Role::Leader).await;
         let helper = JanusContainer::new(test_name, &network, &task, Role::Helper).await;
 
-        // Forward each aggregator's virtual-network hostname to its Docker-assigned host port, and
-        // route the client/collector's requests to those proxies.
-        let leader_proxy = SpliceProxy::spawn(leader.port()).await;
-        let helper_proxy = SpliceProxy::spawn(helper.port()).await;
+        // The host reaches each aggregator by pointing reqwest's per-request proxy at the
+        // container's Docker-assigned host port; the aggregator serves the absolute-form request
+        // reqwest sends through a proxy, so no forwarding process of our own is needed.
         let leader_host = task
             .leader_aggregator_endpoint()
             .host_str()
@@ -91,12 +78,13 @@ impl JanusContainerPair {
             .host_str()
             .unwrap()
             .to_string();
-        let (leader_proxy_url, helper_proxy_url) = (leader_proxy.url(), helper_proxy.url());
+        let leader_proxy = format!("http://127.0.0.1:{}", leader.port());
+        let helper_proxy = format!("http://127.0.0.1:{}", helper.port());
         task_parameters.endpoint_fragments.in_process_http_client = Some(
             reqwest::Client::builder()
                 .proxy(reqwest::Proxy::custom(move |url| match url.host_str() {
-                    Some(host) if host == leader_host => Some(leader_proxy_url.clone()),
-                    Some(host) if host == helper_host => Some(helper_proxy_url.clone()),
+                    Some(host) if host == leader_host => Some(leader_proxy.clone()),
+                    Some(host) if host == helper_host => Some(helper_proxy.clone()),
                     _ => None,
                 }))
                 .build()
@@ -107,54 +95,7 @@ impl JanusContainerPair {
             task_parameters,
             leader,
             helper,
-            _leader_proxy: leader_proxy,
-            _helper_proxy: helper_proxy,
         }
-    }
-}
-
-/// A loopback TCP proxy that forwards every connection to a fixed upstream port byte-for-byte,
-/// giving a host client a stable address for a container whose host port Docker assigns
-/// dynamically. Aborts its accept loop on drop.
-#[cfg(feature = "testcontainer")]
-struct SpliceProxy {
-    port: u16,
-    task: tokio::task::JoinHandle<()>,
-}
-
-#[cfg(feature = "testcontainer")]
-impl SpliceProxy {
-    async fn spawn(upstream_port: u16) -> Self {
-        let listener = TcpListener::bind((Ipv6Addr::LOCALHOST, 0)).await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let task = tokio::spawn(async move {
-            while let Ok((mut inbound, _)) = listener.accept().await {
-                tokio::spawn(async move {
-                    // Docker publishes the container's port over IPv4, so dial the upstream there.
-                    match TcpStream::connect((Ipv4Addr::LOCALHOST, upstream_port)).await {
-                        Ok(mut upstream) => {
-                            let _ = copy_bidirectional(&mut inbound, &mut upstream).await;
-                        }
-                        Err(error) => {
-                            tracing::warn!(?error, "splice proxy failed to reach upstream")
-                        }
-                    }
-                });
-            }
-        });
-        Self { port, task }
-    }
-
-    /// The proxy URL to hand to `reqwest::Proxy`.
-    fn url(&self) -> String {
-        format!("http://[::1]:{}", self.port)
-    }
-}
-
-#[cfg(feature = "testcontainer")]
-impl Drop for SpliceProxy {
-    fn drop(&mut self) {
-        self.task.abort();
     }
 }
 
