@@ -88,6 +88,7 @@ pub fn build_test_task(
                         path: "/".to_string(),
                     },
                     ohttp_config: None,
+                    // Filled in with `Some` later, once the containers' host ports are known.
                     in_process_http_client: None,
                 },
             )
