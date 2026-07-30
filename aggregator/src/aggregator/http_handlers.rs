@@ -186,7 +186,16 @@ impl Error {
             | Error::HttpClient(_)
             | Error::Http { .. }
             | Error::TaskParameters(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-            Error::AggregateShareRequestRejected(_, _) => StatusCode::BAD_REQUEST.into_response(),
+            // Note: DAP defines no error for this; `batchOverlap` may kinda fit the dupe
+            // cases, but it does not cover the too-late rejection that shares this variant.
+            Error::AggregateShareRequestRejected(task_id, detail) => ProblemDocument::new(
+                "about:blank",
+                "Aggregate share request rejected.",
+                StatusCode::BAD_REQUEST,
+            )
+            .with_task_id(task_id)
+            .with_detail(detail)
+            .into_response(),
             Error::EmptyAggregation(task_id) => {
                 ProblemDocument::new_dap(DapProblemType::InvalidMessage)
                     .with_task_id(task_id)

@@ -1,4 +1,4 @@
-use prio::codec::Decode;
+use prio::codec::{Decode, Encode};
 
 use super::{task_configuration_hex, test_task_configuration};
 use crate::{
@@ -185,6 +185,66 @@ fn collection_job_req_decode_is_lenient_about_extension_order() {
     let req = CollectionJobReq::<LeaderSelected>::get_decoded(&encoded)
         .expect("structurally valid collection job request must decode");
     assert_eq!(req.extensions().len(), 2);
+}
+
+#[test]
+fn collection_job_req_decode_encode_is_byte_identical() {
+    // The Helper stores the Collector's CollectionJobReq encoded and re-encodes it to rebuild the
+    // aggregate-share AAD on the poll path, so decode->encode must preserve bytes exactly.
+    let interval = Interval::new(
+        Time::from_seconds_since_epoch(54321, &TEST_TIME_PRECISION),
+        Duration::from_seconds(12345, &TEST_TIME_PRECISION),
+    )
+    .unwrap();
+    let extensions = Vec::from([
+        CollectionJobExtension::new(CollectionJobExtensionType::Reserved, Vec::new()),
+        CollectionJobExtension::new(
+            CollectionJobExtensionType::Unknown(0x0001),
+            Vec::from("ext"),
+        ),
+    ]);
+
+    for encoded in [
+        CollectionJobReq::<TimeInterval>::new(
+            Query::new_time_interval(interval),
+            Vec::from("012345"),
+        )
+        .get_encoded()
+        .unwrap(),
+        CollectionJobReq::<TimeInterval>::new(
+            Query::new_time_interval(interval),
+            Vec::from("012345"),
+        )
+        .with_extensions(extensions.clone())
+        .get_encoded()
+        .unwrap(),
+    ] {
+        assert_eq!(
+            CollectionJobReq::<TimeInterval>::get_decoded(&encoded)
+                .unwrap()
+                .get_encoded()
+                .unwrap(),
+            encoded,
+        );
+    }
+
+    for encoded in [
+        CollectionJobReq::<LeaderSelected>::new(Query::new_leader_selected(), Vec::from("012345"))
+            .get_encoded()
+            .unwrap(),
+        CollectionJobReq::<LeaderSelected>::new(Query::new_leader_selected(), Vec::from("012345"))
+            .with_extensions(extensions)
+            .get_encoded()
+            .unwrap(),
+    ] {
+        assert_eq!(
+            CollectionJobReq::<LeaderSelected>::get_decoded(&encoded)
+                .unwrap()
+                .get_encoded()
+                .unwrap(),
+            encoded,
+        );
+    }
 }
 
 #[test]

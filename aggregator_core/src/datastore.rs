@@ -26,10 +26,10 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    AggregateShareId, AggregationJobId, BatchId, CollectionJobId, Duration, Extension,
-    HpkeCiphertext, HpkeConfig, HpkeConfigId, Interval, Query, ReportId, ReportIdChecksum,
-    ReportMetadata, Role, TaskConfiguration, TaskId, Time, TimePrecision, VerifyContinue,
-    VerifyInit, VerifyResp,
+    AggregateShareId, AggregationJobId, BatchId, CollectionJobId, CollectionJobReq, Duration,
+    Extension, HpkeCiphertext, HpkeConfig, HpkeConfigId, Interval, Query, ReportId,
+    ReportIdChecksum, ReportMetadata, Role, TaskConfiguration, TaskId, Time, TimePrecision,
+    VerifyContinue, VerifyInit, VerifyResp,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
 };
 use leases::{acquired_aggregation_job_from_row, acquired_collection_job_from_row};
@@ -4282,7 +4282,7 @@ WHERE task_id = $10
         let stmt = self
             .prepare_cached(
                 "-- get_aggregate_share_job()
-SELECT helper_aggregate_share, report_count, checksum, aggregate_share_id
+SELECT helper_aggregate_share, report_count, checksum, aggregate_share_id, collection_job_req
 FROM aggregate_share_jobs
 WHERE task_id = $1
   AND batch_identifier = $2
@@ -4342,8 +4342,8 @@ WHERE task_id = $1
             .prepare_cached(
                 "-- get_aggregate_share_job_by_id()
 SELECT 
-    helper_aggregate_share, batch_identifier, aggregation_param, report_count, 
-    checksum, aggregate_share_id
+    helper_aggregate_share, batch_identifier, aggregation_param, report_count,
+    checksum, aggregate_share_id, collection_job_req
 FROM aggregate_share_jobs
 WHERE task_id = $1
   AND aggregate_share_id = $2
@@ -4403,7 +4403,7 @@ WHERE task_id = $1
                 "-- get_aggregate_share_jobs_intersecting_interval()
 SELECT
     batch_identifier, aggregation_param, helper_aggregate_share, report_count,
-    checksum, aggregate_share_id
+    checksum, aggregate_share_id, collection_job_req
 FROM aggregate_share_jobs
 WHERE task_id = $1
   AND batch_interval && $2
@@ -4457,7 +4457,8 @@ WHERE task_id = $1
             .prepare_cached(
                 "-- get_aggregate_share_jobs_by_batch_id()
 SELECT
-    aggregation_param, helper_aggregate_share, report_count, checksum, aggregate_share_id
+    aggregation_param, helper_aggregate_share, report_count, checksum, aggregate_share_id,
+    collection_job_req
 FROM aggregate_share_jobs
 WHERE task_id = $1
   AND batch_identifier = $2
@@ -4508,7 +4509,7 @@ WHERE task_id = $1
                 "-- get_aggregate_share_jobs_for_task()
 SELECT
     batch_identifier, aggregation_param, helper_aggregate_share, report_count,
-    checksum, aggregate_share_id
+    checksum, aggregate_share_id, collection_job_req
 FROM aggregate_share_jobs
 WHERE task_id = $1
   AND COALESCE(
@@ -4567,6 +4568,7 @@ WHERE task_id = $1
             aggregate_share_id,
             row.get_bigint_and_convert("report_count")?,
             ReportIdChecksum::get_decoded(row.get("checksum"))?,
+            CollectionJobReq::<B>::get_decoded(row.get("collection_job_req"))?,
         ))
     }
 
@@ -4594,16 +4596,17 @@ WHERE task_id = $1
 INSERT INTO aggregate_share_jobs (
     task_id, batch_identifier, batch_interval, aggregation_param,
     helper_aggregate_share, aggregate_share_id, report_count, checksum,
-    created_at, updated_by
+    collection_job_req, created_at, updated_by
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 ON CONFLICT(task_id, batch_identifier, aggregation_param) DO UPDATE
     SET (
-        helper_aggregate_share, aggregate_share_id, report_count, checksum, 
-        created_at, updated_by
+        helper_aggregate_share, aggregate_share_id, report_count, checksum,
+        collection_job_req, created_at, updated_by
     ) = (
-        excluded.helper_aggregate_share, excluded.aggregate_share_id, 
-        excluded.report_count, excluded.checksum, excluded.created_at, excluded.updated_by
+        excluded.helper_aggregate_share, excluded.aggregate_share_id,
+        excluded.report_count, excluded.checksum, excluded.collection_job_req,
+        excluded.created_at, excluded.updated_by
     )
     WHERE COALESCE(
               LOWER(aggregate_share_jobs.batch_interval),
@@ -4612,7 +4615,7 @@ ON CONFLICT(task_id, batch_identifier, aggregation_param) DO UPDATE
                WHERE ba.task_id = aggregate_share_jobs.task_id
                  AND ba.batch_identifier = aggregate_share_jobs.batch_identifier
                  AND ba.aggregation_param = aggregate_share_jobs.aggregation_param),
-              0) < $11",
+              0) < $12",
             )
             .await?;
         check_insert(
@@ -4631,6 +4634,8 @@ ON CONFLICT(task_id, batch_identifier, aggregation_param) DO UPDATE
                     &aggregate_share_job.aggregate_share_id().get_encoded()?,
                     /* report_count */ &i64::try_from(aggregate_share_job.report_count())?,
                     /* checksum */ &aggregate_share_job.checksum().get_encoded()?,
+                    /* collection_job_req */
+                    &aggregate_share_job.collection_job_req().get_encoded()?,
                     /* created_at */ &now,
                     /* updated_by */ &self.name,
                     /* threshold */

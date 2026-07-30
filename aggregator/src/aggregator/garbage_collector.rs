@@ -195,11 +195,11 @@ mod tests {
         vdaf::VdafInstance,
     };
     use janus_messages::{
-        AggregationJobStep, Duration, HpkeCiphertext, HpkeConfigId, Interval, Query,
-        ReportIdChecksum, ReportMetadata, ReportShare, Role, TimePrecision,
+        AggregationJobStep, CollectionJobReq, Duration, HpkeCiphertext, HpkeConfigId, Interval,
+        Query, ReportIdChecksum, ReportMetadata, ReportShare, Role, TimePrecision,
         batch_mode::{LeaderSelected, TimeInterval},
     };
-    use prio::vdaf::dummy;
+    use prio::{codec::Encode, vdaf::dummy};
     use rand::random;
 
     use crate::aggregator::garbage_collector::GarbageCollector;
@@ -495,6 +495,10 @@ mod tests {
                             random(),
                             0,
                             ReportIdChecksum::default(),
+                            CollectionJobReq::new(
+                                Query::new_time_interval(batch_identifier),
+                                dummy::AggregationParam(0).get_encoded().unwrap(),
+                            ),
                         ),
                     )
                     .await
@@ -889,6 +893,10 @@ mod tests {
                             random(),
                             0,
                             ReportIdChecksum::default(),
+                            CollectionJobReq::new(
+                                Query::new_leader_selected(),
+                                dummy::AggregationParam(0).get_encoded().unwrap(),
+                            ),
                         ),
                     )
                     .await

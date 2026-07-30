@@ -2038,12 +2038,16 @@ pub struct AggregateShareJob<const SEED_SIZE: usize, B: BatchMode, A: AsyncAggre
     /// Checksum over the aggregated report shares, as described in §4.4.4.3.
     #[educe(Debug(ignore))]
     checksum: ReportIdChecksum,
+    /// The collector's request, as forwarded by the leader. Retained verbatim because the
+    /// aggregate share AAD binds it, and the poll path has to rebuild that AAD.
+    collection_job_req: CollectionJobReq<B>,
 }
 
 impl<const SEED_SIZE: usize, B: BatchMode, A: AsyncAggregator<SEED_SIZE>>
     AggregateShareJob<SEED_SIZE, B, A>
 {
     /// Creates a new [`AggregateShareJob`].
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         task_id: TaskId,
         batch_identifier: B::BatchIdentifier,
@@ -2052,6 +2056,7 @@ impl<const SEED_SIZE: usize, B: BatchMode, A: AsyncAggregator<SEED_SIZE>>
         aggregate_share_id: AggregateShareId,
         report_count: u64,
         checksum: ReportIdChecksum,
+        collection_job_req: CollectionJobReq<B>,
     ) -> Self {
         Self {
             task_id,
@@ -2061,6 +2066,7 @@ impl<const SEED_SIZE: usize, B: BatchMode, A: AsyncAggregator<SEED_SIZE>>
             aggregate_share_id,
             report_count,
             checksum,
+            collection_job_req,
         }
     }
 
@@ -2102,6 +2108,11 @@ impl<const SEED_SIZE: usize, B: BatchMode, A: AsyncAggregator<SEED_SIZE>>
     /// Gets the checksum associated with this aggregate share job.
     pub fn checksum(&self) -> &ReportIdChecksum {
         &self.checksum
+    }
+
+    /// Gets the collector's request associated with this aggregate share job.
+    pub fn collection_job_req(&self) -> &CollectionJobReq<B> {
+        &self.collection_job_req
     }
 }
 

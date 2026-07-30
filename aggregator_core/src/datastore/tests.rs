@@ -23,8 +23,9 @@ use janus_core::{
     vdaf::{VERIFY_KEY_LENGTH_PRIO3, VdafInstance, vdaf_dp_strategies},
 };
 use janus_messages::{
-    AggregateShareAad, AggregationJobId, AggregationJobStep, BatchId, CollectionJobId, Duration,
-    Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, Interval, Query, ReportError, ReportId,
+    AggregateShareAad, AggregationJobId, AggregationJobStep, BatchId, CollectionJobExtension,
+    CollectionJobExtensionType, CollectionJobId, CollectionJobReq, Duration, Extension,
+    ExtensionType, HpkeCiphertext, HpkeConfigId, Interval, Query, ReportError, ReportId,
     ReportIdChecksum, ReportMetadata, ReportShare, Role, TaskId, Time, TimePrecision,
     VerifyContinue, VerifyInit, VerifyResp, VerifyStepResult,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
@@ -6223,6 +6224,20 @@ async fn roundtrip_aggregate_share_job_time_interval(ephemeral_datastore: Epheme
                     random(),
                     10,
                     ReportIdChecksum::get_decoded(&[1; 32]).unwrap(),
+                    // A query wider than the batch identifier, with an extension, so the round
+                    // trip has to preserve more than the stored batch
+                    // identifier can reconstruct.
+                    CollectionJobReq::new(
+                        Query::new_time_interval(
+                            Interval::new(START_TIME, Duration::from_time_precision_units(10))
+                                .unwrap(),
+                        ),
+                        dummy::AggregationParam(11).get_encoded().unwrap(),
+                    )
+                    .with_extensions(Vec::from([CollectionJobExtension::new(
+                        CollectionJobExtensionType::Unknown(0x0001),
+                        Vec::from("ext"),
+                    )])),
                 );
 
                 tx.put_aggregate_share_job::<0, TimeInterval, dummy::Vdaf>(&aggregate_share_job)
@@ -6286,6 +6301,28 @@ async fn roundtrip_aggregate_share_job_time_interval(ephemeral_datastore: Epheme
                 .await
                 .unwrap();
             assert_eq!(got_aggregate_share_jobs, want_aggregate_share_jobs);
+
+            assert_eq!(
+                tx.get_aggregate_share_job_by_id::<0, TimeInterval, dummy::Vdaf>(
+                    &vdaf,
+                    want_aggregate_share_job.task_id(),
+                    *want_aggregate_share_job.aggregate_share_id(),
+                )
+                .await
+                .unwrap()
+                .unwrap(),
+                want_aggregate_share_job,
+            );
+
+            assert_eq!(
+                tx.get_aggregate_share_jobs_for_task::<0, TimeInterval, dummy::Vdaf>(
+                    &vdaf,
+                    want_aggregate_share_job.task_id(),
+                )
+                .await
+                .unwrap(),
+                want_aggregate_share_jobs,
+            );
 
             Ok(())
         })
@@ -6386,6 +6423,14 @@ async fn roundtrip_aggregate_share_job_leader_selected(ephemeral_datastore: Ephe
                     random(),
                     10,
                     ReportIdChecksum::get_decoded(&[1; 32]).unwrap(),
+                    CollectionJobReq::new(
+                        Query::new_leader_selected(),
+                        dummy::AggregationParam(11).get_encoded().unwrap(),
+                    )
+                    .with_extensions(Vec::from([CollectionJobExtension::new(
+                        CollectionJobExtensionType::Unknown(0x0001),
+                        Vec::from("ext"),
+                    )])),
                 );
 
                 tx.put_aggregate_share_job::<0, LeaderSelected, dummy::Vdaf>(&aggregate_share_job)
@@ -6441,6 +6486,28 @@ async fn roundtrip_aggregate_share_job_leader_selected(ephemeral_datastore: Ephe
                 .await
                 .unwrap();
             assert_eq!(got_aggregate_share_jobs, want_aggregate_share_jobs);
+
+            assert_eq!(
+                tx.get_aggregate_share_job_by_id::<0, LeaderSelected, dummy::Vdaf>(
+                    &vdaf,
+                    want_aggregate_share_job.task_id(),
+                    *want_aggregate_share_job.aggregate_share_id(),
+                )
+                .await
+                .unwrap()
+                .unwrap(),
+                want_aggregate_share_job,
+            );
+
+            assert_eq!(
+                tx.get_aggregate_share_jobs_for_task::<0, LeaderSelected, dummy::Vdaf>(
+                    &vdaf,
+                    want_aggregate_share_job.task_id(),
+                )
+                .await
+                .unwrap(),
+                want_aggregate_share_jobs,
+            );
 
             Ok(())
         })
@@ -7595,6 +7662,10 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                 random(),
                 client_timestamps.len().try_into().unwrap(),
                 random(),
+                CollectionJobReq::new(
+                    B::query_for_batch_identifier(&batch_identifier),
+                    dummy::AggregationParam(0).get_encoded().unwrap(),
+                ),
             ))
             .await
             .unwrap();

@@ -1060,6 +1060,10 @@ async fn taskprov_aggregate_continue() {
                         aggregate_share_id,
                         0,
                         ReportIdChecksum::default(),
+                        CollectionJobReq::new(
+                            Query::new_leader_selected(),
+                            aggregation_param.get_encoded().unwrap(),
+                        ),
                     ),
                 )
                 .await
