@@ -85,7 +85,12 @@ impl JanusContainerPair {
                 .proxy(reqwest::Proxy::custom(move |url| match url.host_str() {
                     Some(host) if host == leader_host => Some(leader_proxy.clone()),
                     Some(host) if host == helper_host => Some(helper_proxy.clone()),
-                    _ => None,
+                    // This client only ever talks to the leader and helper, so any other host is a
+                    // misconfiguration we want to catch noisily.
+                    other => panic!(
+                        "in-process HTTP client reached unexpected host {other:?}; only the \
+                         leader ({leader_host}) and helper ({helper_host}) are proxied"
+                    ),
                 }))
                 .build()
                 .unwrap(),

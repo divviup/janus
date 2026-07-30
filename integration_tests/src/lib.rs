@@ -36,20 +36,27 @@ pub struct TaskParameters {
 /// Components of one aggregator's DAP endpoint.
 #[derive(Debug)]
 pub enum AggregatorEndpointFragments {
-    /// The aggregator is in a Kind cluster, reached from the host via a port forward on localhost
-    /// (ephemeral port, supplied later) and from within the cluster at its service name on port
-    /// 8080. The scheme is always 'http:'.
+    /// The aggregator is in a Kind cluster.
+    ///
+    /// It is reached from the host via a port forward on localhost (ephemeral port, supplied
+    /// later) and from within the cluster at its service name on port 8080. The scheme is always
+    /// `http`.
     VirtualNetwork { host: String, path: String },
-    /// The aggregator is in a Docker network, serving on port 8080 at `host`. The single
-    /// `http://{host}:8080{path}` URL is byte-identical for all parties; the host reaches it
-    /// through a per-aggregator forwarding proxy (Docker assigns the host port dynamically).
+    /// The aggregator is in a Docker network.
+    ///
+    /// It serves on port 8080 at `host`. The single `http://{host}:8080{path}` URL is
+    /// byte-identical for all parties; the host reaches it through a per-aggregator forwarding
+    /// proxy (Docker assigns the host port dynamically). The scheme is always `http`.
     DockerNetwork { host: String, path: String },
-    /// The aggregator is running on localhost. No port forwarding is involved, so the same URL is
-    /// used in all circumstances. The port number will be supplied later. The scheme is assumed to
-    /// always be 'http:'.
+    /// The aggregator is running on localhost.
+    ///
+    /// No port forwarding is involved, so the same URL is used in all circumstances. The port
+    /// number is supplied later, and the scheme is always `http`.
     Localhost { path: String },
-    /// The aggregator is running remotely, accessible at some URL. No port forwarding is involved,
-    /// and the remote port and scheme are set by the URL.
+    /// The aggregator is running remotely.
+    ///
+    /// It is accessible at some URL. No port forwarding is involved, and the remote port and
+    /// scheme are set by the URL.
     Remote { url: Url },
 }
 
