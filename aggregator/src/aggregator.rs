@@ -56,7 +56,7 @@ use janus_messages::{
     AggregationJobStep, CollectionJobExtension, CollectionJobId, CollectionJobReq,
     CollectionJobResp, Duration, ExtensionType, HpkeConfig, HpkeConfigList, InputShareAad,
     Interval, PartialBatchSelector, PlaintextInputShare, Report, ReportError, ReportUploadStatus,
-    Role, TaskConfiguration, TaskId, UploadErrors, Url as DapUrl, VerifyResp,
+    Role, TaskConfiguration, TaskExtension, TaskId, UploadErrors, Url as DapUrl, VerifyResp,
     batch_mode::{LeaderSelected, TimeInterval},
     extensions_are_strictly_increasing,
 };
@@ -858,6 +858,19 @@ impl<C: Clock> Aggregator<C> {
 
         // TODO(#1647): Check whether task config parameters are acceptable for privacy and
         // availability of the system.
+
+        // Supporting DAP task extensions is mandatory, so an extension we don't implement is a
+        // reason to opt out rather than aggregate under a task we only somewhat understand.
+        if let Some(extension) = task_config
+            .extensions()
+            .iter()
+            .find(|extension| matches!(extension, TaskExtension::Unknown { .. }))
+        {
+            return Err(Error::InvalidTask(
+                *task_id,
+                OptOutReason::UnsupportedExtension(extension.extension_type().into()),
+            ));
+        }
 
         let vdaf_instance = task_config.vdaf_config().try_into().map_err(|err: &str| {
             Error::InvalidTask(*task_id, OptOutReason::InvalidParameter(err.to_string()))

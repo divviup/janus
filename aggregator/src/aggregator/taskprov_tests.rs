@@ -36,8 +36,9 @@ use janus_messages::{
     AggregateShareReq, AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq,
     AggregationJobResp, AggregationJobStep, BatchConfig, BatchSelector, CollectionJobReq, Duration,
     Extension, ExtensionType, Interval, MediaType, PartialBatchSelector, Query, ReportError,
-    ReportIdChecksum, ReportShare, Role, TaskConfiguration, TaskConfigurationBuilder, TaskId, Time,
-    TimePrecision, VdafConfig, VerifyContinue, VerifyInit, VerifyResp, VerifyStepResult,
+    ReportIdChecksum, ReportShare, Role, TaskConfiguration, TaskConfigurationBuilder,
+    TaskExtension, TaskExtensionType, TaskId, Time, TimePrecision, VdafConfig, VerifyContinue,
+    VerifyInit, VerifyResp, VerifyStepResult,
     batch_mode::LeaderSelected,
     codec::{Decode, Encode},
 };
@@ -998,6 +999,97 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
             "detail": "this aggregator is not peered with the given leader aggregator",
         })
     );
+}
+
+#[tokio::test]
+async fn taskprov_opt_out_unsupported_extension() {
+    let test = TaskprovTestCase::new().await;
+
+    let (transcript, report_share, _) = test.next_report_share();
+    let batch_id = random();
+    let request = AggregationJobInitializeReq::new(
+        0,
+        ().get_encoded().unwrap(),
+        PartialBatchSelector::new_leader_selected(batch_id),
+        Vec::from([VerifyInit::new(
+            report_share.clone(),
+            transcript.leader_verify_transitions[0]
+                .message()
+                .unwrap()
+                .clone(),
+        )]),
+    );
+
+    let aggregation_job_id: AggregationJobId = random();
+
+    let another_task_config = TaskConfigurationBuilder::new(
+        Vec::from("foobar".as_bytes()),
+        "https://leader.example.com/".as_bytes().try_into().unwrap(),
+        "https://helper.example.com/".as_bytes().try_into().unwrap(),
+        *test.task.time_precision(),
+        100,
+        BatchConfig::LeaderSelected,
+        VdafConfig::Fake { rounds: 2 },
+    )
+    .with_extensions(Vec::from([TaskExtension::Unknown {
+        extension_type: TaskExtensionType::Unknown(0x1000),
+        extension_data: Vec::from("unsupported".as_bytes()),
+    }]))
+    .with_task_interval(
+        test.clock.now().to_time(test.task.time_precision()),
+        Duration::from_hours(24, test.task.time_precision()),
+    )
+    .unwrap()
+    .build()
+    .unwrap();
+    let another_task_config_encoded = another_task_config.get_encoded().unwrap();
+    let another_task_id = taskprov_task_id(&another_task_config_encoded);
+
+    let mut response = test
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!(
+                    "/tasks/{another_task_id}/aggregation_jobs/{aggregation_job_id}"
+                ))
+                .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
+                .header(
+                    http::header::CONTENT_TYPE,
+                    AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
+                )
+                .header(
+                    TASKPROV_HEADER,
+                    URL_SAFE_NO_PAD.encode(another_task_config_encoded),
+                )
+                .body(Body::from(request.get_encoded().unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        take_problem_details(&mut response).await,
+        json!({
+            "status": StatusCode::BAD_REQUEST.as_u16(),
+            "type": "urn:ietf:params:ppm:dap:error:invalidTask",
+            "title": "Aggregator has opted out of the indicated task.",
+            "taskid": format!("{another_task_id}"),
+            "detail": "unsupported task extension: 0x1000",
+        })
+    );
+
+    // Make sure it didn't get provisioned
+    test.datastore
+        .run_unnamed_tx(|tx| {
+            Box::pin(async move {
+                assert!(tx.get_aggregator_task(&another_task_id).await?.is_none());
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
