@@ -275,7 +275,7 @@ async fn aggregate_init_sync() {
         &input_share_bytes,
         &InputShareAad::new(
             *task.id(),
-            task.helper_view().unwrap().task_configuration().unwrap(),
+            task.task_configuration(),
             verify_init_2.report_share().metadata().clone(),
             transcript_2.public_share.get_encoded().unwrap(),
         )
@@ -296,7 +296,7 @@ async fn aggregate_init_sync() {
 
     let report_share_3 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
-        task.helper_view().unwrap().task_configuration().unwrap(),
+        task.task_configuration(),
         verify_init_3.report_share().metadata().clone(),
         &wrong_hpke_config,
         &transcript_3.public_share,
@@ -327,7 +327,7 @@ async fn aggregate_init_sync() {
     );
     let report_share_5 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
-        task.helper_view().unwrap().task_configuration().unwrap(),
+        task.task_configuration(),
         report_metadata_5,
         hpke_keypair.config(),
         &transcript_5.public_share,
@@ -365,7 +365,7 @@ async fn aggregate_init_sync() {
         &transcript_6.helper_input_share.get_encoded().unwrap(),
         &InputShareAad::new(
             *task.id(),
-            task.helper_view().unwrap().task_configuration().unwrap(),
+            task.task_configuration(),
             report_metadata_6,
             public_share_6,
         )
@@ -400,7 +400,7 @@ async fn aggregate_init_sync() {
     );
     let report_share_7 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
-        task.helper_view().unwrap().task_configuration().unwrap(),
+        task.task_configuration(),
         report_metadata_7,
         hpke_keypair.config(),
         &transcript_7.public_share,
@@ -432,7 +432,7 @@ async fn aggregate_init_sync() {
     );
     let report_share_8 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
-        task.helper_view().unwrap().task_configuration().unwrap(),
+        task.task_configuration(),
         report_metadata_8,
         hpke_keypair.config(),
         &transcript_8.public_share,
@@ -468,7 +468,7 @@ async fn aggregate_init_sync() {
     );
     let report_share_9 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
-        task.helper_view().unwrap().task_configuration().unwrap(),
+        task.task_configuration(),
         report_metadata_9,
         hpke_keypair.config(),
         &transcript_9.public_share,
@@ -500,7 +500,7 @@ async fn aggregate_init_sync() {
     );
     let report_share_10 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
-        task.helper_view().unwrap().task_configuration().unwrap(),
+        task.task_configuration(),
         report_metadata_10,
         hpke_keypair.config(),
         &transcript_10.public_share,
@@ -532,7 +532,7 @@ async fn aggregate_init_sync() {
     );
     let report_share_11 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
-        task.helper_view().unwrap().task_configuration().unwrap(),
+        task.task_configuration(),
         report_metadata_11,
         hpke_keypair.config(),
         &transcript_11.public_share,

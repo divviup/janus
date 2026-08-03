@@ -88,7 +88,7 @@ async fn aggregate_continue_sync() {
     let leader_verify_message_0 = transcript_0.leader_verify_transitions[1].message().unwrap();
     let report_share_0 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
-        task.helper_view().unwrap().task_configuration().unwrap(),
+        task.task_configuration(),
         report_metadata_0.clone(),
         hpke_key.config(),
         &transcript_0.public_share,
@@ -114,7 +114,7 @@ async fn aggregate_continue_sync() {
     let helper_verify_state_1 = transcript_1.helper_verify_transitions[0].verify_state();
     let report_share_1 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
-        task.helper_view().unwrap().task_configuration().unwrap(),
+        task.task_configuration(),
         report_metadata_1.clone(),
         hpke_key.config(),
         &transcript_1.public_share,
@@ -141,7 +141,7 @@ async fn aggregate_continue_sync() {
     let leader_verify_message_2 = transcript_2.leader_verify_transitions[1].message().unwrap();
     let report_share_2 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
-        task.helper_view().unwrap().task_configuration().unwrap(),
+        task.task_configuration(),
         report_metadata_2.clone(),
         hpke_key.config(),
         &transcript_2.public_share,
@@ -429,7 +429,7 @@ async fn aggregate_continue_async() {
     let leader_verify_message_0 = transcript_0.leader_verify_transitions[1].message().unwrap();
     let report_share_0 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
-        task.helper_view().unwrap().task_configuration().unwrap(),
+        task.task_configuration(),
         report_metadata_0.clone(),
         hpke_key.config(),
         &transcript_0.public_share,
@@ -455,7 +455,7 @@ async fn aggregate_continue_async() {
     let helper_verify_state_1 = transcript_1.helper_verify_transitions[0].verify_state();
     let report_share_1 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
-        task.helper_view().unwrap().task_configuration().unwrap(),
+        task.task_configuration(),
         report_metadata_1.clone(),
         hpke_key.config(),
         &transcript_1.public_share,
@@ -681,7 +681,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     let ping_pong_leader_message_0 = transcript_0.leader_verify_transitions[1].message().unwrap();
     let report_share_0 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
-        task.helper_view().unwrap().task_configuration().unwrap(),
+        task.task_configuration(),
         report_metadata_0.clone(),
         hpke_key.config(),
         &transcript_0.public_share,
@@ -707,7 +707,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     let ping_pong_leader_message_1 = transcript_1.leader_verify_transitions[1].message().unwrap();
     let report_share_1 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
-        task.helper_view().unwrap().task_configuration().unwrap(),
+        task.task_configuration(),
         report_metadata_1.clone(),
         hpke_key.config(),
         &transcript_1.public_share,
@@ -736,7 +736,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     let ping_pong_leader_message_2 = transcript_2.leader_verify_transitions[1].message().unwrap();
     let report_share_2 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
-        task.helper_view().unwrap().task_configuration().unwrap(),
+        task.task_configuration(),
         report_metadata_2.clone(),
         hpke_key.config(),
         &transcript_2.public_share,
@@ -1024,7 +1024,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     let ping_pong_leader_message_3 = transcript_3.leader_verify_transitions[1].message().unwrap();
     let report_share_3 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
-        task.helper_view().unwrap().task_configuration().unwrap(),
+        task.task_configuration(),
         report_metadata_3.clone(),
         hpke_key.config(),
         &transcript_3.public_share,
@@ -1053,7 +1053,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     let ping_pong_leader_message_4 = transcript_4.leader_verify_transitions[1].message().unwrap();
     let report_share_4 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
-        task.helper_view().unwrap().task_configuration().unwrap(),
+        task.task_configuration(),
         report_metadata_4.clone(),
         hpke_key.config(),
         &transcript_4.public_share,
@@ -1082,7 +1082,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     let ping_pong_leader_message_5 = transcript_5.leader_verify_transitions[1].message().unwrap();
     let report_share_5 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
-        task.helper_view().unwrap().task_configuration().unwrap(),
+        task.task_configuration(),
         report_metadata_5.clone(),
         hpke_key.config(),
         &transcript_5.public_share,
@@ -1452,7 +1452,7 @@ async fn aggregate_continue_verify_step_fails() {
     );
     let helper_report_share = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
-        task.helper_view().unwrap().task_configuration().unwrap(),
+        task.task_configuration(),
         report_metadata.clone(),
         hpke_key.config(),
         &transcript.public_share,
