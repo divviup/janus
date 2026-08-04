@@ -3873,25 +3873,16 @@ impl VdafOps {
                     {
                         // DAP requires duplicate requests to be identical.
                         if aggregate_share_job.aggregate_share_id() != &aggregate_share_id
+                            || aggregate_share_job.collection_job_req()
+                                != aggregate_share_req.collection_job_req()
                         {
                             return Err(datastore::Error::User(
-                                Error::AggregateShareRequestRejected(
-                                    *task.id(),
-                                    "aggregate share request is a duplicate but uses a different aggregate share ID"
+                                Error::ForbiddenMutation {
+                                    resource_type: "aggregate share job",
+                                    identifier: aggregate_share_job
+                                        .aggregate_share_id()
                                         .to_string(),
-                                )
-                                .into(),
-                            ));
-                        }
-                        if aggregate_share_job.collection_job_req()
-                            != aggregate_share_req.collection_job_req()
-                        {
-                            return Err(datastore::Error::User(
-                                Error::AggregateShareRequestRejected(
-                                    *task.id(),
-                                    "aggregate share request is a duplicate but carries a different collection job request"
-                                        .to_string(),
-                                )
+                                }
                                 .into(),
                             ));
                         }

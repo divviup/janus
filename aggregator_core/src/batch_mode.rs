@@ -489,6 +489,7 @@ mod tests {
         for selector in [
             interval(99, 10),  // starts before the query
             interval(105, 10), // ends after the query
+            interval(90, 5),   // entirely before the query
             interval(110, 1),  // entirely after the query
             interval(90, 100), // contains the query
         ] {

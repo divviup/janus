@@ -828,15 +828,18 @@ async fn aggregate_share_request_duplicate_with_different_id() {
     let mut response =
         put_aggregate_share_request(&task, &request, &aggregate_share_id_2, &router).await;
 
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(response.status(), StatusCode::CONFLICT);
     assert_eq!(
         take_problem_details(&mut response).await,
         json!({
-            "status": StatusCode::BAD_REQUEST.as_u16(),
-            "type": "about:blank",
-            "title": "Aggregate share request rejected.",
-            "taskid": format!("{}", task.id()),
-            "detail": "aggregate share request is a duplicate but uses a different aggregate share ID",
+            "status": StatusCode::CONFLICT.as_u16(),
+            "type": "https://docs.divviup.org/references/janus-errors#forbidden-mutation",
+            "title": "Forbidden mutation of an immutable resource.",
+            "detail": format!(
+                "The aggregate share job {aggregate_share_id_1} already exists and cannot be \
+                 modified. Use a new identifier instead of re-sending this one with changed \
+                 parameters."
+            ),
         })
     );
 }
@@ -1295,15 +1298,18 @@ async fn aggregate_share_request_duplicate_with_different_query() {
     let mut response =
         put_aggregate_share_request(&task, &request_for_query(20), &aggregate_share_id, &router)
             .await;
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(response.status(), StatusCode::CONFLICT);
     assert_eq!(
         take_problem_details(&mut response).await,
         json!({
-            "status": StatusCode::BAD_REQUEST.as_u16(),
-            "type": "about:blank",
-            "title": "Aggregate share request rejected.",
-            "taskid": format!("{}", task.id()),
-            "detail": "aggregate share request is a duplicate but carries a different collection job request",
+            "status": StatusCode::CONFLICT.as_u16(),
+            "type": "https://docs.divviup.org/references/janus-errors#forbidden-mutation",
+            "title": "Forbidden mutation of an immutable resource.",
+            "detail": format!(
+                "The aggregate share job {aggregate_share_id} already exists and cannot be \
+                 modified. Use a new identifier instead of re-sending this one with changed \
+                 parameters."
+            ),
         })
     );
 }

@@ -2038,8 +2038,10 @@ pub struct AggregateShareJob<const SEED_SIZE: usize, B: BatchMode, A: AsyncAggre
     /// Checksum over the aggregated report shares, as described in §4.4.4.3.
     #[educe(Debug(ignore))]
     checksum: ReportIdChecksum,
-    /// The collector's request, as forwarded by the leader. Retained verbatim because the
-    /// aggregate share AAD binds it, and the poll path has to rebuild that AAD.
+    /// The collector's request, as forwarded by the leader.
+    ///
+    /// Retained verbatim because the aggregate share AAD binds it, and the poll path has to
+    /// rebuild that AAD.
     collection_job_req: CollectionJobReq<B>,
 }
 
