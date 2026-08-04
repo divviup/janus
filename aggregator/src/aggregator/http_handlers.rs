@@ -186,7 +186,6 @@ impl Error {
             | Error::HttpClient(_)
             | Error::Http { .. }
             | Error::TaskParameters(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-            // Note: DAP defines no error for this.
             Error::AggregateShareRequestRejected(task_id, detail) => ProblemDocument::new(
                 "https://docs.divviup.org/references/janus-errors#aggregate-share-request-rejected",
                 "Aggregate share request rejected.",
