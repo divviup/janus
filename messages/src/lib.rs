@@ -3111,6 +3111,13 @@ pub(crate) fn roundtrip_encoding_parameterized<'a, T, P, TB, PB, I>(
             val,
             "Couldn't roundtrip (decoded value differs): {val:?}"
         );
+        // Re-encoding must reproduce the input bytes. Equality above is not sufficient: a type
+        // whose Eq ignores a field that affects encoding would pass it and fail here.
+        pretty_assertions::assert_eq!(
+            Wrapper(decoded_val.get_encoded().unwrap()),
+            expected,
+            "Couldn't roundtrip (re-encoded value differs): {val:?}"
+        );
         pretty_assertions::assert_eq!(
             encoded_val.0.len(),
             val.encoded_len().expect("No encoded length hint"),

@@ -465,6 +465,7 @@ CREATE TABLE aggregate_share_jobs(
     report_count                    BIGINT NOT NULL,    -- the count of reports included helper_aggregate_share
     checksum                        BYTEA NOT NULL,     -- the checksum over the reports included in helper_aggregate_share
     aggregate_share_id              BYTEA NOT NULL,     -- the 16-byte AggregateShareID as defined by DAP
+    collection_job_req              BYTEA NOT NULL,     -- the collector's verbatim CollectionJobReq
 
     -- creation/update records
     created_at TIMESTAMP WITH TIME ZONE NOT NULL,  -- when the row was created

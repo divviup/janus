@@ -3636,18 +3636,7 @@ impl VdafOps {
             &AggregateShareAad::new(
                 *task.id(),
                 task.task_configuration()?,
-                // On the poll path we no longer have the Collector's original CollectionJobReq
-                // (there is no incoming AggregateShareReq), so reconstruct it from the stored job.
-                // This must be byte-identical to the request the Collector sent; see
-                // `query_for_collection_identifier` (and Issue #4743). When we support
-                // extensions (Issue #4715) this will need to change.
-                CollectionJobReq::new(
-                    B::query_for_collection_identifier(aggregate_share_job.batch_identifier()),
-                    aggregate_share_job
-                        .aggregation_parameter()
-                        .get_encoded()
-                        .map_err(Error::MessageEncode)?,
-                ),
+                aggregate_share_job.collection_job_req().clone(),
             )
             .get_encoded()
             .map_err(Error::MessageEncode)?,
@@ -3811,14 +3800,11 @@ impl VdafOps {
         )?;
 
         // DAP-19 §4.6.4: the Helper verifies the Leader-chosen batch selector against the query in
-        // the CollectionJobReq, which the AAD binds. The spec defines consistency per batch mode
-        // and would permit any time-interval selector within the queried interval, but Janus
-        // requires exact round-tripping, otherwise the poll path rebuilds the AAD's query from
-        // the stored selector alone, so a narrower selector would decrypt here and fail there.
-        if B::query_for_collection_identifier(
+        // the CollectionJobReq, which the AAD binds.
+        if !B::is_batch_identifier_consistent_with_query(
             aggregate_share_req.batch_selector().batch_identifier(),
-        ) != *aggregate_share_req.collection_job_req().query()
-        {
+            aggregate_share_req.collection_job_req().query(),
+        ) {
             return Err(Error::BatchInvalid(
                 *task.id(),
                 format!(
@@ -3885,20 +3871,18 @@ impl VdafOps {
                         )
                         .await?
                     {
-                        // Duplicate aggregate share job found - verify the aggregate share ID
-                        // matches. Note, when we add collection extensions, those will need
-                        // to be checked here as well. (Issue #4715)
+                        // DAP requires duplicate requests to be identical.
                         if aggregate_share_job.aggregate_share_id() != &aggregate_share_id
+                            || aggregate_share_job.collection_job_req()
+                                != aggregate_share_req.collection_job_req()
                         {
-                            // Mismatch here indicates a duplicate request with a different
-                            // aggregate share ID. This violates the DAP protocol requirement
-                            // that duplicate requests must be identical.
                             return Err(datastore::Error::User(
-                                Error::AggregateShareRequestRejected(
-                                    *task.id(),
-                                    "aggregate share request is a duplicate but uses a different aggregate share ID"
+                                Error::ForbiddenMutation {
+                                    resource_type: "aggregate share job",
+                                    identifier: aggregate_share_job
+                                        .aggregate_share_id()
                                         .to_string(),
-                                )
+                                }
                                 .into(),
                             ));
                         }
@@ -3908,6 +3892,27 @@ impl VdafOps {
                             "Serving cached aggregate share job result"
                         );
                         return Ok(aggregate_share_job);
+                    }
+
+                    // No job exists for this batch & aggregation parameter, so any job already
+                    // using this aggregate share ID is for a different batch. Reject it: the poll
+                    // path looks jobs up by ID alone and cannot disambiguate.
+                    if tx
+                        .get_aggregate_share_job_by_id::<SEED_SIZE, B, A>(
+                            vdaf.as_ref(),
+                            task.id(),
+                            aggregate_share_id,
+                        )
+                        .await?
+                        .is_some()
+                    {
+                        return Err(datastore::Error::User(
+                            Error::ForbiddenMutation {
+                                resource_type: "aggregate share job",
+                                identifier: aggregate_share_id.to_string(),
+                            }
+                            .into(),
+                        ));
                     }
 
                     // This is a new aggregate share request, compute & validate the response.
@@ -3988,6 +3993,7 @@ impl VdafOps {
                         aggregate_share_id,
                         aggregate_share.report_count,
                         aggregate_share.checksum,
+                        aggregate_share_req.collection_job_req().clone(),
                     );
 
                     tx.put_aggregate_share_job(&aggregate_share_job).await?;

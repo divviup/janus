@@ -186,13 +186,32 @@ impl Error {
             | Error::HttpClient(_)
             | Error::Http { .. }
             | Error::TaskParameters(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-            Error::AggregateShareRequestRejected(_, _) => StatusCode::BAD_REQUEST.into_response(),
+            Error::AggregateShareRequestRejected(task_id, detail) => ProblemDocument::new(
+                "https://docs.divviup.org/references/janus-errors#aggregate-share-request-rejected",
+                "Aggregate share request rejected.",
+                StatusCode::BAD_REQUEST,
+            )
+            .with_task_id(task_id)
+            .with_detail(detail)
+            .into_response(),
             Error::EmptyAggregation(task_id) => {
                 ProblemDocument::new_dap(DapProblemType::InvalidMessage)
                     .with_task_id(task_id)
                     .into_response()
             }
-            Error::ForbiddenMutation { .. } => StatusCode::CONFLICT.into_response(),
+            Error::ForbiddenMutation {
+                resource_type,
+                identifier,
+            } => ProblemDocument::new(
+                "https://docs.divviup.org/references/janus-errors#forbidden-mutation",
+                "Forbidden mutation of an immutable resource.",
+                StatusCode::CONFLICT,
+            )
+            .with_detail(&format!(
+                "The {resource_type} {identifier} already exists and cannot be modified. Use a new \
+                 identifier instead of re-sending this one with changed parameters."
+            ))
+            .into_response(),
             Error::BadContentType(_) => StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response(),
             Error::BadRequest(detail) => ProblemDocument::new(
                 "about:blank",

@@ -159,14 +159,12 @@ pub trait CollectableBatchMode: AccumulableBatchMode {
         query: &Query<Self>,
     ) -> Result<Option<Self::BatchIdentifier>, datastore::Error>;
 
-    /// Reconstructs the Collector's original collection [`Query`] from a stored batch identifier.
-    ///
-    /// The Helper serves aggregate shares on both the PUT path (where it has the forwarded
-    /// [`CollectionJobReq`](janus_messages::CollectionJobReq)) and the poll/GET path (where it only
-    /// has the stored [`AggregateShareJob`](crate::datastore::models::AggregateShareJob)). On the
-    /// latter it rebuilds the query with this method, which must be exact: the aggregate-share AAD
-    /// is byte-identical to the Collector's original or the decrypt fails.
-    fn query_for_collection_identifier(batch_identifier: &Self::BatchIdentifier) -> Query<Self>;
+    /// Returns whether the Leader-chosen batch identifier is consistent with the Collector's
+    /// query, per DAP's "Batch Selector Configuration".
+    fn is_batch_identifier_consistent_with_query(
+        batch_identifier: &Self::BatchIdentifier,
+        query: &Query<Self>,
+    ) -> bool;
 
     /// Some batch modes (e.g. [`TimeInterval`]) can receive a batch identifier in collection
     /// requests which refers to multiple batches. This method takes a batch identifier received in
@@ -271,8 +269,12 @@ impl CollectableBatchMode for TimeInterval {
         Ok(Some(*query.batch_interval()))
     }
 
-    fn query_for_collection_identifier(batch_interval: &Self::BatchIdentifier) -> Query<Self> {
-        Query::new_time_interval(*batch_interval)
+    fn is_batch_identifier_consistent_with_query(
+        batch_interval: &Self::BatchIdentifier,
+        query: &Query<Self>,
+    ) -> bool {
+        query.batch_interval().start() <= batch_interval.start()
+            && batch_interval.end() <= query.batch_interval().end()
     }
 
     fn batch_identifiers_for_collection_identifier(
@@ -344,8 +346,12 @@ impl CollectableBatchMode for LeaderSelected {
             .await
     }
 
-    fn query_for_collection_identifier(_batch_id: &Self::BatchIdentifier) -> Query<Self> {
-        Query::new_leader_selected()
+    fn is_batch_identifier_consistent_with_query(
+        _batch_id: &Self::BatchIdentifier,
+        _query: &Query<Self>,
+    ) -> bool {
+        // A leader-selected query has an empty body, so any batch ID is consistent with it.
+        true
     }
 
     fn batch_identifiers_for_collection_identifier(batch_id: &Self::BatchIdentifier) -> Self::Iter {
@@ -398,11 +404,10 @@ mod tests {
         ));
     }
 
-    /// The Collector's original `CollectionJobReq`, the Leader's reconstruction from its stored
-    /// collection job ([`CollectionJob::to_collection_job_req`]), and the Helper's reconstruction
-    /// from a stored batch identifier ([`CollectableBatchMode::query_for_collection_identifier`])
-    /// must all encode to identical bytes, or aggregate-share AADs will silently mismatch and
-    /// decryption will fail. This locks that invariant for both batch modes.
+    /// The Collector's original `CollectionJobReq` and the Leader's reconstruction from its stored
+    /// collection job ([`CollectionJob::to_collection_job_req`]) must encode to identical bytes, or
+    /// aggregate-share AADs will silently mismatch and decryption will fail. This locks that
+    /// invariant for both batch modes.
     #[test]
     fn collection_job_req_reconstruction_is_byte_identical() {
         let aggregation_parameter = AggregationParam(7);
@@ -417,10 +422,6 @@ mod tests {
             Query::new_time_interval(interval),
             encoded_aggregation_parameter.clone(),
         );
-        let helper_request = CollectionJobReq::new(
-            TimeInterval::query_for_collection_identifier(&interval),
-            encoded_aggregation_parameter.clone(),
-        );
         let leader_job = CollectionJob::<0, TimeInterval, Vdaf>::new(
             random(),
             random(),
@@ -429,10 +430,6 @@ mod tests {
             aggregation_parameter,
             interval,
             CollectionJobState::Start,
-        );
-        assert_eq!(
-            collector_request.get_encoded().unwrap(),
-            helper_request.get_encoded().unwrap(),
         );
         assert_eq!(
             collector_request.get_encoded().unwrap(),
@@ -446,10 +443,6 @@ mod tests {
         let batch_id = BatchId::from([5u8; 32]);
         let collector_request = CollectionJobReq::<LeaderSelected>::new(
             Query::new_leader_selected(),
-            encoded_aggregation_parameter.clone(),
-        );
-        let helper_request = CollectionJobReq::new(
-            LeaderSelected::query_for_collection_identifier(&batch_id),
             encoded_aggregation_parameter,
         );
         let leader_job = CollectionJob::<0, LeaderSelected, Vdaf>::new(
@@ -463,15 +456,46 @@ mod tests {
         );
         assert_eq!(
             collector_request.get_encoded().unwrap(),
-            helper_request.get_encoded().unwrap(),
-        );
-        assert_eq!(
-            collector_request.get_encoded().unwrap(),
             leader_job
                 .to_collection_job_req()
                 .unwrap()
                 .get_encoded()
                 .unwrap(),
         );
+    }
+
+    #[test]
+    fn time_interval_batch_identifier_consistency() {
+        let interval = |start, duration| {
+            Interval::new(
+                Time::from_time_precision_units(start),
+                Duration::from_time_precision_units(duration),
+            )
+            .unwrap()
+        };
+        let query = Query::new_time_interval(interval(100, 10));
+
+        for selector in [
+            interval(100, 10), // equal to the query
+            interval(100, 1),  // flush with the start
+            interval(103, 4),  // strictly inside
+            interval(109, 1),  // flush with the end
+        ] {
+            assert!(TimeInterval::is_batch_identifier_consistent_with_query(
+                &selector, &query
+            ));
+        }
+
+        for selector in [
+            interval(99, 10),  // starts before the query
+            interval(105, 10), // ends after the query
+            interval(90, 5),   // entirely before the query
+            interval(110, 1),  // entirely after the query
+            interval(90, 100), // contains the query
+        ] {
+            assert!(!TimeInterval::is_batch_identifier_consistent_with_query(
+                &selector, &query
+            ));
+        }
     }
 }

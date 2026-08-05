@@ -1,4 +1,4 @@
-use prio::codec::Decode;
+use prio::codec::{Decode, Encode};
 
 use super::{task_configuration_hex, test_task_configuration};
 use crate::{
@@ -185,6 +185,10 @@ fn collection_job_req_decode_is_lenient_about_extension_order() {
     let req = CollectionJobReq::<LeaderSelected>::get_decoded(&encoded)
         .expect("structurally valid collection job request must decode");
     assert_eq!(req.extensions().len(), 2);
+
+    // The Helper re-encodes the decoded request to rebuild the aggregate-share AAD, so even an
+    // unsorted extensions list must survive decode->encode byte-identically.
+    assert_eq!(req.get_encoded().unwrap(), encoded);
 }
 
 #[test]
