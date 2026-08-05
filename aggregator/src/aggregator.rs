@@ -1958,8 +1958,7 @@ impl VdafOps {
 
         let input_share_aad = InputShareAad::new(
             *task.id(),
-            task.task_configuration()
-                .map_err(|e| UploadError::Internal(Arc::new(e.into())))?,
+            task.task_configuration(),
             report.metadata().clone(),
             report.public_share().to_vec(),
         )
@@ -3420,7 +3419,7 @@ impl VdafOps {
                         .map_err(Error::MessageEncode)?,
                     &AggregateShareAad::new(
                         *collection_job.task_id(),
-                        task.task_configuration()?,
+                        task.task_configuration(),
                         collection_job
                             .to_collection_job_req()
                             .map_err(Error::MessageEncode)?,
@@ -3648,7 +3647,7 @@ impl VdafOps {
                 .map_err(Error::MessageEncode)?,
             &AggregateShareAad::new(
                 *task.id(),
-                task.task_configuration()?,
+                task.task_configuration(),
                 aggregate_share_job.collection_job_req().clone(),
             )
             .get_encoded()
@@ -4043,7 +4042,7 @@ impl VdafOps {
                 .map_err(Error::MessageEncode)?,
             &AggregateShareAad::new(
                 *task.id(),
-                task.task_configuration()?,
+                task.task_configuration(),
                 aggregate_share_req.collection_job_req().clone(),
             )
             .get_encoded()

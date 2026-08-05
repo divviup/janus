@@ -387,37 +387,42 @@ impl AggregatorTask {
     /// For taskprov tasks this is the wire configuration verbatim; for API-provisioned tasks it is
     /// synthesized from the stored parameters, pairing this aggregator's own and peer endpoints
     /// into leader/helper by role.
-    pub fn task_configuration(&self) -> Result<TaskConfiguration, Error> {
+    ///
+    /// # Panics
+    ///
+    /// Panics if a taskprov task is missing its configuration, or if the VDAF is not
+    /// representable on the wire. This is temporary until we store the TaskConf in the
+    /// DB in #4712.
+    pub fn task_configuration(&self) -> TaskConfiguration {
         if let Some(task_config) = &self.taskprov_task_config {
-            return Ok(task_config.clone());
+            return task_config.clone();
         }
 
         // A taskprov task must carry its wire configuration verbatim (set in `taskprov_opt_in` and
         // rehydrated on DB read); synthesizing one from the stored parameters is not byte-faithful.
         // Reaching here for a taskprov task means the config was lost, so fail loudly rather than
         // bind a wrong AAD.
-        if matches!(
-            self.aggregator_parameters,
-            AggregatorTaskParameters::TaskprovHelper { .. }
-        ) {
-            return Err(Error::InvalidParameter(
-                "taskprov task is missing its verbatim TaskConfiguration",
-            ));
-        }
+        assert!(
+            !matches!(
+                self.aggregator_parameters,
+                AggregatorTaskParameters::TaskprovHelper { .. }
+            ),
+            "taskprov task is missing its TaskConfiguration"
+        );
 
         let (leader_endpoint, helper_endpoint) = match self.role() {
             Role::Leader => (
                 &self.own_aggregator_endpoint,
                 &self.peer_aggregator_endpoint,
             ),
-            Role::Helper => (
+            // `role()` yields only Leader or Helper.
+            _ => (
                 &self.peer_aggregator_endpoint,
                 &self.own_aggregator_endpoint,
             ),
-            _ => return Err(Error::InvalidParameter("task role is not an aggregator")),
         };
 
-        Ok(build_task_configuration(
+        build_task_configuration(
             self.task_info().to_vec(),
             leader_endpoint.clone(),
             helper_endpoint.clone(),
@@ -426,9 +431,10 @@ impl AggregatorTask {
             self.batch_mode().to_batch_config(),
             self.vdaf()
                 .to_vdaf_config()
-                .map_err(Error::InvalidParameter)?,
+                .expect("VDAF is not representable as a VdafConfig"),
             self.task_interval().copied(),
-        )?)
+        )
+        .expect("task parameters are validated at construction")
     }
 
     /// Retrieves the batch mode associated with this task.
@@ -1257,9 +1263,9 @@ pub mod test_util {
 
         /// The task's [`TaskConfiguration`], as bound into HPKE AADs. Identical across aggregator
         /// views, so this collapses the frequent
-        /// `helper_view().unwrap().task_configuration().unwrap()` chain in tests.
+        /// `helper_view().unwrap().task_configuration()` chain in tests.
         pub fn task_configuration(&self) -> TaskConfiguration {
-            self.leader_view().unwrap().task_configuration().unwrap()
+            self.leader_view().unwrap().task_configuration()
         }
 
         /// Render a taskprov helper aggregator's view of this task.
@@ -1744,7 +1750,7 @@ mod tests {
         .with_helper_aggregator_endpoint("https://helper.example.com/".parse().unwrap())
         .build();
 
-        let leader_config = task.leader_view().unwrap().task_configuration().unwrap();
+        let leader_config = task.leader_view().unwrap().task_configuration();
         assert_eq!(
             leader_config.leader_aggregator_endpoint().as_str(),
             "https://leader.example.com/"
@@ -1755,7 +1761,7 @@ mod tests {
         );
         assert_eq!(
             leader_config,
-            task.helper_view().unwrap().task_configuration().unwrap()
+            task.helper_view().unwrap().task_configuration()
         );
     }
 
@@ -1786,16 +1792,17 @@ mod tests {
         .unwrap()
         .with_taskprov_task_config(wire.clone());
 
-        assert_eq!(task.task_configuration().unwrap(), wire);
+        assert_eq!(task.task_configuration(), wire);
         assert_eq!(
-            task.task_configuration().unwrap().task_info(),
+            task.task_configuration().task_info(),
             b"wire-specific-task-info"
         );
     }
 
     #[test]
-    fn task_configuration_taskprov_without_config_errors() {
-        // A taskprov task whose verbatim wire config is absent must fail loudly rather than
+    #[should_panic(expected = "taskprov task is missing its TaskConfiguration")]
+    fn task_configuration_taskprov_without_config_panics() {
+        // A taskprov task whose wire config is absent must fail loudly rather than
         // silently synthesize a (non-byte-faithful) config from its stored parameters.
         let task = TaskBuilder::new(
             BatchMode::TimeInterval,
@@ -1805,7 +1812,7 @@ mod tests {
         .build()
         .taskprov_helper_view()
         .unwrap();
-        assert_matches!(task.task_configuration(), Err(Error::InvalidParameter(_)));
+        let _ = task.task_configuration();
     }
 
     #[test]

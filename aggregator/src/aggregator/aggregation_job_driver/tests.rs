@@ -6008,7 +6008,7 @@ async fn setup_cancel_aggregation_job_test() -> CancelAggregationJobTestCase {
     let helper_hpke_keypair = HpkeKeypair::test();
     let report = LeaderStoredReport::generate(
         *task.id(),
-        task.task_configuration().unwrap(),
+        task.task_configuration(),
         report_metadata,
         helper_hpke_keypair.config(),
         Vec::new(),

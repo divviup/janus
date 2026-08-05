@@ -1016,7 +1016,7 @@ async fn upload_report_leader_input_share_decode_failure() {
                 .unwrap(),
             &InputShareAad::new(
                 *task.id(),
-                task.task_configuration().unwrap(),
+                task.task_configuration(),
                 report.metadata().clone(),
                 report.public_share().to_vec(),
             )

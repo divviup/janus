@@ -111,7 +111,7 @@ where
     C: Clock,
 {
     let verify_key = task.vdaf_verify_key()?;
-    let task_configuration = task.task_configuration()?;
+    let task_configuration = task.task_configuration();
     let report_aggregation_count = report_aggregations.len();
     let now = clock.now();
     let report_deadline = now
@@ -679,7 +679,7 @@ pub mod test_util {
             );
             let report_share = generate_helper_report_share::<V>(
                 *self.task.id(),
-                self.task.task_configuration().unwrap(),
+                self.task.task_configuration(),
                 report_metadata,
                 &self.hpke_config,
                 &transcript.public_share,

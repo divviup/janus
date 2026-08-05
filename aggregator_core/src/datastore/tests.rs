@@ -3656,7 +3656,7 @@ async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
                 &[0, 1, 2, 3, 4, 5],
                 &AggregateShareAad::new(
                     *task.id(),
-                    task.task_configuration().unwrap(),
+                    task.task_configuration(),
                     first_collection_job.to_collection_job_req().unwrap(),
                 )
                 .get_encoded()
