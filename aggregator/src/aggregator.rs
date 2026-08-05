@@ -3894,6 +3894,27 @@ impl VdafOps {
                         return Ok(aggregate_share_job);
                     }
 
+                    // No job exists for this batch & aggregation parameter, so any job already
+                    // using this aggregate share ID is for a different batch. Reject it: the poll
+                    // path looks jobs up by ID alone and cannot disambiguate.
+                    if tx
+                        .get_aggregate_share_job_by_id::<SEED_SIZE, B, A>(
+                            vdaf.as_ref(),
+                            task.id(),
+                            aggregate_share_id,
+                        )
+                        .await?
+                        .is_some()
+                    {
+                        return Err(datastore::Error::User(
+                            Error::ForbiddenMutation {
+                                resource_type: "aggregate share job",
+                                identifier: aggregate_share_id.to_string(),
+                            }
+                            .into(),
+                        ));
+                    }
+
                     // This is a new aggregate share request, compute & validate the response.
                     debug!(
                         ?aggregate_share_req,

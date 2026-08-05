@@ -152,7 +152,7 @@ async fn helper_aggregation_report_share_replay() {
     let response = put_aggregate_share_request(
         &task,
         &agg_share_req_2,
-        &AggregateShareId::from([0u8; 16]),
+        &AggregateShareId::from([1u8; 16]),
         &router,
     )
     .await;

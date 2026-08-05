@@ -396,6 +396,9 @@ async fn aggregate_share_request() {
     // Make requests that will fail because the checksum or report counts don't match.
     struct MisalignedRequestTestCase<B: janus_messages::batch_mode::BatchMode> {
         name: &'static str,
+        // Each case needs its own ID: a batch mismatch still persists the job, so reusing one
+        // would bind a single ID to two batches.
+        aggregate_share_id: AggregateShareId,
         request: AggregateShareReq<B>,
         expected_checksum: ReportIdChecksum,
         expected_report_count: u64,
@@ -403,6 +406,7 @@ async fn aggregate_share_request() {
     for misaligned_request in [
         MisalignedRequestTestCase {
             name: "Interval is big enough but the checksums don't match",
+            aggregate_share_id: AggregateShareId::from([1u8; 16]),
             request: AggregateShareReq::new(
                 CollectionJobReq::new(
                     Query::new_time_interval(
@@ -429,6 +433,7 @@ async fn aggregate_share_request() {
         },
         MisalignedRequestTestCase {
             name: "Interval is big enough but report count doesn't match",
+            aggregate_share_id: AggregateShareId::from([2u8; 16]),
             request: AggregateShareReq::new(
                 CollectionJobReq::new(
                     Query::new_time_interval(
@@ -457,7 +462,7 @@ async fn aggregate_share_request() {
         let mut response = put_aggregate_share_request(
             &task,
             &misaligned_request.request,
-            &AggregateShareId::from([0u8; 16]),
+            &misaligned_request.aggregate_share_id,
             &router,
         )
         .await;
@@ -492,9 +497,12 @@ async fn aggregate_share_request() {
 
     // Valid requests: intervals are big enough, do not overlap, checksum and report count are
     // good.
-    for (label, request, expected_result) in [
+    // These cover the same batches as the misaligned requests above, so they address the same
+    // aggregate share resources and reuse their IDs.
+    for (label, aggregate_share_id, request, expected_result) in [
         (
             "first and second batchess",
+            AggregateShareId::from([1u8; 16]),
             AggregateShareReq::new(
                 CollectionJobReq::new(
                     Query::new_time_interval(
@@ -520,6 +528,7 @@ async fn aggregate_share_request() {
         ),
         (
             "third and fourth batches",
+            AggregateShareId::from([2u8; 16]),
             AggregateShareReq::new(
                 CollectionJobReq::new(
                     Query::new_time_interval(
@@ -548,13 +557,8 @@ async fn aggregate_share_request() {
         // Request the aggregate share multiple times. If the request parameters don't change,
         // then there is no query count violation and all requests should succeed.
         for iteration in 0..3 {
-            let mut response = put_aggregate_share_request(
-                &task,
-                &request,
-                &AggregateShareId::from([0u8; 16]),
-                &router,
-            )
-            .await;
+            let mut response =
+                put_aggregate_share_request(&task, &request, &aggregate_share_id, &router).await;
 
             assert_eq!(
                 response.status(),
@@ -667,7 +671,7 @@ async fn aggregate_share_request() {
     let mut response = put_aggregate_share_request(
         &task,
         &all_batch_request,
-        &AggregateShareId::from([0u8; 16]),
+        &AggregateShareId::from([5u8; 16]),
         &router,
     )
     .await;
@@ -731,7 +735,7 @@ async fn aggregate_share_request() {
         let mut response = put_aggregate_share_request(
             &task,
             &query_count_violation_request,
-            &AggregateShareId::from([0u8; 16]),
+            &AggregateShareId::from([6u8; 16]),
             &router,
         )
         .await;
@@ -1298,6 +1302,112 @@ async fn aggregate_share_request_duplicate_with_different_query() {
     let mut response =
         put_aggregate_share_request(&task, &request_for_query(20), &aggregate_share_id, &router)
             .await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        take_problem_details(&mut response).await,
+        json!({
+            "status": StatusCode::CONFLICT.as_u16(),
+            "type": "https://docs.divviup.org/references/janus-errors#forbidden-mutation",
+            "title": "Forbidden mutation of an immutable resource.",
+            "detail": format!(
+                "The aggregate share job {aggregate_share_id} already exists and cannot be \
+                 modified. Use a new identifier instead of re-sending this one with changed \
+                 parameters."
+            ),
+        })
+    );
+}
+
+// One aggregate share ID must not be bound to two batches: the poll path looks jobs up by ID
+// alone and cannot disambiguate. Narrower-than-query selectors make this easy to hit, since one
+// query now admits several batches.
+#[tokio::test]
+async fn aggregate_share_request_same_id_different_batch() {
+    let HttpHandlerTest {
+        clock: _,
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        router,
+        ..
+    } = HttpHandlerTest::new().await;
+
+    let first_interval = Interval::minimal(Time::from_time_precision_units(3)).unwrap();
+    let second_interval = Interval::minimal(Time::from_time_precision_units(5)).unwrap();
+    let queried_interval = Interval::new(
+        Time::from_time_precision_units(0),
+        Duration::from_time_precision_units(10),
+    )
+    .unwrap();
+    let aggregation_param = dummy::AggregationParam(0);
+    let report_count = 5;
+    let checksum = ReportIdChecksum::get_decoded(&[3; 32]).unwrap();
+
+    let task = setup_time_interval_task_with_batch_aggregation(
+        &datastore,
+        first_interval,
+        aggregation_param,
+        report_count,
+        checksum,
+    )
+    .await;
+
+    // A second batch, also contained in the collector's query.
+    let helper_task = task.helper_view().unwrap();
+    datastore
+        .run_unnamed_tx(|tx| {
+            let helper_task = helper_task.clone();
+            Box::pin(async move {
+                tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                    *helper_task.id(),
+                    second_interval,
+                    aggregation_param,
+                    0,
+                    second_interval,
+                    BatchAggregationState::Aggregating {
+                        aggregate_share: Some(dummy::AggregateShare(16)),
+                        report_count,
+                        checksum,
+                        aggregation_jobs_created: 1,
+                        aggregation_jobs_terminated: 1,
+                    },
+                ))
+                .await
+                .unwrap();
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+
+    let aggregate_share_id = AggregateShareId::from([42u8; 16]);
+    let request_for_batch = |batch_interval| {
+        AggregateShareReq::new(
+            CollectionJobReq::new(
+                Query::new_time_interval(queried_interval),
+                aggregation_param.get_encoded().unwrap(),
+            ),
+            BatchSelector::new_time_interval(batch_interval),
+            report_count,
+            checksum,
+        )
+    };
+
+    let response = put_aggregate_share_request(
+        &task,
+        &request_for_batch(first_interval),
+        &aggregate_share_id,
+        &router,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let mut response = put_aggregate_share_request(
+        &task,
+        &request_for_batch(second_interval),
+        &aggregate_share_id,
+        &router,
+    )
+    .await;
     assert_eq!(response.status(), StatusCode::CONFLICT);
     assert_eq!(
         take_problem_details(&mut response).await,
