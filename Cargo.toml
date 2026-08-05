@@ -31,7 +31,7 @@ aws-lc-rs = "1.17.0"
 axum = "0.8"
 axum-extra = "0.10"
 backon = { version = "1.6.0", features = ["tokio-sleep"] }
-base64 = "0.22.1"
+base64 = "0.23.0"
 bhttp = "0.6.1"
 bytes = "1"
 # Disable default features to disable compatibility with the old `time` crate, and we also don't
