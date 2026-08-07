@@ -415,11 +415,12 @@ impl AggregatorTask {
                 &self.own_aggregator_endpoint,
                 &self.peer_aggregator_endpoint,
             ),
-            // `role()` yields only Leader or Helper.
-            _ => (
+            Role::Helper => (
                 &self.peer_aggregator_endpoint,
                 &self.own_aggregator_endpoint,
             ),
+            // `role()` yields only Leader or Helper.
+            _ => panic!("We received a non-aggregator role from AggregatorTask::role()"),
         };
 
         build_task_configuration(
