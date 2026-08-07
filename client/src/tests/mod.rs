@@ -4,11 +4,11 @@ use http::{StatusCode, header::CONTENT_TYPE};
 use janus_core::{
     hpke::HpkeKeypair, initialize_rustls,
     retries::test_util::test_http_request_exponential_backoff,
-    test_util::install_test_trace_subscriber,
+    test_util::install_test_trace_subscriber, vdaf::ConfiguredVdaf,
 };
 use janus_messages::{
     BatchConfig, HpkeConfigList, MediaType, ReportError, ReportUploadStatus, Role, Time,
-    TimePrecision, UploadErrors, UploadRequest, Url as DapUrl, VdafConfig,
+    TimePrecision, UploadErrors, UploadRequest, Url as DapUrl,
 };
 use prio::{
     codec::Encode,
@@ -21,20 +21,22 @@ use crate::{Client, ClientParameters, Error, HpkeConfiguration, UploadStats, def
 #[cfg(feature = "ohttp")]
 mod ohttp;
 
-async fn setup_client<V: vdaf::Client<16>>(server: &mockito::Server, vdaf: V) -> Client<V> {
+async fn setup_client<V: vdaf::Client<16>>(
+    server: &mockito::Server,
+    configured_vdaf: ConfiguredVdaf<V>,
+) -> Client<V> {
     let server_url = DapUrl::try_from(server.url().as_str()).unwrap();
-    Client::builder(
+    Client::builder_from_configured_vdaf(
         random(),
         server_url.clone(),
         server_url,
         TimePrecision::from_seconds(100),
-        vdaf,
+        configured_vdaf,
     )
     .with_backoff(test_http_request_exponential_backoff())
     .with_task_info(b"test task".to_vec())
     .with_min_batch_size(1)
     .with_batch_config(BatchConfig::TimeInterval)
-    .with_vdaf_config(VdafConfig::Prio3Count)
     .with_leader_hpke_config(HpkeKeypair::test().config().clone())
     .with_helper_hpke_config(HpkeKeypair::test().config().clone())
     .build()
@@ -106,7 +108,7 @@ async fn upload_prio3_count() {
     install_test_trace_subscriber();
     initialize_rustls();
     let mut server = mockito::Server::new_async().await;
-    let client = setup_client(&server, Prio3::new_count(2).unwrap()).await;
+    let client = setup_client(&server, ConfiguredVdaf::prio3_count().unwrap()).await;
 
     let mocked_upload = server
         .mock(
@@ -129,7 +131,7 @@ async fn upload_prio3_invalid_measurement() {
     install_test_trace_subscriber();
     initialize_rustls();
     let server = mockito::Server::new_async().await;
-    let vdaf = Prio3::new_sum(2, 16).unwrap();
+    let vdaf = ConfiguredVdaf::prio3_sum(16).unwrap();
     let client = setup_client(&server, vdaf).await;
 
     // 65536 is too big for a 16 bit sum and will be rejected by the VDAF.
@@ -143,7 +145,7 @@ async fn upload_prio3_http_status_code() {
     install_test_trace_subscriber();
     initialize_rustls();
     let mut server = mockito::Server::new_async().await;
-    let client = setup_client(&server, Prio3::new_count(2).unwrap()).await;
+    let client = setup_client(&server, ConfiguredVdaf::prio3_count().unwrap()).await;
 
     let mocked_upload = server
         .mock(
@@ -171,7 +173,7 @@ async fn upload_problem_details() {
     install_test_trace_subscriber();
     initialize_rustls();
     let mut server = mockito::Server::new_async().await;
-    let client = setup_client(&server, Prio3::new_count(2).unwrap()).await;
+    let client = setup_client(&server, ConfiguredVdaf::prio3_count().unwrap()).await;
 
     let mocked_upload = server
         .mock(
@@ -213,7 +215,7 @@ async fn report_timestamp() {
     install_test_trace_subscriber();
     initialize_rustls();
     let server = mockito::Server::new_async().await;
-    let vdaf = Prio3::new_count(2).unwrap();
+    let vdaf = ConfiguredVdaf::prio3_count().unwrap();
     let mut client = setup_client(&server, vdaf).await;
 
     client.parameters.time_precision = TimePrecision::from_seconds(100);
@@ -320,7 +322,7 @@ async fn upload_with_per_report_errors() {
     install_test_trace_subscriber();
     initialize_rustls();
     let mut server = mockito::Server::new_async().await;
-    let client = setup_client(&server, Prio3::new_count(2).unwrap()).await;
+    let client = setup_client(&server, ConfiguredVdaf::prio3_count().unwrap()).await;
 
     // Create a report to determine its ID so we can create a matching error response
     let report = client
@@ -372,7 +374,7 @@ async fn upload_success_without_response_body() {
     install_test_trace_subscriber();
     initialize_rustls();
     let mut server = mockito::Server::new_async().await;
-    let client = setup_client(&server, Prio3::new_count(2).unwrap()).await;
+    let client = setup_client(&server, ConfiguredVdaf::prio3_count().unwrap()).await;
 
     let mocked_upload = server
         .mock(
@@ -396,7 +398,7 @@ async fn upload_success_with_empty_response() {
     install_test_trace_subscriber();
     initialize_rustls();
     let mut server = mockito::Server::new_async().await;
-    let client = setup_client(&server, Prio3::new_count(2).unwrap()).await;
+    let client = setup_client(&server, ConfiguredVdaf::prio3_count().unwrap()).await;
 
     // Empty UploadResponse (no errors)
     let upload_response = UploadErrors::new(&[]);
@@ -426,7 +428,7 @@ async fn upload_session_basic() {
     install_test_trace_subscriber();
     initialize_rustls();
     let mut server = mockito::Server::new_async().await;
-    let client = setup_client(&server, Prio3::new_count(2).unwrap()).await;
+    let client = setup_client(&server, ConfiguredVdaf::prio3_count().unwrap()).await;
 
     // Expect two batches: one full batch of 2 and one partial batch of 1.
     let mocked_upload = server
@@ -463,7 +465,7 @@ async fn upload_session_partial_batch() {
     install_test_trace_subscriber();
     initialize_rustls();
     let mut server = mockito::Server::new_async().await;
-    let client = setup_client(&server, Prio3::new_count(2).unwrap()).await;
+    let client = setup_client(&server, ConfiguredVdaf::prio3_count().unwrap()).await;
 
     let mocked_upload = server
         .mock(
@@ -497,7 +499,7 @@ async fn upload_session_error_propagation() {
     install_test_trace_subscriber();
     initialize_rustls();
     let mut server = mockito::Server::new_async().await;
-    let client = setup_client(&server, Prio3::new_count(2).unwrap()).await;
+    let client = setup_client(&server, ConfiguredVdaf::prio3_count().unwrap()).await;
 
     let mocked_upload = server
         .mock(
