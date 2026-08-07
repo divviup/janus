@@ -4,7 +4,10 @@ use assert_matches::assert_matches;
 use axum::body::Body;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::TimeDelta;
-use http::{Request, StatusCode};
+use http::{
+    Request, StatusCode,
+    header::{AUTHORIZATION, CONTENT_TYPE},
+};
 use janus_aggregator_core::{
     AsyncAggregator,
     datastore::{
@@ -326,9 +329,9 @@ async fn taskprov_aggregate_init() {
                             .unwrap()
                             .path(),
                     )
-                    .header(http::header::AUTHORIZATION, "Bearer invalid_token")
+                    .header(AUTHORIZATION, "Bearer invalid_token")
                     .header(
-                        http::header::CONTENT_TYPE,
+                        CONTENT_TYPE,
                         AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
                     )
                     .header(
@@ -356,7 +359,7 @@ async fn taskprov_aggregate_init() {
                     )
                     .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
                     .header(
-                        http::header::CONTENT_TYPE,
+                        CONTENT_TYPE,
                         AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
                     )
                     .header(
@@ -483,7 +486,7 @@ async fn taskprov_aggregate_init_without_task_interval() {
                 )
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
                 .header(
-                    http::header::CONTENT_TYPE,
+                    CONTENT_TYPE,
                     AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
                 )
                 .header(
@@ -546,7 +549,7 @@ async fn taskprov_aggregate_init_missing_extension() {
                 )
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
                 .header(
-                    http::header::CONTENT_TYPE,
+                    CONTENT_TYPE,
                     AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
                 )
                 .header(
@@ -647,7 +650,7 @@ async fn taskprov_aggregate_init_malformed_extension() {
                 )
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
                 .header(
-                    http::header::CONTENT_TYPE,
+                    CONTENT_TYPE,
                     AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
                 )
                 .header(
@@ -753,7 +756,7 @@ async fn taskprov_opt_out_task_ended_regression() {
                 )
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
                 .header(
-                    http::header::CONTENT_TYPE,
+                    CONTENT_TYPE,
                     AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
                 )
                 .header(
@@ -821,7 +824,7 @@ async fn taskprov_opt_out_mismatched_task_id() {
                 )
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
                 .header(
-                    http::header::CONTENT_TYPE,
+                    CONTENT_TYPE,
                     AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
                 )
                 .header(
@@ -899,7 +902,7 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
                 ))
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
                 .header(
-                    http::header::CONTENT_TYPE,
+                    CONTENT_TYPE,
                     AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
                 )
                 .header(
@@ -976,7 +979,7 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
                 ))
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
                 .header(
-                    http::header::CONTENT_TYPE,
+                    CONTENT_TYPE,
                     AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
                 )
                 .header(
@@ -1056,7 +1059,7 @@ async fn taskprov_opt_out_unsupported_extension() {
                 ))
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
                 .header(
-                    http::header::CONTENT_TYPE,
+                    CONTENT_TYPE,
                     AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
                 )
                 .header(
@@ -1188,11 +1191,8 @@ async fn taskprov_aggregate_continue() {
                         .unwrap()
                         .path(),
                 )
-                .header(http::header::AUTHORIZATION, "Bearer invalid_token")
-                .header(
-                    http::header::CONTENT_TYPE,
-                    AggregationJobContinueReq::MEDIA_TYPE,
-                )
+                .header(AUTHORIZATION, "Bearer invalid_token")
+                .header(CONTENT_TYPE, AggregationJobContinueReq::MEDIA_TYPE)
                 .header(
                     TASKPROV_HEADER,
                     URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
@@ -1217,10 +1217,7 @@ async fn taskprov_aggregate_continue() {
                         .path(),
                 )
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
-                .header(
-                    http::header::CONTENT_TYPE,
-                    AggregationJobContinueReq::MEDIA_TYPE,
-                )
+                .header(CONTENT_TYPE, AggregationJobContinueReq::MEDIA_TYPE)
                 .header(
                     TASKPROV_HEADER,
                     URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
@@ -1321,9 +1318,9 @@ async fn taskprov_aggregate_share() {
                         .unwrap()
                         .path(),
                 )
-                .header(http::header::AUTHORIZATION, "Bearer invalid_token")
+                .header(AUTHORIZATION, "Bearer invalid_token")
                 .header(
-                    http::header::CONTENT_TYPE,
+                    CONTENT_TYPE,
                     AggregateShareReq::<LeaderSelected>::MEDIA_TYPE,
                 )
                 .header(
@@ -1351,7 +1348,7 @@ async fn taskprov_aggregate_share() {
                 )
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
                 .header(
-                    http::header::CONTENT_TYPE,
+                    CONTENT_TYPE,
                     AggregateShareReq::<LeaderSelected>::MEDIA_TYPE,
                 )
                 .header(
@@ -1424,7 +1421,7 @@ async fn end_to_end() {
                 )
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
                 .header(
-                    http::header::CONTENT_TYPE,
+                    CONTENT_TYPE,
                     AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
                 )
                 .header(
@@ -1486,10 +1483,7 @@ async fn end_to_end() {
                         .path(),
                 )
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
-                .header(
-                    http::header::CONTENT_TYPE,
-                    AggregationJobContinueReq::MEDIA_TYPE,
-                )
+                .header(CONTENT_TYPE, AggregationJobContinueReq::MEDIA_TYPE)
                 .header(
                     TASKPROV_HEADER,
                     URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
@@ -1543,7 +1537,7 @@ async fn end_to_end() {
                 )
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
                 .header(
-                    http::header::CONTENT_TYPE,
+                    CONTENT_TYPE,
                     AggregateShareReq::<LeaderSelected>::MEDIA_TYPE,
                 )
                 .header(
@@ -1627,7 +1621,7 @@ async fn end_to_end_sumvec_hmac() {
                 )
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
                 .header(
-                    http::header::CONTENT_TYPE,
+                    CONTENT_TYPE,
                     AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
                 )
                 .header(
@@ -1656,7 +1650,10 @@ async fn end_to_end_sumvec_hmac() {
     assert_eq!(verify_resps.len(), 1);
     let verify_resp = &verify_resps[0];
     assert_eq!(verify_resp.report_id(), report_share.metadata().id());
-    let message = assert_matches!(verify_resp.result(), VerifyStepResult::Continue { message } => message.clone());
+    let message = assert_matches!(
+        verify_resp.result(),
+        VerifyStepResult::Continue { message } => message.clone()
+    );
     assert_eq!(
         &message,
         transcript.helper_verify_transitions[0].message().unwrap()
@@ -1687,7 +1684,7 @@ async fn end_to_end_sumvec_hmac() {
                 )
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
                 .header(
-                    http::header::CONTENT_TYPE,
+                    CONTENT_TYPE,
                     AggregateShareReq::<LeaderSelected>::MEDIA_TYPE,
                 )
                 .header(
