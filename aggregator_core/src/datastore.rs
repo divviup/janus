@@ -714,7 +714,7 @@ WHERE success = TRUE ORDER BY version DESC LIMIT(1)",
                 "-- put_aggregator_task()
 INSERT INTO tasks (
     task_id, aggregator_role, aggregation_mode, peer_aggregator_endpoint,
-    own_aggregator_endpoint, taskprov_task_config, batch_mode, vdaf, task_start,
+    own_aggregator_endpoint, task_config, batch_mode, vdaf, task_start,
     task_duration, report_expiry_age, min_batch_size,
     time_precision, tolerable_clock_skew, collector_hpke_config,
     vdaf_verify_key, task_info, deactivate_at, aggregator_auth_token_type,
@@ -739,11 +739,7 @@ ON CONFLICT DO NOTHING",
                     &task.peer_aggregator_endpoint().as_str(),
                     /* own_aggregator_endpoint */
                     &task.own_aggregator_endpoint().as_str(),
-                    /* taskprov_task_config */
-                    &task
-                        .taskprov_task_config()
-                        .map(|c| c.get_encoded())
-                        .transpose()?,
+                    /* task_config */ &task.task_configuration().get_encoded()?,
                     /* batch_mode */ &Json(task.batch_mode()),
                     /* vdaf */ &Json(task.vdaf()),
                     /* task_start */
@@ -899,7 +895,7 @@ UPDATE tasks SET
                 "-- get_aggregator_task()
 SELECT
     aggregator_role, aggregation_mode, peer_aggregator_endpoint,
-    own_aggregator_endpoint, taskprov_task_config, batch_mode,
+    own_aggregator_endpoint, task_config, batch_mode,
     vdaf, task_start, task_duration, report_expiry_age, min_batch_size,
     time_precision, tolerable_clock_skew, collector_hpke_config,
     vdaf_verify_key, task_info, deactivate_at, aggregator_auth_token_type,
@@ -923,7 +919,7 @@ FROM tasks WHERE task_id = $1",
                 "-- get_aggregator_tasks()
 SELECT
     task_id, aggregator_role, aggregation_mode, peer_aggregator_endpoint,
-    own_aggregator_endpoint, taskprov_task_config,
+    own_aggregator_endpoint, task_config,
     batch_mode, vdaf, task_start, task_duration, report_expiry_age, min_batch_size,
     time_precision, tolerable_clock_skew, collector_hpke_config,
     vdaf_verify_key, task_info, deactivate_at, aggregator_auth_token_type,
@@ -946,10 +942,7 @@ FROM tasks",
         let aggregator_role: AggregatorRole = row.get("aggregator_role");
         let peer_aggregator_endpoint = row.get::<_, String>("peer_aggregator_endpoint").parse()?;
         let own_aggregator_endpoint = row.get::<_, String>("own_aggregator_endpoint").parse()?;
-        let taskprov_task_config = row
-            .get::<_, Option<Vec<u8>>>("taskprov_task_config")
-            .map(|bytes| TaskConfiguration::get_decoded(&bytes))
-            .transpose()?;
+        let task_config = TaskConfiguration::get_decoded(row.try_get("task_config")?)?;
         let batch_mode = row.try_get::<_, Json<task::BatchMode>>("batch_mode")?.0;
         let aggregation_mode: Option<AggregationMode> = row.get("aggregation_mode");
         let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
@@ -1061,7 +1054,7 @@ FROM tasks",
             }
         };
 
-        let task = AggregatorTask::new(
+        Ok(AggregatorTask::new_with_task_config(
             *task_id,
             peer_aggregator_endpoint,
             own_aggregator_endpoint,
@@ -1075,13 +1068,9 @@ FROM tasks",
             tolerable_clock_skew,
             task_info,
             aggregator_parameters,
+            task_config,
         )?
-        .with_deactivate_at(deactivate_at);
-        let task = match taskprov_task_config {
-            Some(task_config) => task.with_taskprov_task_config(task_config),
-            None => task,
-        };
-        Ok(task)
+        .with_deactivate_at(deactivate_at))
     }
 
     /// Retrieves task IDs, optionally after some specified lower bound. This method returns tasks

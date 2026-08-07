@@ -18,16 +18,17 @@ use chrono::{DateTime, TimeDelta, Utc};
 use futures::future::try_join_all;
 use janus_core::{
     hpke::{self, HpkeApplicationInfo, Label},
+    task_config::build_task_configuration,
     test_util::{install_test_trace_subscriber, run_vdaf},
     time::{Clock, DateTimeExt, IntervalExt, MockClock, TimeDeltaExt, TimeExt},
     vdaf::{VERIFY_KEY_LENGTH_PRIO3, VdafInstance, vdaf_dp_strategies},
 };
 use janus_messages::{
-    AggregateShareAad, AggregationJobId, AggregationJobStep, BatchId, CollectionJobExtension,
-    CollectionJobExtensionType, CollectionJobId, CollectionJobReq, Duration, Extension,
-    ExtensionType, HpkeCiphertext, HpkeConfigId, Interval, Query, ReportError, ReportId,
-    ReportIdChecksum, ReportMetadata, ReportShare, Role, TaskId, Time, TimePrecision,
-    VerifyContinue, VerifyInit, VerifyResp, VerifyStepResult,
+    AggregateShareAad, AggregationJobId, AggregationJobStep, BatchConfig, BatchId,
+    CollectionJobExtension, CollectionJobExtensionType, CollectionJobId, CollectionJobReq,
+    Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, Interval, Query, ReportError,
+    ReportId, ReportIdChecksum, ReportMetadata, ReportShare, Role, TaskId, Time, TimePrecision,
+    VdafConfig, VerifyContinue, VerifyInit, VerifyResp, VerifyStepResult,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
 };
 use postgres_types::Timestamp;
@@ -392,36 +393,66 @@ async fn roundtrip_task_own_endpoint_verbatim(ephemeral_datastore: EphemeralData
 
 #[rstest_reuse::apply(schema_versions_template)]
 #[tokio::test]
-async fn roundtrip_taskprov_task_config(ephemeral_datastore: EphemeralDatastore) {
-    // The verbatim taskprov TaskConfiguration must survive a DB round-trip: it is bound into HPKE
-    // AADs and is not byte-reconstructible from the task's other stored columns.
+async fn roundtrip_task_config(ephemeral_datastore: EphemeralDatastore) {
+    // The TaskConfiguration must survive a DB round-trip byte-for-byte: it is bound into
+    // HPKE AADs.
     install_test_trace_subscriber();
     let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
-    let base = TaskBuilder::new(
-        task::BatchMode::TimeInterval,
-        AggregationMode::Synchronous,
-        VdafInstance::Prio3Count,
+    // Each view needs its own task, since they would otherwise collide on task ID.
+    let new_base = || {
+        TaskBuilder::new(
+            task::BatchMode::TimeInterval,
+            AggregationMode::Synchronous,
+            VdafInstance::Prio3Count,
+        )
+        .build()
+    };
+    let taskprov_base = new_base();
+    // Give the taskprov view a wire config distinct from what synthesis would produce, so a
+    // synthesizing read path would be caught.
+    let taskprov_config = build_task_configuration(
+        b"wire-specific-task-info".to_vec(),
+        taskprov_base
+            .leader_aggregator_endpoint()
+            .as_str()
+            .parse()
+            .unwrap(),
+        taskprov_base
+            .helper_aggregator_endpoint()
+            .as_str()
+            .parse()
+            .unwrap(),
+        *taskprov_base.time_precision(),
+        taskprov_base.min_batch_size(),
+        BatchConfig::TimeInterval,
+        VdafConfig::Prio3Count,
+        None,
     )
-    .build();
-    // Source a TaskConfiguration to store from a non-taskprov view (synthesizing one for a taskprov
-    // task is now rejected); any valid config exercises the column's byte round-trip.
-    let task_config = base.task_configuration();
-    let task = base
-        .taskprov_helper_view()
-        .unwrap()
-        .with_taskprov_task_config(task_config.clone());
-    ds.put_aggregator_task(&task).await.unwrap();
+    .unwrap();
 
-    let retrieved = ds
-        .run_unnamed_tx(|tx| {
-            let task_id = *task.id();
-            Box::pin(async move { tx.get_aggregator_task(&task_id).await })
-        })
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(retrieved.taskprov_task_config(), Some(&task_config));
+    for task in [
+        new_base().leader_view().unwrap(),
+        new_base().helper_view().unwrap(),
+        taskprov_base
+            .taskprov_helper_view_with_task_config(taskprov_config)
+            .unwrap(),
+    ] {
+        ds.put_aggregator_task(&task).await.unwrap();
+
+        let retrieved = ds
+            .run_unnamed_tx(|tx| {
+                let task_id = *task.id();
+                Box::pin(async move { tx.get_aggregator_task(&task_id).await })
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            retrieved.task_configuration().get_encoded().unwrap(),
+            task.task_configuration().get_encoded().unwrap()
+        );
+    }
 }
 
 #[rstest_reuse::apply(schema_versions_template)]
