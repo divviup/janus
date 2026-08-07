@@ -265,18 +265,21 @@ pub struct AggregatorTask {
     /// Deactivation instant. When set and reached (per the aggregator's clock), the
     /// aggregator stops accepting reports for this task. This is Janus-specific state.
     deactivate_at: Option<DateTime<Utc>>,
-    /// For taskprov tasks, the `TaskConfiguration` exactly as received on the wire, bound verbatim
-    /// into HPKE AADs. `None` for API-provisioned tasks, whose `TaskConfiguration` is synthesized
-    /// from the stored parameters. Reconstructing a taskprov config from those parameters is not
-    /// byte-safe (it would drop DP strategies and unknown extensions), so the wire bytes are kept.
+    /// The task's `TaskConfiguration`, bound verbatim into HPKE AADs. Adopted from the wire for
+    /// taskprov tasks and synthesized once at provisioning time for API-provisioned tasks; either
+    /// way it is frozen in the database and never re-synthesized on read.
     ///
     /// Persisted only via the datastore, not [`SerializedAggregatorTask`] (like `deactivate_at`);
-    /// taskprov tasks are never provisioned through that serde form.
-    taskprov_task_config: Option<TaskConfiguration>,
+    /// deserializing that form re-synthesizes it via [`AggregatorTask::new`]. Safe because that
+    /// form accepts only the Leader and Helper roles, so a taskprov task — whose config must stay
+    /// verbatim — can never be provisioned through it.
+    task_config: TaskConfiguration,
 }
 
 impl AggregatorTask {
-    /// Create a new [`AggregatorTask`] with the provided values.
+    /// Create a new [`AggregatorTask`] with the provided values, synthesizing its
+    /// [`TaskConfiguration`]. This is the provisioning constructor; a task adopting a
+    /// caller-supplied configuration uses [`AggregatorTask::new_with_task_config`] instead.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         task_id: TaskId,
@@ -313,16 +316,114 @@ impl AggregatorTask {
         )
     }
 
+    /// Create a new [`AggregatorTask`] from already-validated common parameters, synthesizing its
+    /// [`TaskConfiguration`].
     fn new_with_common_parameters(
         common_parameters: CommonTaskParameters,
         peer_aggregator_endpoint: DapUrl,
         own_aggregator_endpoint: DapUrl,
         aggregator_parameters: AggregatorTaskParameters,
     ) -> Result<Self, Error> {
+        Self::validate_parameters(
+            &common_parameters,
+            &peer_aggregator_endpoint,
+            &own_aggregator_endpoint,
+            &aggregator_parameters,
+        )?;
+
+        let (leader_endpoint, helper_endpoint) = match &aggregator_parameters {
+            AggregatorTaskParameters::Leader { .. } => {
+                (&own_aggregator_endpoint, &peer_aggregator_endpoint)
+            }
+            AggregatorTaskParameters::Helper { .. }
+            | AggregatorTaskParameters::TaskprovHelper { .. } => {
+                (&peer_aggregator_endpoint, &own_aggregator_endpoint)
+            }
+        };
+        let task_config = build_task_configuration(
+            common_parameters.task_info.clone(),
+            leader_endpoint.clone(),
+            helper_endpoint.clone(),
+            common_parameters.time_precision,
+            common_parameters.min_batch_size,
+            common_parameters.batch_mode.to_batch_config(),
+            common_parameters
+                .vdaf
+                .to_vdaf_config()
+                .map_err(Error::InvalidParameter)?,
+            common_parameters.task_interval,
+        )?;
+
+        Ok(Self {
+            common_parameters,
+            peer_aggregator_endpoint,
+            own_aggregator_endpoint,
+            aggregator_parameters,
+            deactivate_at: None,
+            task_config,
+        })
+    }
+
+    /// Create a new [`AggregatorTask`] adopting the provided [`TaskConfiguration`] verbatim rather
+    /// than synthesizing one. Used by the taskprov opt-in path, which must bind the configuration
+    /// exactly as received on the wire, and by the datastore, which must not re-synthesize a frozen
+    /// configuration on read.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_task_config(
+        task_id: TaskId,
+        peer_aggregator_endpoint: DapUrl,
+        own_aggregator_endpoint: DapUrl,
+        batch_mode: BatchMode,
+        vdaf: VdafInstance,
+        vdaf_verify_key: SecretBytes,
+        task_interval: Option<Interval>,
+        report_expiry_age: Option<Duration>,
+        min_batch_size: u64,
+        time_precision: TimePrecision,
+        tolerable_clock_skew: Duration,
+        task_info: Vec<u8>,
+        aggregator_parameters: AggregatorTaskParameters,
+        task_config: TaskConfiguration,
+    ) -> Result<Self, Error> {
+        let common_parameters = CommonTaskParameters::new(
+            task_id,
+            batch_mode,
+            vdaf,
+            vdaf_verify_key,
+            task_interval,
+            report_expiry_age,
+            min_batch_size,
+            time_precision,
+            tolerable_clock_skew,
+            task_info,
+        )?;
+        Self::validate_parameters(
+            &common_parameters,
+            &peer_aggregator_endpoint,
+            &own_aggregator_endpoint,
+            &aggregator_parameters,
+        )?;
+
+        Ok(Self {
+            common_parameters,
+            peer_aggregator_endpoint,
+            own_aggregator_endpoint,
+            aggregator_parameters,
+            deactivate_at: None,
+            task_config,
+        })
+    }
+
+    fn validate_parameters(
+        common_parameters: &CommonTaskParameters,
+        peer_aggregator_endpoint: &DapUrl,
+        own_aggregator_endpoint: &DapUrl,
+        aggregator_parameters: &AggregatorTaskParameters,
+    ) -> Result<(), Error> {
         // Reject an unparseable endpoint at construction. Without this check a
         // malformed endpoint would persist and never surface a user-visible error.
-        Url::try_from(&peer_aggregator_endpoint)?;
-        Url::try_from(&own_aggregator_endpoint)?;
+        Url::try_from(peer_aggregator_endpoint)?;
+        Url::try_from(own_aggregator_endpoint)?;
 
         if let BatchMode::LeaderSelected {
             batch_time_window_size: Some(batch_time_window_size),
@@ -341,14 +442,7 @@ impl AggregatorTask {
             }
         }
 
-        Ok(Self {
-            common_parameters,
-            peer_aggregator_endpoint,
-            own_aggregator_endpoint,
-            aggregator_parameters,
-            deactivate_at: None,
-            taskprov_task_config: None,
-        })
+        Ok(())
     }
 
     /// Retrieves the task ID associated with this task.
@@ -376,66 +470,10 @@ impl AggregatorTask {
         &self.own_aggregator_endpoint
     }
 
-    /// The received wire `TaskConfiguration` for a taskprov task, or `None` for an API-provisioned
-    /// task.
-    pub fn taskprov_task_config(&self) -> Option<&TaskConfiguration> {
-        self.taskprov_task_config.as_ref()
-    }
-
-    /// Returns the canonical [`TaskConfiguration`] for this task, as bound into HPKE AADs.
-    ///
-    /// For taskprov tasks this is the wire configuration verbatim; for API-provisioned tasks it is
-    /// synthesized from the stored parameters, pairing this aggregator's own and peer endpoints
-    /// into leader/helper by role.
-    ///
-    /// # Panics
-    ///
-    /// Panics if a taskprov task is missing its configuration, or if the VDAF is not
-    /// representable on the wire. This is temporary until we store the TaskConf in the
-    /// DB in #4712.
+    /// Returns the [`TaskConfiguration`] for this task, as bound into HPKE AADs. It was fixed at
+    /// provisioning time and is never re-synthesized.
     pub fn task_configuration(&self) -> TaskConfiguration {
-        if let Some(task_config) = &self.taskprov_task_config {
-            return task_config.clone();
-        }
-
-        // A taskprov task must carry its wire configuration verbatim (set in `taskprov_opt_in` and
-        // rehydrated on DB read); synthesizing one from the stored parameters is not byte-faithful.
-        // Reaching here for a taskprov task means the config was lost, so fail loudly rather than
-        // bind a wrong AAD.
-        assert!(
-            !matches!(
-                self.aggregator_parameters,
-                AggregatorTaskParameters::TaskprovHelper { .. }
-            ),
-            "taskprov task is missing its TaskConfiguration"
-        );
-
-        let (leader_endpoint, helper_endpoint) = match self.role() {
-            Role::Leader => (
-                &self.own_aggregator_endpoint,
-                &self.peer_aggregator_endpoint,
-            ),
-            Role::Helper => (
-                &self.peer_aggregator_endpoint,
-                &self.own_aggregator_endpoint,
-            ),
-            // `role()` yields only Leader or Helper.
-            _ => panic!("We received a non-aggregator role from AggregatorTask::role()"),
-        };
-
-        build_task_configuration(
-            self.task_info().to_vec(),
-            leader_endpoint.clone(),
-            helper_endpoint.clone(),
-            *self.time_precision(),
-            self.min_batch_size(),
-            self.batch_mode().to_batch_config(),
-            self.vdaf()
-                .to_vdaf_config()
-                .expect("VDAF is not representable as a VdafConfig"),
-            self.task_interval().copied(),
-        )
-        .expect("task parameters are validated at construction")
+        self.task_config.clone()
     }
 
     /// Retrieves the batch mode associated with this task.
@@ -476,12 +514,6 @@ impl AggregatorTask {
     /// Returns this task with its deactivation instant set. (Janus-specific)
     pub fn with_deactivate_at(mut self, deactivate_at: Option<DateTime<Utc>>) -> Self {
         self.deactivate_at = deactivate_at;
-        self
-    }
-
-    /// Returns this task with its verbatim taskprov [`TaskConfiguration`] set.
-    pub fn with_taskprov_task_config(mut self, task_config: TaskConfiguration) -> Self {
-        self.taskprov_task_config = Some(task_config);
         self
     }
 
@@ -1269,15 +1301,31 @@ pub mod test_util {
             self.leader_view().unwrap().task_configuration()
         }
 
-        /// Render a taskprov helper aggregator's view of this task.
-        pub fn taskprov_helper_view(&self) -> Result<AggregatorTask, Error> {
-            AggregatorTask::new_with_common_parameters(
-                self.common_parameters.clone(),
+        /// Render a taskprov helper aggregator's view of this task, binding `task_config` verbatim
+        /// as the opt-in path does. There is deliberately no synthesizing counterpart: a taskprov
+        /// task's configuration always comes from the wire.
+        pub fn taskprov_helper_view_with_task_config(
+            &self,
+            task_config: TaskConfiguration,
+        ) -> Result<AggregatorTask, Error> {
+            let common_parameters = self.common_parameters.clone();
+            AggregatorTask::new_with_task_config(
+                common_parameters.task_id,
                 to_dap_url(&self.leader_aggregator_endpoint),
                 to_dap_url(&self.helper_aggregator_endpoint),
+                common_parameters.batch_mode,
+                common_parameters.vdaf,
+                common_parameters.vdaf_verify_key,
+                common_parameters.task_interval,
+                common_parameters.report_expiry_age,
+                common_parameters.min_batch_size,
+                common_parameters.time_precision,
+                common_parameters.tolerable_clock_skew,
+                common_parameters.task_info,
                 AggregatorTaskParameters::TaskprovHelper {
                     aggregation_mode: self.helper_aggregation_mode,
                 },
+                task_config,
             )
         }
 
@@ -1576,6 +1624,7 @@ mod tests {
         BatchConfig, Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId,
         HpkePublicKey, Interval, TaskId, Time, TimePrecision, Url as DapUrl, VdafConfig,
     };
+    use prio::codec::Encode as _;
     use rand::random;
     use serde_json::json;
     use serde_test::{Token, assert_de_tokens, assert_tokens};
@@ -1615,6 +1664,8 @@ mod tests {
         );
     }
 
+    // Note: `SerializedAggregatorTask` does not carry `task_config`, so these round trips are
+    // equal because deserialization re-synthesizes it identically via `AggregatorTask::new`.
     #[test]
     fn leader_task_serialization() {
         roundtrip_encoding(
@@ -1739,9 +1790,9 @@ mod tests {
 
     #[test]
     fn task_configuration_synthesized_for_api_task() {
-        // For an API-provisioned task, task_configuration() synthesizes from stored parameters,
-        // pairing own/peer endpoints into leader/helper by role. Both aggregators' views must
-        // produce byte-identical configurations, or their AADs would not match.
+        // For an API-provisioned task, the configuration is synthesized at construction from
+        // the task parameters. Each view synthesizes independently, so their configurations
+        // must come out identical or the two aggregators' AADs would not match.
         let task = TaskBuilder::new(
             BatchMode::TimeInterval,
             AggregationMode::Synchronous,
@@ -1761,8 +1812,12 @@ mod tests {
             "https://helper.example.com/"
         );
         assert_eq!(
-            leader_config,
-            task.helper_view().unwrap().task_configuration()
+            leader_config.get_encoded().unwrap(),
+            task.helper_view()
+                .unwrap()
+                .task_configuration()
+                .get_encoded()
+                .unwrap()
         );
     }
 
@@ -1789,31 +1844,14 @@ mod tests {
             VdafInstance::Prio3Count,
         )
         .build()
-        .taskprov_helper_view()
-        .unwrap()
-        .with_taskprov_task_config(wire.clone());
+        .taskprov_helper_view_with_task_config(wire.clone())
+        .unwrap();
 
         assert_eq!(task.task_configuration(), wire);
         assert_eq!(
             task.task_configuration().task_info(),
             b"wire-specific-task-info"
         );
-    }
-
-    #[test]
-    #[should_panic(expected = "taskprov task is missing its TaskConfiguration")]
-    fn task_configuration_taskprov_without_config_panics() {
-        // A taskprov task whose wire config is absent must fail loudly rather than
-        // silently synthesize a (non-byte-faithful) config from its stored parameters.
-        let task = TaskBuilder::new(
-            BatchMode::TimeInterval,
-            AggregationMode::Synchronous,
-            VdafInstance::Prio3Count,
-        )
-        .build()
-        .taskprov_helper_view()
-        .unwrap();
-        let _ = task.task_configuration();
     }
 
     #[test]

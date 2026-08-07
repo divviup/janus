@@ -887,7 +887,7 @@ impl<C: Clock> Aggregator<C> {
             .map(|a| Duration::from_chrono(a, task_config.time_precision()));
 
         let task = Arc::new(
-            AggregatorTask::new(
+            AggregatorTask::new_with_task_config(
                 *task_id,
                 leader_url,
                 helper_url,
@@ -910,11 +910,10 @@ impl<C: Clock> Aggregator<C> {
                         },
                     )?,
                 },
+                // Bind the received TaskConfiguration verbatim into HPKE AADs.
+                task_config.clone(),
             )
-            .map_err(|err| Error::InvalidTask(*task_id, OptOutReason::TaskParameters(err)))?
-            // Bind the received TaskConfiguration verbatim into HPKE AADs; it is not
-            // byte-reconstructible from the stored parameters.
-            .with_taskprov_task_config(task_config.clone()),
+            .map_err(|err| Error::InvalidTask(*task_id, OptOutReason::TaskParameters(err)))?,
         );
         self.datastore
             .run_tx("taskprov_put_task", |tx| {
