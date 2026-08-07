@@ -303,6 +303,8 @@ pub enum OptOutReason {
     /// Catch-all error for generally invalid parameters.
     #[error("invalid parameter: {0}")]
     InvalidParameter(String),
+    #[error("unsupported task extension: {0:#06x}")]
+    UnsupportedExtension(u16),
 }
 
 impl Error {

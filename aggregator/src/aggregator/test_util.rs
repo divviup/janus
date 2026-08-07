@@ -86,7 +86,7 @@ pub fn create_report_custom(
 
     let associated_data = InputShareAad::new(
         *task.id(),
-        task.task_configuration().unwrap(),
+        task.task_configuration(),
         report_metadata.clone(),
         public_share.get_encoded().unwrap(),
     );
