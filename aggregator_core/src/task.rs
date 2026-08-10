@@ -268,11 +268,6 @@ pub struct AggregatorTask {
     /// The task's `TaskConfiguration`, bound verbatim into HPKE AADs. Adopted from the wire for
     /// taskprov tasks and synthesized once at provisioning time for API-provisioned tasks; either
     /// way it is frozen in the database and never re-synthesized on read.
-    ///
-    /// Persisted only via the datastore, not [`SerializedAggregatorTask`] (like `deactivate_at`);
-    /// deserializing that form re-synthesizes it via [`AggregatorTask::new`]. Safe because that
-    /// form accepts only the Leader and Helper roles, so a taskprov task — whose config must stay
-    /// verbatim — can never be provisioned through it.
     task_config: TaskConfiguration,
 }
 
