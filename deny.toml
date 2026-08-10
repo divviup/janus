@@ -20,6 +20,10 @@ ignore = [
     # We have migrated from `rustls-pemfile` but not everything else has.
     # See <https://github.com/fussybeaver/bollard/issues/612>.
     "RUSTSEC-2025-0134",
+
+    # This is part of Trillium. It goes away once divviup-client is migrated
+    # off Trillium.
+    "RUSTSEC-2026-0249",
 ]
 
 [bans]
