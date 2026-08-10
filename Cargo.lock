@@ -865,9 +865,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.6.4"
+version = "4.6.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d91e0c145792ef73a6ad36d27c75ac09f1832222a3c209689d90f534685ee5b7"
+checksum = "473c7e07f409a8d772161724aa8db6a765a2532a70f9667eeb7b49d3d02fbdca"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -875,9 +875,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.6.2"
+version = "4.6.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f09628afdcc538b57f3c6341e9c8e9970f18e4a481690a64974d7023bd33548b"
+checksum = "7b48fea5a88e9ae728a2dcbedbfc0e730f7d60da42e1cb049a83c9fb8b789889"
 dependencies = [
  "anstream",
  "anstyle",
@@ -930,7 +930,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1459,14 +1459,14 @@ dependencies = [
 
 [[package]]
 name = "educe"
-version = "0.7.4"
+version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92c3e1715a2bf74bc8f68cd7bae12ff144f02669c602106ad1fa16f2ba62e646"
+checksum = "e451fac8dd8dece16234604bf1efce6e90fddd8ab6ad4d66eec0eca5160959dd"
 dependencies = [
  "enum-ordinalize",
  "proc-macro2",
  "quote",
- "syn 2.0.118",
+ "syn 3.0.3",
 ]
 
 [[package]]
@@ -1557,7 +1557,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2581,7 +2581,7 @@ dependencies = [
  "console-subscriber",
  "deadpool",
  "deadpool-postgres",
- "educe 0.7.4",
+ "educe 0.7.6",
  "futures",
  "hex",
  "http",
@@ -2656,7 +2656,7 @@ dependencies = [
  "axum 0.8.9",
  "base64 0.23.1",
  "chrono",
- "educe 0.7.4",
+ "educe 0.7.6",
  "futures",
  "http",
  "janus_aggregator_core",
@@ -2691,7 +2691,7 @@ dependencies = [
  "clap",
  "deadpool",
  "deadpool-postgres",
- "educe 0.7.4",
+ "educe 0.7.6",
  "futures",
  "hex",
  "http",
@@ -2735,7 +2735,7 @@ dependencies = [
  "assert_matches",
  "backon",
  "bhttp",
- "educe 0.7.4",
+ "educe 0.7.6",
  "hex-literal",
  "http",
  "itertools 0.15.0",
@@ -2763,7 +2763,7 @@ dependencies = [
  "backon",
  "base64 0.23.1",
  "chrono",
- "educe 0.7.4",
+ "educe 0.7.6",
  "hpke-dispatch",
  "janus_collector",
  "janus_core",
@@ -2795,7 +2795,7 @@ dependencies = [
  "chrono",
  "clap",
  "constcat",
- "educe 0.7.4",
+ "educe 0.7.6",
  "futures",
  "hex",
  "hpke-dispatch",
@@ -2843,7 +2843,7 @@ dependencies = [
  "chrono",
  "clap",
  "divviup-client",
- "educe 0.7.4",
+ "educe 0.7.6",
  "futures",
  "hex",
  "http",
@@ -2887,7 +2887,7 @@ dependencies = [
  "backon",
  "base64 0.23.1",
  "clap",
- "educe 0.7.4",
+ "educe 0.7.6",
  "futures",
  "hex",
  "http",
@@ -2939,7 +2939,7 @@ dependencies = [
  "assert_matches",
  "base64 0.23.1",
  "chrono",
- "educe 0.7.4",
+ "educe 0.7.6",
  "hex",
  "janus_messages 0.9.0-prerelease-1",
  "num_enum",
@@ -3712,7 +3712,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.45.0",
 ]
 
 [[package]]
@@ -4594,7 +4594,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4660,7 +4660,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4681,7 +4681,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5571,7 +5571,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6705,7 +6705,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
