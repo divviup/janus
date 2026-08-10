@@ -29,8 +29,7 @@ ignore = [
     # See <https://github.com/fussybeaver/bollard/issues/612>.
     "RUSTSEC-2025-0134",
 
-    # 'smartstring' is part of Trillium. It goes away once divviup-client is migrated
-    # off Trillium.
+    # 'smartstring' is part of Trillium, and it's unmaintained.
     "RUSTSEC-2026-0249",
 ]
 
