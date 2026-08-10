@@ -1459,14 +1459,14 @@ dependencies = [
 
 [[package]]
 name = "educe"
-version = "0.7.4"
+version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92c3e1715a2bf74bc8f68cd7bae12ff144f02669c602106ad1fa16f2ba62e646"
+checksum = "e451fac8dd8dece16234604bf1efce6e90fddd8ab6ad4d66eec0eca5160959dd"
 dependencies = [
  "enum-ordinalize",
  "proc-macro2",
  "quote",
- "syn 2.0.118",
+ "syn 3.0.3",
 ]
 
 [[package]]
@@ -2581,7 +2581,7 @@ dependencies = [
  "console-subscriber",
  "deadpool",
  "deadpool-postgres",
- "educe 0.7.4",
+ "educe 0.7.6",
  "futures",
  "hex",
  "http",
@@ -2656,7 +2656,7 @@ dependencies = [
  "axum 0.8.9",
  "base64 0.23.1",
  "chrono",
- "educe 0.7.4",
+ "educe 0.7.6",
  "futures",
  "http",
  "janus_aggregator_core",
@@ -2691,7 +2691,7 @@ dependencies = [
  "clap",
  "deadpool",
  "deadpool-postgres",
- "educe 0.7.4",
+ "educe 0.7.6",
  "futures",
  "hex",
  "http",
@@ -2735,7 +2735,7 @@ dependencies = [
  "assert_matches",
  "backon",
  "bhttp",
- "educe 0.7.4",
+ "educe 0.7.6",
  "hex-literal",
  "http",
  "itertools 0.15.0",
@@ -2763,7 +2763,7 @@ dependencies = [
  "backon",
  "base64 0.23.1",
  "chrono",
- "educe 0.7.4",
+ "educe 0.7.6",
  "hpke-dispatch",
  "janus_collector",
  "janus_core",
@@ -2795,7 +2795,7 @@ dependencies = [
  "chrono",
  "clap",
  "constcat",
- "educe 0.7.4",
+ "educe 0.7.6",
  "futures",
  "hex",
  "hpke-dispatch",
@@ -2843,7 +2843,7 @@ dependencies = [
  "chrono",
  "clap",
  "divviup-client",
- "educe 0.7.4",
+ "educe 0.7.6",
  "futures",
  "hex",
  "http",
@@ -2887,7 +2887,7 @@ dependencies = [
  "backon",
  "base64 0.23.1",
  "clap",
- "educe 0.7.4",
+ "educe 0.7.6",
  "futures",
  "hex",
  "http",
@@ -2939,7 +2939,7 @@ dependencies = [
  "assert_matches",
  "base64 0.23.1",
  "chrono",
- "educe 0.7.4",
+ "educe 0.7.6",
  "hex",
  "janus_messages 0.9.0-prerelease-1",
  "num_enum",
