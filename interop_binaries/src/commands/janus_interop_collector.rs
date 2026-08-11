@@ -133,8 +133,6 @@ struct TaskState {
     task_id: TaskId,
     keypair: HpkeKeypair,
     leader_url: DapUrl,
-    /// Retained for dispatching to a concrete VDAF; the `VdafConfig` bound into AADs lives in
-    /// `task_configuration`.
     vdaf: VdafObject,
     auth_token: AuthenticationToken,
     time_precision: TimePrecision,

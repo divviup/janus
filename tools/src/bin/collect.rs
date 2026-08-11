@@ -468,6 +468,10 @@ fn resolve_query(options: &Options) -> Result<ResolvedQuery, Error> {
              --batch-interval-duration are required\n",
         )
         .into()),
+        // Clap requires the two batch interval arguments together.
+        (BatchConfig::TimeInterval, _, _) => {
+            unreachable!("clap requires both batch interval arguments together")
+        }
         (BatchConfig::LeaderSelected, None, None) => Ok(ResolvedQuery::LeaderSelected),
         (BatchConfig::LeaderSelected, _, _) => Err(clap::Error::raw(
             ErrorKind::ArgumentConflict,
@@ -483,7 +487,6 @@ fn resolve_query(options: &Options) -> Result<ResolvedQuery, Error> {
             ),
         )
         .into()),
-        // Clap requires the two batch interval arguments together, so a lone one cannot reach here.
     }
 }
 
@@ -638,7 +641,6 @@ fn new_collector<V: vdaf::Collector>(
         task_config.vdaf_config().clone(),
         *task_config.time_precision(),
     )
-    // Bound verbatim, so extensions this tool does not model still reach the HPKE AAD.
     .with_task_configuration(task_config)
     .with_http_client(http_client)
     .with_collect_poll_backoff(
@@ -731,13 +733,13 @@ mod tests {
         test_util::install_test_trace_subscriber,
     };
     use janus_messages::{BatchConfig, TaskConfiguration, TaskId, TimePrecision, VdafConfig};
-    use prio::codec::Encode;
+    use prio::{codec::Encode, vdaf::prio3::Prio3};
     use rand::random;
     use tempfile::NamedTempFile;
 
     use crate::{
         AuthenticationOptions, AuthenticationToken, Error, HpkeConfigOptions, Options,
-        QueryOptions, Subcommands, run,
+        QueryOptions, Subcommands, default_http_client, new_collector, run,
     };
 
     const SAMPLE_COLLECTOR_CREDENTIAL: &str = r#"{
@@ -917,6 +919,46 @@ mod tests {
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),
             ErrorKind::ValueValidation,
         );
+    }
+
+    /// The collector cross-checks the leader endpoint and time precision it is constructed with
+    /// against the ones in the task configuration, so a wiring mistake in `new_collector` would
+    /// fail every real invocation at build time while leaving the argument-parsing tests green.
+    #[test]
+    fn new_collector_accepts_task_config() {
+        install_test_trace_subscriber();
+        initialize_rustls();
+
+        let hpke_keypair = HpkeKeypair::test();
+        let task_id: TaskId = random();
+        let auth_token = AuthenticationToken::DapAuth(random());
+        let options = Options::try_parse_from([
+            "collect".to_string(),
+            format!(
+                "--task-id={}",
+                URL_SAFE_NO_PAD.encode(task_id.get_encoded().unwrap())
+            ),
+            task_config_argument(BatchConfig::TimeInterval),
+            format!("--dap-auth-token={}", auth_token.as_str()),
+            format!(
+                "--hpke-config={}",
+                URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded().unwrap())
+            ),
+            format!(
+                "--hpke-private-key={}",
+                URL_SAFE_NO_PAD.encode(hpke_keypair.private_key().as_ref())
+            ),
+            "--batch-interval-start=1000000".to_string(),
+            "--batch-interval-duration=1000".to_string(),
+        ])
+        .unwrap();
+
+        new_collector(
+            options,
+            Prio3::new_count(2).unwrap(),
+            default_http_client().unwrap(),
+        )
+        .unwrap();
     }
 
     /// The task configuration states the batch mode and the command line selects the batch, so

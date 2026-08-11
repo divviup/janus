@@ -374,7 +374,7 @@ pub struct CollectorBuilder<V: vdaf::Collector> {
     vdaf_config: VdafConfig,
     /// Optional task validity interval bound into the task's `TaskConfiguration`.
     task_interval: Option<Interval>,
-    /// A pre-built `TaskConfiguration`, bound verbatim. Mutually exclusive with the setters above;
+    /// A pre-built `TaskConfiguration`. Mutually exclusive with the setters above;
     /// set via [`Self::with_task_configuration`].
     task_configuration: Option<TaskConfiguration>,
 
@@ -468,12 +468,11 @@ impl<V: vdaf::Collector> CollectorBuilder<V> {
         })
     }
 
-    /// Resolves the task's [`TaskConfiguration`], either from a verbatim message supplied to
+    /// Resolves the task's [`TaskConfiguration`], either from whatever was supplied to
     /// [`Self::with_task_configuration`] or by composing one from the individual setters.
     fn resolve_task_configuration(&self) -> Result<TaskConfiguration, Error> {
         let Some(task_configuration) = &self.task_configuration else {
-            // Composing fails fast here on parameters that cannot form a valid TaskConfiguration,
-            // rather than deferring to the first collection's AAD construction.
+            // fail fast if anything can't build.
             return Ok(build_task_configuration(
                 self.task_info
                     .clone()
@@ -493,9 +492,10 @@ impl<V: vdaf::Collector> CollectorBuilder<V> {
             )?);
         };
 
-        // A verbatim TaskConfiguration is the whole message, including extensions this
-        // implementation does not model, so composing from the setters cannot reproduce it.
-        // Reject rather than silently pick a winner.
+        // Since TaskConfiguration is the whole thing, including extensions this
+        // implementation does not model, composing from the setters can't reproduce it.
+        // If we got here, with_task_configuration was used, so enforce that the other
+        // setters _weren't_.
         if self.helper_endpoint.is_some()
             || self.task_info.is_some()
             || self.min_batch_size.is_some()
@@ -508,9 +508,9 @@ impl<V: vdaf::Collector> CollectorBuilder<V> {
             ));
         }
 
-        // These three are stated twice: once here and once via the constructor (or, for the VDAF
-        // config, via `from_configured_vdaf`). A disagreement would be a silent AAD byte-identity
-        // bug, so check rather than choose.
+        // These three are also checked via the constructor (or, for the VDAF
+        // config, via `from_configured_vdaf`). It's deliberate, because a disagreement
+        // would be a silent AAD bug, and these checks are cheap.
         if &self.vdaf_config != task_configuration.vdaf_config() {
             return Err(Error::InvalidParameter(
                 "vdaf_config disagrees with the task configuration's vdaf_config",
@@ -583,7 +583,7 @@ impl<V: vdaf::Collector> CollectorBuilder<V> {
         self
     }
 
-    /// Bind a pre-built [`TaskConfiguration`] verbatim, in place of composing one from the
+    /// Store a pre-built [`TaskConfiguration`], in place of composing one from the
     /// individual setters above (which this is mutually exclusive with). Use this when the
     /// configuration arrives already encoded, so that extensions this implementation does not
     /// model survive into the HPKE AAD.
@@ -1170,7 +1170,7 @@ mod tests {
     }
 
     #[test]
-    fn task_configuration_bound_verbatim() {
+    fn task_configuration_bound_identical() {
         // The bytes bound into the AAD must be the bytes we were handed, extensions included:
         // recomposing from the individual setters would silently drop the unknown extension and
         // every aggregate share would fail to decrypt.
