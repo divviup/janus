@@ -7,7 +7,7 @@
 //! # Examples
 //!
 //! ```no_run
-//! use janus_core::vdaf::ConfiguredVdaf;
+//! use janus_client::ConfiguredVdaf;
 //! use janus_messages::{BatchConfig, TimePrecision, TaskId, Url};
 //! use std::str::FromStr;
 //!
@@ -51,6 +51,7 @@ use educe::Educe;
 use http::{HeaderValue, header::ACCEPT};
 use http::{StatusCode, header::CONTENT_TYPE};
 use itertools::Itertools;
+pub use janus_core::vdaf::ConfiguredVdaf;
 use janus_core::{
     hpke::{self, HpkeApplicationInfo, Label, is_hpke_config_supported},
     http::{HttpErrorResponse, cached_resource::CachedResource},
@@ -60,7 +61,7 @@ use janus_core::{
     task_config::build_task_configuration,
     time::{Clock, DateTimeExt, RealClock},
     url_for_join,
-    vdaf::{ConfiguredVdaf, vdaf_application_context},
+    vdaf::vdaf_application_context,
 };
 use janus_messages::{
     BatchConfig, HpkeConfig, HpkeConfigList, InputShareAad, Interval, MediaType,
@@ -477,7 +478,7 @@ impl<V: vdaf::Client<16>> ClientBuilder<V> {
     ///
     /// ```no_run
     /// # use url::Url;
-    /// # use janus_core::vdaf::ConfiguredVdaf;
+    /// # use janus_client::ConfiguredVdaf;
     /// # use janus_messages::{TimePrecision, TaskId, Url as DapUrl};
     /// # use rand::random;
     /// # use std::str::FromStr;
@@ -645,7 +646,7 @@ impl<V: vdaf::Client<16>> Client<V> {
     ///
     /// ```no_run
     /// # use janus_client::{Client, Error};
-    /// # use janus_core::vdaf::ConfiguredVdaf;
+    /// # use janus_client::ConfiguredVdaf;
     /// # use janus_messages::{BatchConfig, TimePrecision, Time};
     /// # use rand::random;
     /// # use std::time::SystemTime;
@@ -932,7 +933,7 @@ where
     ///
     /// ```no_run
     /// # use janus_client::{Client, UploadStats};
-    /// # use janus_core::vdaf::ConfiguredVdaf;
+    /// # use janus_client::ConfiguredVdaf;
     /// # use janus_messages::{BatchConfig, TimePrecision, Time};
     /// # use rand::random;
     /// #

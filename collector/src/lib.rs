@@ -11,8 +11,7 @@
 //! ```no_run
 //! use std::{fs::File, str::FromStr};
 //!
-//! use janus_collector::{Collector, PrivateCollectorCredential};
-//! use janus_core::vdaf::ConfiguredVdaf;
+//! use janus_collector::{Collector, ConfiguredVdaf, PrivateCollectorCredential};
 //! use janus_messages::{BatchConfig, Duration, Interval, Query, TaskId, Time, TimePrecision, Url};
 //!
 //! # async fn run() {
@@ -82,9 +81,9 @@ pub use backon::{BackoffBuilder, ExponentialBackoff, ExponentialBuilder};
 use chrono::{DateTime, Duration, Utc};
 pub use credential::PrivateCollectorCredential;
 use educe::Educe;
-pub use janus_core::auth_tokens::AuthenticationToken;
+pub use janus_core::{auth_tokens::AuthenticationToken, hpke::HpkeKeypair, vdaf::ConfiguredVdaf};
 use janus_core::{
-    hpke::{self, HpkeApplicationInfo, HpkeKeypair},
+    hpke::{self, HpkeApplicationInfo},
     http::{HttpErrorResponse, ReqwestAuthenticationToken, check_content_type},
     retries::{
         ExponentialWithTotalDelayBuilder, http_request_exponential_backoff, retry_http_request,
@@ -92,7 +91,6 @@ use janus_core::{
     task_config::build_task_configuration,
     time::TimeExt,
     url_for_join,
-    vdaf::ConfiguredVdaf,
 };
 use janus_messages::{
     AggregateShareAad, BatchConfig, CollectionJobExtension, CollectionJobId, CollectionJobReq,
