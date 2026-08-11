@@ -4,7 +4,7 @@ Command-line DAP-PPM collector from ISRG's Divvi Up
 
 The default subcommand is "run", which will create a collection job and poll it to completion
 
-Usage: collect [OPTIONS] --task-id <TASK_ID> --leader <LEADER> --time-precision <TIME_PRECISION> --vdaf <VDAF> <--hpke-config <HPKE_CONFIG>|--hpke-private-key <HPKE_PRIVATE_KEY>|--collector-credential-file <COLLECTOR_CREDENTIAL_FILE>|--collector-credential <COLLECTOR_CREDENTIAL>> [COMMAND]
+Usage: collect [OPTIONS] --task-id <TASK_ID> --task-config <TASK_CONFIG> <--hpke-config <HPKE_CONFIG>|--hpke-private-key <HPKE_PRIVATE_KEY>|--collector-credential-file <COLLECTOR_CREDENTIAL_FILE>|--collector-credential <COLLECTOR_CREDENTIAL>> [COMMAND]
 
 Commands:
   run       Create a new collection job and poll it to completion
@@ -23,11 +23,10 @@ DAP Task Parameters:
       --task-id <TASK_ID>
           DAP task identifier, encoded with unpadded base64url
 
-      --leader <LEADER>
-          The leader aggregator's endpoint URL
-
-      --time-precision <TIME_PRECISION>
-          The task's time precision, in seconds
+      --task-config <TASK_CONFIG>
+          The task's DAP TaskConfiguration message, encoded with unpadded base64url
+          
+          This supplies the aggregator endpoints, time precision, batch configuration, and VDAF configuration. Its bytes are bound into the HPKE additional authenticated data, so it must be exactly the message the aggregators were provisioned with.
 
 Authorization:
       --dap-auth-token <DAP_AUTH_TOKEN>
@@ -62,22 +61,6 @@ HPKE Configuration:
           This can be obtained with the command `divviup collector-credential generate`.
           
           [env: COLLECTOR_CREDENTIAL]
-
-VDAF Algorithm and Parameters:
-      --vdaf <VDAF>
-          VDAF algorithm
-
-          Possible values:
-          - count:     Prio3Count
-          - sum:       Prio3Sum
-          - sumvec:    Prio3SumVec
-          - histogram: Prio3Histogram
-
-      --length <LENGTH>
-          Number of vector elements, when used with --vdaf=sumvec or number of histogram buckets, when used with --vdaf=histogram
-
-      --max-measurement <MAX_MEASUREMENT>
-          Maximum measurement value, for use with --vdaf=sum or --vdaf=sumvec
 
 Collect Request Parameters (Time Interval):
       --batch-interval-start <BATCH_INTERVAL_START>

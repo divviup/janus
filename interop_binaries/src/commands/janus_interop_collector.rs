@@ -24,8 +24,8 @@ use janus_core::{
     vdaf::{VdafInstance, new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128},
 };
 use janus_messages::{
-    BatchId, Duration, HpkeConfig, Interval, PartialBatchSelector, Query, TaskConfiguration, TaskId,
-    Time, TimePrecision, Url as DapUrl, batch_mode::BatchMode,
+    BatchId, Duration, HpkeConfig, Interval, PartialBatchSelector, Query, TaskConfiguration,
+    TaskId, Time, TimePrecision, Url as DapUrl, batch_mode::BatchMode,
 };
 use prio::{
     codec::{Decode, Encode},
