@@ -8,7 +8,7 @@ use janus_core::{
 };
 use janus_messages::{
     BatchConfig, HpkeConfigList, MediaType, ReportError, ReportUploadStatus, Role, Time,
-    TimePrecision, UploadErrors, UploadRequest, Url as DapUrl,
+    TimePrecision, UploadErrors, UploadRequest, Url as DapUrl, VdafConfig,
 };
 use prio::{
     codec::Encode,
@@ -26,7 +26,7 @@ async fn setup_client<V: vdaf::Client<16>>(
     configured_vdaf: ConfiguredVdaf<V>,
 ) -> Client<V> {
     let server_url = DapUrl::try_from(server.url().as_str()).unwrap();
-    Client::builder_from_configured_vdaf(
+    Client::builder(
         random(),
         server_url.clone(),
         server_url,
@@ -50,12 +50,13 @@ async fn build_fails_without_required_task_configuration() {
     // Omitting the required TaskConfiguration setters must fail fast at build(), before any network
     // access, rather than deferring to the first upload's AAD construction.
     let server_url = DapUrl::try_from("https://example.com/").unwrap();
-    let err = Client::builder(
+    let err = Client::builder_with_custom_vdaf(
         random(),
         server_url.clone(),
         server_url,
         TimePrecision::from_seconds(100),
         Prio3::new_count(2).unwrap(),
+        VdafConfig::Prio3Count,
     )
     .with_leader_hpke_config(HpkeKeypair::test().config().clone())
     .with_helper_hpke_config(HpkeKeypair::test().config().clone())
@@ -73,6 +74,7 @@ fn endpoints_preserved_and_joined() {
         "http://leader_endpoint/foo/bar".try_into().unwrap(),
         "http://helper_endpoint".try_into().unwrap(),
         TimePrecision::from_seconds(100),
+        VdafConfig::Prio3Count,
     );
 
     // Endpoints are stored verbatim (no trailing slash added), so the bytes bound into HPKE AADs
@@ -275,6 +277,7 @@ async fn unsupported_hpke_algorithms() {
         server_url.clone(),
         server_url,
         TimePrecision::from_seconds(100),
+        VdafConfig::Prio3Count,
     );
     client_parameters.http_request_retry_parameters = test_http_request_exponential_backoff();
 

@@ -32,7 +32,7 @@
 //!
 //! // The task parameters below are bound into HPKE AADs and MUST match those provisioned to the
 //! // aggregators byte-for-byte.
-//! let collector = Collector::builder_from_configured_vdaf(
+//! let collector = Collector::builder(
 //!     task_id,
 //!     leader_url,
 //!     collector_credential.authentication_token(),
@@ -370,9 +370,8 @@ pub struct CollectorBuilder<V: vdaf::Collector> {
     /// Batch configuration bound into the task's `TaskConfiguration`. Required before
     /// [`Self::build`]; set via [`Self::with_batch_config`].
     batch_config: Option<BatchConfig>,
-    /// VDAF configuration bound into the task's `TaskConfiguration`. Required before
-    /// [`Self::build`]; set via [`Self::with_vdaf_config`].
-    vdaf_config: Option<VdafConfig>,
+    /// VDAF configuration bound into the task's `TaskConfiguration`.
+    vdaf_config: VdafConfig,
     /// Optional task validity interval bound into the task's `TaskConfiguration`.
     task_interval: Option<Interval>,
 
@@ -386,13 +385,15 @@ pub struct CollectorBuilder<V: vdaf::Collector> {
 
 impl<V: vdaf::Collector> CollectorBuilder<V> {
     /// Construct a [`CollectorBuilder`] from required DAP task parameters and an implementation of
-    /// the task's VDAF.
+    /// the task's VDAF. The caller is responsible for ensuring `vdaf_config` describes `vdaf`;
+    /// prefer [`Self::from_configured_vdaf`], which cannot mismatch the two.
     pub fn new(
         task_id: TaskId,
         leader_endpoint: DapUrl,
         authentication: AuthenticationToken,
         hpke_keypair: HpkeKeypair,
         vdaf: V,
+        vdaf_config: VdafConfig,
         time_precision: TimePrecision,
     ) -> Self {
         Self {
@@ -406,7 +407,7 @@ impl<V: vdaf::Collector> CollectorBuilder<V> {
             task_info: None,
             min_batch_size: None,
             batch_config: None,
-            vdaf_config: None,
+            vdaf_config,
             task_interval: None,
             http_client: None,
             http_request_retry_parameters: http_request_exponential_backoff(),
@@ -434,9 +435,9 @@ impl<V: vdaf::Collector> CollectorBuilder<V> {
             authentication,
             hpke_keypair,
             vdaf,
+            vdaf_config,
             time_precision,
         )
-        .with_vdaf_config(vdaf_config)
     }
 
     /// Finalize construction of a [`Collector`].
@@ -467,9 +468,7 @@ impl<V: vdaf::Collector> CollectorBuilder<V> {
             batch_config: self
                 .batch_config
                 .ok_or(Error::InvalidParameter("batch_config not set"))?,
-            vdaf_config: self
-                .vdaf_config
-                .ok_or(Error::InvalidParameter("vdaf_config not set"))?,
+            vdaf_config: self.vdaf_config,
             task_interval: self.task_interval,
             http_client,
             http_request_retry_parameters: self.http_request_retry_parameters,
@@ -527,13 +526,6 @@ impl<V: vdaf::Collector> CollectorBuilder<V> {
         self
     }
 
-    /// Set the VDAF configuration bound into the task's `TaskConfiguration`. Required before
-    /// [`Self::build`].
-    pub fn with_vdaf_config(mut self, vdaf_config: VdafConfig) -> Self {
-        self.vdaf_config = Some(vdaf_config);
-        self
-    }
-
     /// Set the optional task validity interval bound into the task's `TaskConfiguration`.
     pub fn with_task_interval(mut self, task_interval: Option<Interval>) -> Self {
         self.task_interval = task_interval;
@@ -584,14 +576,16 @@ pub struct Collector<V: vdaf::Collector> {
 }
 
 impl<V: vdaf::Collector> Collector<V> {
-    /// Construct a [`CollectorBuilder`] from required DAP task parameters and an implementation of
-    /// the task's VDAF.
-    pub fn builder(
+    /// Construct a [`CollectorBuilder`] when `vdaf` and `vdaf_config` are obtained separately, e.g.
+    /// by generic code deriving both from a `VdafInstance`. The caller is responsible for ensuring
+    /// they agree; a mismatch produces aggregate shares the collector cannot decrypt.
+    pub fn builder_with_custom_vdaf(
         task_id: TaskId,
         leader_endpoint: DapUrl,
         authentication: AuthenticationToken,
         hpke_keypair: HpkeKeypair,
         vdaf: V,
+        vdaf_config: VdafConfig,
         time_precision: TimePrecision,
     ) -> CollectorBuilder<V> {
         CollectorBuilder::new(
@@ -600,13 +594,14 @@ impl<V: vdaf::Collector> Collector<V> {
             authentication,
             hpke_keypair,
             vdaf,
+            vdaf_config,
             time_precision,
         )
     }
 
     /// Creates a [`CollectorBuilder`] from the required set of DAP task parameters and a
     /// [`ConfiguredVdaf`], which supplies both the VDAF and its [`VdafConfig`].
-    pub fn builder_from_configured_vdaf(
+    pub fn builder(
         task_id: TaskId,
         leader_endpoint: DapUrl,
         authentication: AuthenticationToken,
@@ -997,7 +992,7 @@ mod tests {
     ) -> Collector<V> {
         let server_url = DapUrl::try_from(server.url().as_str()).unwrap();
         let hpke_keypair = HpkeKeypair::test();
-        Collector::builder_from_configured_vdaf(
+        Collector::builder(
             random(),
             server_url.clone(),
             AuthenticationToken::new_bearer_token_from_string("Y29sbGVjdG9yIHRva2Vu").unwrap(),
@@ -1112,7 +1107,7 @@ mod tests {
             ("http://example.com/dap", "http://example.com/dap/"),
             ("http://example.com", "http://example.com/"),
         ] {
-            let collector = Collector::builder_from_configured_vdaf(
+            let collector = Collector::builder(
                 random(),
                 endpoint.try_into().unwrap(),
                 AuthenticationToken::new_bearer_token_from_string("Y29sbGVjdG9yIHRva2Vu").unwrap(),
@@ -1495,7 +1490,7 @@ mod tests {
         );
         let server_url = DapUrl::try_from(server.url().as_str()).unwrap();
         let hpke_keypair = HpkeKeypair::test();
-        let collector = Collector::builder_from_configured_vdaf(
+        let collector = Collector::builder(
             random(),
             server_url.clone(),
             AuthenticationToken::new_bearer_token_from_bytes(Vec::from([0x41u8; 16])).unwrap(),

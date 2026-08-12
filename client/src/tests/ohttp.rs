@@ -31,7 +31,7 @@ async fn build_client(server: &mockito::ServerGuard) -> Result<Client<Prio3Count
     let keys_endpoint = Url::parse(format!("{}/ohttp-keys", server.url()).as_str()).unwrap();
     let relay = Url::parse(format!("{}/relay", server.url()).as_str()).unwrap();
 
-    Client::builder_from_configured_vdaf(
+    Client::builder(
         task_id,
         server_url.clone(),
         server_url.clone(),

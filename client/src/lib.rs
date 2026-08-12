@@ -20,7 +20,7 @@
 //!
 //!     // The task parameters below are bound into HPKE AADs and MUST match those provisioned to the
 //!     // aggregators byte-for-byte.
-//!     let client = janus_client::Client::builder_from_configured_vdaf(
+//!     let client = janus_client::Client::builder(
 //!         task,
 //!         leader_url,
 //!         helper_url,
@@ -184,9 +184,8 @@ struct ClientParameters {
     /// Batch configuration bound into the task's `TaskConfiguration`. Required before uploading;
     /// set via [`ClientBuilder::with_batch_config`].
     batch_config: Option<BatchConfig>,
-    /// VDAF configuration bound into the task's `TaskConfiguration`. Required before uploading;
-    /// set via [`ClientBuilder::with_vdaf_config`].
-    vdaf_config: Option<VdafConfig>,
+    /// VDAF configuration bound into the task's `TaskConfiguration`.
+    vdaf_config: VdafConfig,
     /// Optional task validity interval bound into the task's `TaskConfiguration`.
     task_interval: Option<Interval>,
     /// Parameters to use when retrying HTTP requests.
@@ -200,6 +199,7 @@ impl ClientParameters {
         leader_aggregator_endpoint: DapUrl,
         helper_aggregator_endpoint: DapUrl,
         time_precision: TimePrecision,
+        vdaf_config: VdafConfig,
     ) -> Self {
         // Store the endpoints byte-for-byte; trailing-slash normalization happens at join time via
         // `url_for_join`, so the bytes bound into HPKE AADs stay exactly as provisioned (DAP §4.1).
@@ -211,15 +211,15 @@ impl ClientParameters {
             task_info: None,
             min_batch_size: None,
             batch_config: None,
-            vdaf_config: None,
+            vdaf_config,
             task_interval: None,
             http_request_retry_parameters: http_request_exponential_backoff(),
         }
     }
 
     /// Builds this task's canonical [`TaskConfiguration`] for binding into HPKE AADs. Errors if any
-    /// of the required parameters (`task_info`, `min_batch_size`, `batch_config`, `vdaf_config`)
-    /// were not supplied via the corresponding [`ClientBuilder`] setters.
+    /// of the required parameters (`task_info`, `min_batch_size`, `batch_config`) were not supplied
+    /// via the corresponding [`ClientBuilder`] setters.
     fn task_configuration(&self) -> Result<TaskConfiguration, Error> {
         Ok(build_task_configuration(
             self.task_info
@@ -233,9 +233,7 @@ impl ClientParameters {
             self.batch_config
                 .clone()
                 .ok_or(Error::InvalidParameter("batch_config not set"))?,
-            self.vdaf_config
-                .clone()
-                .ok_or(Error::InvalidParameter("vdaf_config not set"))?,
+            self.vdaf_config.clone(),
             self.task_interval,
         )?)
     }
@@ -303,13 +301,16 @@ pub struct ClientBuilder<V: vdaf::Client<16>> {
 }
 
 impl<V: vdaf::Client<16>> ClientBuilder<V> {
-    /// Construct a [`ClientBuilder`] from its required DAP task parameters.
+    /// Construct a [`ClientBuilder`] from its required DAP task parameters. The caller is
+    /// responsible for ensuring `vdaf_config` describes `vdaf`; prefer [`Client::builder`], which
+    /// cannot mismatch the two.
     pub fn new(
         task_id: TaskId,
         leader_aggregator_endpoint: DapUrl,
         helper_aggregator_endpoint: DapUrl,
         time_precision: TimePrecision,
         vdaf: V,
+        vdaf_config: VdafConfig,
     ) -> Self {
         Self {
             parameters: ClientParameters::new(
@@ -317,6 +318,7 @@ impl<V: vdaf::Client<16>> ClientBuilder<V> {
                 leader_aggregator_endpoint,
                 helper_aggregator_endpoint,
                 time_precision,
+                vdaf_config,
             ),
             vdaf,
             leader_hpke_config: None,
@@ -444,13 +446,6 @@ impl<V: vdaf::Client<16>> ClientBuilder<V> {
         self
     }
 
-    /// Set the VDAF configuration bound into the task's `TaskConfiguration`. Required before
-    /// [`Self::build`].
-    pub fn with_vdaf_config(mut self, vdaf_config: VdafConfig) -> Self {
-        self.parameters.vdaf_config = Some(vdaf_config);
-        self
-    }
-
     /// Set the optional task validity interval bound into the task's `TaskConfiguration`.
     pub fn with_task_interval(mut self, task_interval: Option<Interval>) -> Self {
         self.parameters.task_interval = task_interval;
@@ -487,7 +482,7 @@ impl<V: vdaf::Client<16>> ClientBuilder<V> {
     /// async fn main() {
     ///     let task_id = random();
     ///
-    ///     let client = janus_client::Client::builder_from_configured_vdaf(
+    ///     let client = janus_client::Client::builder(
     ///         task_id,
     ///         DapUrl::try_from("https://leader.example.com/").unwrap(),
     ///         DapUrl::try_from("https://helper.example.com/").unwrap(),
@@ -526,27 +521,9 @@ pub struct Client<V: vdaf::Client<16>> {
 }
 
 impl<V: vdaf::Client<16>> Client<V> {
-    /// Creates a [`ClientBuilder`] for further configuration from the required set of DAP task
-    /// parameters.
-    pub fn builder(
-        task_id: TaskId,
-        leader_aggregator_endpoint: DapUrl,
-        helper_aggregator_endpoint: DapUrl,
-        time_precision: TimePrecision,
-        vdaf: V,
-    ) -> ClientBuilder<V> {
-        ClientBuilder::new(
-            task_id,
-            leader_aggregator_endpoint,
-            helper_aggregator_endpoint,
-            time_precision,
-            vdaf,
-        )
-    }
-
     /// Creates a [`ClientBuilder`] from the required set of DAP task parameters and a
     /// [`ConfiguredVdaf`], which supplies both the VDAF and its [`VdafConfig`].
-    pub fn builder_from_configured_vdaf(
+    pub fn builder(
         task_id: TaskId,
         leader_aggregator_endpoint: DapUrl,
         helper_aggregator_endpoint: DapUrl,
@@ -560,8 +537,29 @@ impl<V: vdaf::Client<16>> Client<V> {
             helper_aggregator_endpoint,
             time_precision,
             vdaf,
+            vdaf_config,
         )
-        .with_vdaf_config(vdaf_config)
+    }
+
+    /// Creates a [`ClientBuilder`] when `vdaf` and `vdaf_config` are obtained separately, e.g. by
+    /// generic code deriving both from a `VdafInstance`. The caller is responsible for ensuring
+    /// they agree; a mismatch produces reports the aggregators cannot decrypt.
+    pub fn builder_with_custom_vdaf(
+        task_id: TaskId,
+        leader_aggregator_endpoint: DapUrl,
+        helper_aggregator_endpoint: DapUrl,
+        time_precision: TimePrecision,
+        vdaf: V,
+        vdaf_config: VdafConfig,
+    ) -> ClientBuilder<V> {
+        ClientBuilder::new(
+            task_id,
+            leader_aggregator_endpoint,
+            helper_aggregator_endpoint,
+            time_precision,
+            vdaf,
+            vdaf_config,
+        )
     }
 
     /// Shard a measurement, encrypt its shares, and construct a [`janus_messages::Report`] to be
@@ -655,7 +653,7 @@ impl<V: vdaf::Client<16>> Client<V> {
     /// # let measurement1 = true;
     /// # let measurement2 = false;
     /// let time_precision = TimePrecision::from_seconds(3600);
-    /// let client = Client::builder_from_configured_vdaf(
+    /// let client = Client::builder(
     ///     random(),
     ///     "https://example.com/".parse().unwrap(),
     ///     "https://example.net/".parse().unwrap(),
@@ -940,7 +938,7 @@ where
     /// # #[tokio::main]
     /// # async fn main() {
     /// let time_precision = TimePrecision::from_seconds(300);
-    /// let client = Client::builder_from_configured_vdaf(
+    /// let client = Client::builder(
     ///     random(),
     ///     "https://leader.example.com/".parse().unwrap(),
     ///     "https://helper.example.com/".parse().unwrap(),

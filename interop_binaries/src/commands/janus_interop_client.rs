@@ -97,18 +97,18 @@ async fn handle_upload_generic<V: prio::vdaf::Client<16>>(
         .to_vdaf_config()
         .map_err(|err| anyhow::anyhow!("unsupported VDAF for TaskConfiguration: {err}"))?;
 
-    let client = janus_client::Client::builder(
+    let client = janus_client::Client::builder_with_custom_vdaf(
         task_id,
         request.leader,
         request.helper,
         time_precision,
         vdaf,
+        vdaf_config,
     )
     .with_http_client(http_client.clone())
     .with_task_info(INTEROP_TASK_INFO.to_vec())
     .with_min_batch_size(request.min_batch_size)
     .with_batch_config(interop_batch_config(request.batch_mode)?)
-    .with_vdaf_config(vdaf_config)
     .build()
     .await
     .context("failed to construct client")?;

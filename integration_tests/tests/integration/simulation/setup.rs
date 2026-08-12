@@ -217,7 +217,7 @@ impl Components {
             .unwrap();
 
         let http_client = default_http_client().unwrap();
-        let client = Client::builder(
+        let client = Client::builder_with_custom_vdaf(
             *task.id(),
             task.leader_aggregator_endpoint()
                 .as_str()
@@ -229,12 +229,12 @@ impl Components {
                 .unwrap(),
             *task.time_precision(),
             state.vdaf.clone(),
+            leader_task.vdaf().to_vdaf_config().unwrap(),
         )
         .with_http_client(http_client.clone())
         .with_task_info(leader_task.task_info().to_vec())
         .with_min_batch_size(leader_task.min_batch_size())
         .with_batch_config(leader_task.batch_mode().to_batch_config())
-        .with_vdaf_config(leader_task.vdaf().to_vdaf_config().unwrap())
         .with_task_interval(leader_task.task_interval().copied())
         .build()
         .await
@@ -336,7 +336,7 @@ impl Components {
                 2,
             ));
 
-        let collector = Collector::builder(
+        let collector = Collector::builder_with_custom_vdaf(
             *task.id(),
             task.leader_aggregator_endpoint()
                 .as_str()
@@ -345,6 +345,7 @@ impl Components {
             task.collector_auth_token().clone(),
             task.collector_hpke_keypair().clone(),
             state.vdaf.clone(),
+            leader_task.vdaf().to_vdaf_config().unwrap(),
             *task.time_precision(),
         )
         .with_helper_endpoint(
@@ -356,7 +357,6 @@ impl Components {
         .with_task_info(leader_task.task_info().to_vec())
         .with_min_batch_size(leader_task.min_batch_size())
         .with_batch_config(leader_task.batch_mode().to_batch_config())
-        .with_vdaf_config(leader_task.vdaf().to_vdaf_config().unwrap())
         .with_task_interval(leader_task.task_interval().copied())
         .with_http_request_backoff(http_request_exponential_backoff())
         .with_collect_poll_backoff(
