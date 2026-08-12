@@ -437,9 +437,8 @@ async fn taskprov_aggregate_init() {
     let got_task = got_task.unwrap();
     assert_eq!(
         test.task
-            .taskprov_helper_view()
-            .unwrap()
-            .with_taskprov_task_config(test.task_config.clone()),
+            .taskprov_helper_view_with_task_config(test.task_config.clone())
+            .unwrap(),
         got_task
     );
     assert_eq!(got_task.task_info(), b"foobar".as_slice());
@@ -608,9 +607,8 @@ async fn taskprov_aggregate_init_missing_extension() {
     );
     assert_eq!(
         test.task
-            .taskprov_helper_view()
-            .unwrap()
-            .with_taskprov_task_config(test.task_config.clone()),
+            .taskprov_helper_view_with_task_config(test.task_config.clone())
+            .unwrap(),
         got_task.unwrap()
     );
 }
@@ -709,9 +707,8 @@ async fn taskprov_aggregate_init_malformed_extension() {
     );
     assert_eq!(
         test.task
-            .taskprov_helper_view()
-            .unwrap()
-            .with_taskprov_task_config(test.task_config.clone()),
+            .taskprov_helper_view_with_task_config(test.task_config.clone())
+            .unwrap(),
         got_task.unwrap()
     );
 }
@@ -1107,13 +1104,18 @@ async fn taskprov_aggregate_continue() {
     test.datastore
         .run_unnamed_tx(|tx| {
             let task = test.task.clone();
+            let task_config = test.task_config.clone();
             let report_share = report_share.clone();
             let transcript = transcript.clone();
 
             Box::pin(async move {
                 // Aggregate continue is only possible if the task has already been inserted.
-                tx.put_aggregator_task(&task.taskprov_helper_view().unwrap())
-                    .await?;
+                tx.put_aggregator_task(
+                    &task
+                        .taskprov_helper_view_with_task_config(task_config)
+                        .unwrap(),
+                )
+                .await?;
 
                 tx.put_scrubbed_report(
                     task.id(),
@@ -1267,9 +1269,8 @@ async fn taskprov_aggregate_share() {
             Box::pin(async move {
                 tx.put_aggregator_task(
                     &task
-                        .taskprov_helper_view()
-                        .unwrap()
-                        .with_taskprov_task_config(task_config),
+                        .taskprov_helper_view_with_task_config(task_config)
+                        .unwrap(),
                 )
                 .await?;
 

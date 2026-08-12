@@ -208,7 +208,9 @@ async fn hpke_config_with_taskprov() {
         VdafInstance::Prio3Count,
     )
     .build();
-    let taskprov_helper_task = task.taskprov_helper_view().unwrap();
+    let taskprov_helper_task = task
+        .taskprov_helper_view_with_task_config(task.task_configuration())
+        .unwrap();
     datastore
         .put_aggregator_task(&taskprov_helper_task)
         .await

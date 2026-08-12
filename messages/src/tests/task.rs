@@ -1018,3 +1018,57 @@ fn unknown_variants_with_known_codepoint_normalize_on_decode() {
     assert_eq!(decoded, VdafConfig::Prio3Count);
     assert_ne!(decoded, vdaf);
 }
+
+/// Decoding and re-encoding a `TaskConfiguration` must reproduce the original bytes exactly, even
+/// when it carries constructions this version does not understand. Janus stores each task's
+/// configuration as wire bytes and re-encodes them to build HPKE AADs, so any byte lost in that
+/// round trip would break decryption.
+#[test]
+fn task_configuration_decode_encode_is_byte_preserving() {
+    let bytes = hex::decode(concat!(
+        concat!(
+            // task_info
+            "04",       // length
+            "74657374", // "test"
+        ),
+        concat!(
+            // leader_aggregator_url
+            "0014",                                     // length
+            "68747470733A2F2F6578616D706C652E636F6D2F",  // "https://example.com/"
+        ),
+        concat!(
+            // helper_aggregator_url
+            "001C",                                                     // length
+            "68747470733A2F2F616E6F746865722E6578616D706C652E636F6D2F",  // "https://another.example.com/"
+        ),
+        "0000000000000E10", // time_precision
+        "0000000000002710", // min_batch_size
+        // Unknown batch mode with an opaque, non-empty batch_config.
+        "FE",     // batch_mode
+        "0003",   // batch_config length
+        "010203", // batch_config
+        // Unknown VDAF type with an opaque, non-empty vdaf_config.
+        "FFFFFFFF", // vdaf_type
+        "0004",     // vdaf_config length
+        "DEADBEEF", // vdaf_config
+        concat!(
+            // extensions: TaskInterval, then an unknown type (strictly increasing).
+            "0027", // length
+            concat!(
+                "0001",             // extension_type (TaskInterval)
+                "0010",             // extension_data length
+                "0000000000000115", // start
+                "000000000000001C", // duration
+            ),
+            concat!(
+                "1234",             // extension_type (unknown)
+                "000F",             // extension_data length
+                "BEEFCAFEDEADBEEFCAFEDEADBEEFCA", // extension_data (15 opaque bytes)
+            ),
+        ),
+    ))
+    .unwrap();
+
+    let decoded = TaskConfiguration::get_decoded(&bytes).unwrap();
+    assert_eq!(decoded.get_encoded().unwrap(), bytes);
+}
