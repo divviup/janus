@@ -7,19 +7,14 @@
 //! # Examples
 //!
 //! ```no_run
-//! use prio::vdaf::prio3::Prio3Histogram;
-//! use janus_messages::{BatchConfig, TimePrecision, TaskId, Url, VdafConfig};
+//! use janus_client::ConfiguredVdaf;
+//! use janus_messages::{BatchConfig, TimePrecision, TaskId, Url};
 //! use std::str::FromStr;
 //!
 //! #[tokio::main]
 //! async fn main() {
 //!     let leader_url = Url::try_from("https://leader.example.com/").unwrap();
 //!     let helper_url = Url::try_from("https://helper.example.com/").unwrap();
-//!     let vdaf = Prio3Histogram::new_histogram(
-//!         2,
-//!         12,
-//!         4
-//!     ).unwrap();
 //!     let taskid = "rc0jgm1MHH6Q7fcI4ZdNUxas9DAYLcJFK5CL7xUl-gU";
 //!     let task = TaskId::from_str(taskid).unwrap();
 //!
@@ -30,12 +25,11 @@
 //!         leader_url,
 //!         helper_url,
 //!         TimePrecision::from_seconds(300),
-//!         vdaf,
+//!         ConfiguredVdaf::prio3_histogram(12, 4).unwrap(),
 //!     )
 //!     .with_task_info(b"[task info]".to_vec())
 //!     .with_min_batch_size(1000)
 //!     .with_batch_config(BatchConfig::TimeInterval)
-//!     .with_vdaf_config(VdafConfig::Prio3Histogram { length: 12, chunk_length: 4 })
 //!     .build()
 //!     .await
 //!     .unwrap();
@@ -57,6 +51,7 @@ use educe::Educe;
 use http::{HeaderValue, header::ACCEPT};
 use http::{StatusCode, header::CONTENT_TYPE};
 use itertools::Itertools;
+pub use janus_core::vdaf::ConfiguredVdaf;
 use janus_core::{
     hpke::{self, HpkeApplicationInfo, Label, is_hpke_config_supported},
     http::{HttpErrorResponse, cached_resource::CachedResource},
@@ -189,9 +184,8 @@ struct ClientParameters {
     /// Batch configuration bound into the task's `TaskConfiguration`. Required before uploading;
     /// set via [`ClientBuilder::with_batch_config`].
     batch_config: Option<BatchConfig>,
-    /// VDAF configuration bound into the task's `TaskConfiguration`. Required before uploading;
-    /// set via [`ClientBuilder::with_vdaf_config`].
-    vdaf_config: Option<VdafConfig>,
+    /// VDAF configuration bound into the task's `TaskConfiguration`.
+    vdaf_config: VdafConfig,
     /// Optional task validity interval bound into the task's `TaskConfiguration`.
     task_interval: Option<Interval>,
     /// Parameters to use when retrying HTTP requests.
@@ -205,6 +199,7 @@ impl ClientParameters {
         leader_aggregator_endpoint: DapUrl,
         helper_aggregator_endpoint: DapUrl,
         time_precision: TimePrecision,
+        vdaf_config: VdafConfig,
     ) -> Self {
         // Store the endpoints byte-for-byte; trailing-slash normalization happens at join time via
         // `url_for_join`, so the bytes bound into HPKE AADs stay exactly as provisioned (DAP §4.1).
@@ -216,15 +211,15 @@ impl ClientParameters {
             task_info: None,
             min_batch_size: None,
             batch_config: None,
-            vdaf_config: None,
+            vdaf_config,
             task_interval: None,
             http_request_retry_parameters: http_request_exponential_backoff(),
         }
     }
 
     /// Builds this task's canonical [`TaskConfiguration`] for binding into HPKE AADs. Errors if any
-    /// of the required parameters (`task_info`, `min_batch_size`, `batch_config`, `vdaf_config`)
-    /// were not supplied via the corresponding [`ClientBuilder`] setters.
+    /// of the required parameters (`task_info`, `min_batch_size`, `batch_config`) were not supplied
+    /// via the corresponding [`ClientBuilder`] setters.
     fn task_configuration(&self) -> Result<TaskConfiguration, Error> {
         Ok(build_task_configuration(
             self.task_info
@@ -238,9 +233,7 @@ impl ClientParameters {
             self.batch_config
                 .clone()
                 .ok_or(Error::InvalidParameter("batch_config not set"))?,
-            self.vdaf_config
-                .clone()
-                .ok_or(Error::InvalidParameter("vdaf_config not set"))?,
+            self.vdaf_config.clone(),
             self.task_interval,
         )?)
     }
@@ -308,13 +301,16 @@ pub struct ClientBuilder<V: vdaf::Client<16>> {
 }
 
 impl<V: vdaf::Client<16>> ClientBuilder<V> {
-    /// Construct a [`ClientBuilder`] from its required DAP task parameters.
+    /// Construct a [`ClientBuilder`] from its required DAP task parameters. The caller is
+    /// responsible for ensuring `vdaf_config` describes `vdaf`; prefer [`Client::builder`], which
+    /// cannot mismatch the two.
     pub fn new(
         task_id: TaskId,
         leader_aggregator_endpoint: DapUrl,
         helper_aggregator_endpoint: DapUrl,
         time_precision: TimePrecision,
         vdaf: V,
+        vdaf_config: VdafConfig,
     ) -> Self {
         Self {
             parameters: ClientParameters::new(
@@ -322,6 +318,7 @@ impl<V: vdaf::Client<16>> ClientBuilder<V> {
                 leader_aggregator_endpoint,
                 helper_aggregator_endpoint,
                 time_precision,
+                vdaf_config,
             ),
             vdaf,
             leader_hpke_config: None,
@@ -449,13 +446,6 @@ impl<V: vdaf::Client<16>> ClientBuilder<V> {
         self
     }
 
-    /// Set the VDAF configuration bound into the task's `TaskConfiguration`. Required before
-    /// [`Self::build`].
-    pub fn with_vdaf_config(mut self, vdaf_config: VdafConfig) -> Self {
-        self.parameters.vdaf_config = Some(vdaf_config);
-        self
-    }
-
     /// Set the optional task validity interval bound into the task's `TaskConfiguration`.
     pub fn with_task_interval(mut self, task_interval: Option<Interval>) -> Self {
         self.parameters.task_interval = task_interval;
@@ -483,7 +473,7 @@ impl<V: vdaf::Client<16>> ClientBuilder<V> {
     ///
     /// ```no_run
     /// # use url::Url;
-    /// # use prio::vdaf::prio3::Prio3Count;
+    /// # use janus_client::ConfiguredVdaf;
     /// # use janus_messages::{TimePrecision, TaskId, Url as DapUrl};
     /// # use rand::random;
     /// # use std::str::FromStr;
@@ -497,7 +487,7 @@ impl<V: vdaf::Client<16>> ClientBuilder<V> {
     ///         DapUrl::try_from("https://leader.example.com/").unwrap(),
     ///         DapUrl::try_from("https://helper.example.com/").unwrap(),
     ///         TimePrecision::from_seconds(1),
-    ///         Prio3Count::new_count(2).unwrap(),
+    ///         ConfiguredVdaf::prio3_count().unwrap(),
     ///     )
     ///     .with_ohttp_config(janus_client::OhttpConfig {
     ///         key_configs: Url::parse("https://ohttp-keys.example.com").unwrap(),
@@ -531,14 +521,36 @@ pub struct Client<V: vdaf::Client<16>> {
 }
 
 impl<V: vdaf::Client<16>> Client<V> {
-    /// Creates a [`ClientBuilder`] for further configuration from the required set of DAP task
-    /// parameters.
+    /// Creates a [`ClientBuilder`] from the required set of DAP task parameters and a
+    /// [`ConfiguredVdaf`], which supplies both the VDAF and its [`VdafConfig`].
     pub fn builder(
         task_id: TaskId,
         leader_aggregator_endpoint: DapUrl,
         helper_aggregator_endpoint: DapUrl,
         time_precision: TimePrecision,
+        configured_vdaf: ConfiguredVdaf<V>,
+    ) -> ClientBuilder<V> {
+        let (vdaf, vdaf_config) = configured_vdaf.into_parts();
+        ClientBuilder::new(
+            task_id,
+            leader_aggregator_endpoint,
+            helper_aggregator_endpoint,
+            time_precision,
+            vdaf,
+            vdaf_config,
+        )
+    }
+
+    /// Creates a [`ClientBuilder`] when `vdaf` and `vdaf_config` are obtained separately, e.g. by
+    /// generic code deriving both from a `VdafInstance`. The caller is responsible for ensuring
+    /// they agree; a mismatch produces reports the aggregators cannot decrypt.
+    pub fn builder_with_custom_vdaf(
+        task_id: TaskId,
+        leader_aggregator_endpoint: DapUrl,
+        helper_aggregator_endpoint: DapUrl,
+        time_precision: TimePrecision,
         vdaf: V,
+        vdaf_config: VdafConfig,
     ) -> ClientBuilder<V> {
         ClientBuilder::new(
             task_id,
@@ -546,6 +558,7 @@ impl<V: vdaf::Client<16>> Client<V> {
             helper_aggregator_endpoint,
             time_precision,
             vdaf,
+            vdaf_config,
         )
     }
 
@@ -631,27 +644,25 @@ impl<V: vdaf::Client<16>> Client<V> {
     ///
     /// ```no_run
     /// # use janus_client::{Client, Error};
-    /// # use janus_messages::{BatchConfig, TimePrecision, Time, VdafConfig};
-    /// # use prio::vdaf::prio3::Prio3;
+    /// # use janus_client::ConfiguredVdaf;
+    /// # use janus_messages::{BatchConfig, TimePrecision, Time};
     /// # use rand::random;
     /// # use std::time::SystemTime;
     /// #
     /// # async fn test() -> Result<(), Error> {
     /// # let measurement1 = true;
     /// # let measurement2 = false;
-    /// # let vdaf = Prio3::new_count(2).unwrap();
     /// let time_precision = TimePrecision::from_seconds(3600);
     /// let client = Client::builder(
     ///     random(),
     ///     "https://example.com/".parse().unwrap(),
     ///     "https://example.net/".parse().unwrap(),
     ///     time_precision,
-    ///     vdaf,
+    ///     ConfiguredVdaf::prio3_count().unwrap(),
     /// )
     /// .with_task_info(b"[task info]".to_vec())
     /// .with_min_batch_size(1000)
     /// .with_batch_config(BatchConfig::TimeInterval)
-    /// .with_vdaf_config(VdafConfig::Prio3Count)
     /// .build().await?;
     ///
     /// // Upload multiple measurements with explicit timestamps.
@@ -920,8 +931,8 @@ where
     ///
     /// ```no_run
     /// # use janus_client::{Client, UploadStats};
-    /// # use janus_messages::{BatchConfig, TimePrecision, Time, VdafConfig};
-    /// # use prio::vdaf::prio3::Prio3Count;
+    /// # use janus_client::ConfiguredVdaf;
+    /// # use janus_messages::{BatchConfig, TimePrecision, Time};
     /// # use rand::random;
     /// #
     /// # #[tokio::main]
@@ -932,12 +943,11 @@ where
     ///     "https://leader.example.com/".parse().unwrap(),
     ///     "https://helper.example.com/".parse().unwrap(),
     ///     time_precision,
-    ///     Prio3Count::new_count(2).unwrap(),
+    ///     ConfiguredVdaf::prio3_count().unwrap(),
     /// )
     /// .with_task_info(b"[task info]".to_vec())
     /// .with_min_batch_size(1000)
     /// .with_batch_config(BatchConfig::TimeInterval)
-    /// .with_vdaf_config(VdafConfig::Prio3Count)
     /// .build().await.unwrap();
     ///
     /// let session = client.upload_session(100);

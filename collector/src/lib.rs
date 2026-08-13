@@ -11,11 +11,8 @@
 //! ```no_run
 //! use std::{fs::File, str::FromStr};
 //!
-//! use janus_collector::{Collector, PrivateCollectorCredential};
-//! use janus_messages::{
-//!     BatchConfig, Duration, Interval, Query, TaskId, Time, TimePrecision, Url, VdafConfig,
-//! };
-//! use prio::vdaf::prio3::Prio3;
+//! use janus_collector::{Collector, ConfiguredVdaf, PrivateCollectorCredential};
+//! use janus_messages::{BatchConfig, Duration, Interval, Query, TaskId, Time, TimePrecision, Url};
 //!
 //! # async fn run() {
 //! # const TIME_PRECISION: u64 = 3600;
@@ -33,9 +30,6 @@
 //!     Url::from_str("[absolute URI to the DAP helper, e.g. https://helper.dap.example.com/]")
 //!         .unwrap();
 //!
-//! // Supply a VDAF implementation, corresponding to this task.
-//! let vdaf = Prio3::new_count(2).unwrap();
-//!
 //! // The task parameters below are bound into HPKE AADs and MUST match those provisioned to the
 //! // aggregators byte-for-byte.
 //! let collector = Collector::builder(
@@ -43,14 +37,13 @@
 //!     leader_url,
 //!     collector_credential.authentication_token(),
 //!     collector_credential.hpke_keypair(),
-//!     vdaf,
+//!     ConfiguredVdaf::prio3_count().unwrap(),
 //!     time_precision,
 //! )
 //! .with_helper_endpoint(helper_url)
 //! .with_task_info(b"[task info]".to_vec())
 //! .with_min_batch_size(1000)
 //! .with_batch_config(BatchConfig::TimeInterval)
-//! .with_vdaf_config(VdafConfig::Prio3Count)
 //! .build()
 //! .unwrap();
 //!
@@ -88,9 +81,9 @@ pub use backon::{BackoffBuilder, ExponentialBackoff, ExponentialBuilder};
 use chrono::{DateTime, Duration, Utc};
 pub use credential::PrivateCollectorCredential;
 use educe::Educe;
-pub use janus_core::auth_tokens::AuthenticationToken;
+pub use janus_core::{auth_tokens::AuthenticationToken, hpke::HpkeKeypair, vdaf::ConfiguredVdaf};
 use janus_core::{
-    hpke::{self, HpkeApplicationInfo, HpkeKeypair},
+    hpke::{self, HpkeApplicationInfo},
     http::{HttpErrorResponse, ReqwestAuthenticationToken, check_content_type},
     retries::{
         ExponentialWithTotalDelayBuilder, http_request_exponential_backoff, retry_http_request,
@@ -377,9 +370,8 @@ pub struct CollectorBuilder<V: vdaf::Collector> {
     /// Batch configuration bound into the task's `TaskConfiguration`. Required before
     /// [`Self::build`]; set via [`Self::with_batch_config`].
     batch_config: Option<BatchConfig>,
-    /// VDAF configuration bound into the task's `TaskConfiguration`. Required before
-    /// [`Self::build`]; set via [`Self::with_vdaf_config`].
-    vdaf_config: Option<VdafConfig>,
+    /// VDAF configuration bound into the task's `TaskConfiguration`.
+    vdaf_config: VdafConfig,
     /// Optional task validity interval bound into the task's `TaskConfiguration`.
     task_interval: Option<Interval>,
 
@@ -393,13 +385,15 @@ pub struct CollectorBuilder<V: vdaf::Collector> {
 
 impl<V: vdaf::Collector> CollectorBuilder<V> {
     /// Construct a [`CollectorBuilder`] from required DAP task parameters and an implementation of
-    /// the task's VDAF.
+    /// the task's VDAF. The caller is responsible for ensuring `vdaf_config` describes `vdaf`;
+    /// prefer [`Self::from_configured_vdaf`], which cannot mismatch the two.
     pub fn new(
         task_id: TaskId,
         leader_endpoint: DapUrl,
         authentication: AuthenticationToken,
         hpke_keypair: HpkeKeypair,
         vdaf: V,
+        vdaf_config: VdafConfig,
         time_precision: TimePrecision,
     ) -> Self {
         Self {
@@ -413,7 +407,7 @@ impl<V: vdaf::Collector> CollectorBuilder<V> {
             task_info: None,
             min_batch_size: None,
             batch_config: None,
-            vdaf_config: None,
+            vdaf_config,
             task_interval: None,
             http_client: None,
             http_request_retry_parameters: http_request_exponential_backoff(),
@@ -422,6 +416,28 @@ impl<V: vdaf::Collector> CollectorBuilder<V> {
                 .with_max_delay(StdDuration::from_secs(300))
                 .with_factor(1.2),
         }
+    }
+
+    /// Construct a [`CollectorBuilder`] from required DAP task parameters and a
+    /// [`ConfiguredVdaf`], which supplies both the VDAF and its [`VdafConfig`].
+    pub fn from_configured_vdaf(
+        task_id: TaskId,
+        leader_endpoint: DapUrl,
+        authentication: AuthenticationToken,
+        hpke_keypair: HpkeKeypair,
+        configured_vdaf: ConfiguredVdaf<V>,
+        time_precision: TimePrecision,
+    ) -> Self {
+        let (vdaf, vdaf_config) = configured_vdaf.into_parts();
+        Self::new(
+            task_id,
+            leader_endpoint,
+            authentication,
+            hpke_keypair,
+            vdaf,
+            vdaf_config,
+            time_precision,
+        )
     }
 
     /// Finalize construction of a [`Collector`].
@@ -452,9 +468,7 @@ impl<V: vdaf::Collector> CollectorBuilder<V> {
             batch_config: self
                 .batch_config
                 .ok_or(Error::InvalidParameter("batch_config not set"))?,
-            vdaf_config: self
-                .vdaf_config
-                .ok_or(Error::InvalidParameter("vdaf_config not set"))?,
+            vdaf_config: self.vdaf_config,
             task_interval: self.task_interval,
             http_client,
             http_request_retry_parameters: self.http_request_retry_parameters,
@@ -512,13 +526,6 @@ impl<V: vdaf::Collector> CollectorBuilder<V> {
         self
     }
 
-    /// Set the VDAF configuration bound into the task's `TaskConfiguration`. Required before
-    /// [`Self::build`].
-    pub fn with_vdaf_config(mut self, vdaf_config: VdafConfig) -> Self {
-        self.vdaf_config = Some(vdaf_config);
-        self
-    }
-
     /// Set the optional task validity interval bound into the task's `TaskConfiguration`.
     pub fn with_task_interval(mut self, task_interval: Option<Interval>) -> Self {
         self.task_interval = task_interval;
@@ -569,14 +576,16 @@ pub struct Collector<V: vdaf::Collector> {
 }
 
 impl<V: vdaf::Collector> Collector<V> {
-    /// Construct a [`CollectorBuilder`] from required DAP task parameters and an implementation of
-    /// the task's VDAF.
-    pub fn builder(
+    /// Construct a [`CollectorBuilder`] when `vdaf` and `vdaf_config` are obtained separately, e.g.
+    /// by generic code deriving both from a `VdafInstance`. The caller is responsible for ensuring
+    /// they agree; a mismatch produces aggregate shares the collector cannot decrypt.
+    pub fn builder_with_custom_vdaf(
         task_id: TaskId,
         leader_endpoint: DapUrl,
         authentication: AuthenticationToken,
         hpke_keypair: HpkeKeypair,
         vdaf: V,
+        vdaf_config: VdafConfig,
         time_precision: TimePrecision,
     ) -> CollectorBuilder<V> {
         CollectorBuilder::new(
@@ -585,6 +594,27 @@ impl<V: vdaf::Collector> Collector<V> {
             authentication,
             hpke_keypair,
             vdaf,
+            vdaf_config,
+            time_precision,
+        )
+    }
+
+    /// Creates a [`CollectorBuilder`] from the required set of DAP task parameters and a
+    /// [`ConfiguredVdaf`], which supplies both the VDAF and its [`VdafConfig`].
+    pub fn builder(
+        task_id: TaskId,
+        leader_endpoint: DapUrl,
+        authentication: AuthenticationToken,
+        hpke_keypair: HpkeKeypair,
+        configured_vdaf: ConfiguredVdaf<V>,
+        time_precision: TimePrecision,
+    ) -> CollectorBuilder<V> {
+        CollectorBuilder::from_configured_vdaf(
+            task_id,
+            leader_endpoint,
+            authentication,
+            hpke_keypair,
+            configured_vdaf,
             time_precision,
         )
     }
@@ -930,11 +960,12 @@ mod tests {
         initialize_rustls,
         retries::test_util::test_http_request_exponential_backoff,
         test_util::{VdafTranscript, install_test_trace_subscriber, run_vdaf},
+        vdaf::ConfiguredVdaf,
     };
     use janus_messages::{
         AggregateShareAad, BatchConfig, BatchId, CollectionJobId, CollectionJobReq,
         CollectionJobResp, Duration, HpkeCiphertext, Interval, MediaType, PartialBatchSelector,
-        Query, Role, TaskId, Time, TimePrecision, Url as DapUrl, VdafConfig,
+        Query, Role, TaskId, Time, TimePrecision, Url as DapUrl,
         batch_mode::{LeaderSelected, TimeInterval},
         problem_type::DapProblemType,
     };
@@ -942,7 +973,7 @@ mod tests {
     use prio::{
         codec::Encode,
         field::Field64,
-        vdaf::{self, AggregateShare, OutputShare, dummy, prio3::Prio3},
+        vdaf::{self, AggregateShare, OutputShare, dummy},
     };
     use rand::random;
     use reqwest::{
@@ -955,7 +986,10 @@ mod tests {
 
     const TEST_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(100);
 
-    fn setup_collector<V: vdaf::Collector>(server: &mut mockito::Server, vdaf: V) -> Collector<V> {
+    fn setup_collector<V: vdaf::Collector>(
+        server: &mut mockito::Server,
+        configured_vdaf: ConfiguredVdaf<V>,
+    ) -> Collector<V> {
         let server_url = DapUrl::try_from(server.url().as_str()).unwrap();
         let hpke_keypair = HpkeKeypair::test();
         Collector::builder(
@@ -963,14 +997,13 @@ mod tests {
             server_url.clone(),
             AuthenticationToken::new_bearer_token_from_string("Y29sbGVjdG9yIHRva2Vu").unwrap(),
             hpke_keypair,
-            vdaf,
+            configured_vdaf,
             TEST_TIME_PRECISION,
         )
         .with_helper_endpoint(server_url)
         .with_task_info(b"test task".to_vec())
         .with_min_batch_size(1)
         .with_batch_config(BatchConfig::TimeInterval)
-        .with_vdaf_config(VdafConfig::Prio3Count)
         .with_http_request_backoff(test_http_request_exponential_backoff())
         .with_collect_poll_backoff(test_http_request_exponential_backoff())
         .build()
@@ -1079,14 +1112,13 @@ mod tests {
                 endpoint.try_into().unwrap(),
                 AuthenticationToken::new_bearer_token_from_string("Y29sbGVjdG9yIHRva2Vu").unwrap(),
                 hpke_keypair.clone(),
-                dummy::Vdaf::new(1),
+                ConfiguredVdaf::fake(1),
                 TEST_TIME_PRECISION,
             )
             .with_helper_endpoint("http://helper.example.com".try_into().unwrap())
             .with_task_info(b"test task".to_vec())
             .with_min_batch_size(1)
             .with_batch_config(BatchConfig::TimeInterval)
-            .with_vdaf_config(VdafConfig::Prio3Count)
             .build()
             .unwrap();
 
@@ -1111,9 +1143,16 @@ mod tests {
         install_test_trace_subscriber();
         initialize_rustls();
         let mut server = mockito::Server::new_async().await;
-        let vdaf = Prio3::new_count(2).unwrap();
-        let transcript = run_vdaf(&vdaf, &random(), &random(), &(), &random(), &true);
-        let collector = setup_collector(&mut server, vdaf);
+        let configured_vdaf = ConfiguredVdaf::prio3_count().unwrap();
+        let transcript = run_vdaf(
+            configured_vdaf.vdaf(),
+            &random(),
+            &random(),
+            &(),
+            &random(),
+            &true,
+        );
+        let collector = setup_collector(&mut server, configured_vdaf);
 
         let batch_interval = Interval::new(
             Time::from_seconds_since_epoch(1_000_000, &TEST_TIME_PRECISION),
@@ -1213,9 +1252,16 @@ mod tests {
         install_test_trace_subscriber();
         initialize_rustls();
         let mut server = mockito::Server::new_async().await;
-        let vdaf = Prio3::new_sum(2, 255).unwrap();
-        let transcript = run_vdaf(&vdaf, &random(), &random(), &(), &random(), &144);
-        let collector = setup_collector(&mut server, vdaf);
+        let configured_vdaf = ConfiguredVdaf::prio3_sum(255).unwrap();
+        let transcript = run_vdaf(
+            configured_vdaf.vdaf(),
+            &random(),
+            &random(),
+            &(),
+            &random(),
+            &144,
+        );
+        let collector = setup_collector(&mut server, configured_vdaf);
 
         let batch_interval = Interval::new(
             Time::from_seconds_since_epoch(1_000_000, &TEST_TIME_PRECISION),
@@ -1283,9 +1329,16 @@ mod tests {
         install_test_trace_subscriber();
         initialize_rustls();
         let mut server = mockito::Server::new_async().await;
-        let vdaf = Prio3::new_histogram(2, 4, 2).unwrap();
-        let transcript = run_vdaf(&vdaf, &random(), &random(), &(), &random(), &3);
-        let collector = setup_collector(&mut server, vdaf);
+        let configured_vdaf = ConfiguredVdaf::prio3_histogram(4, 2).unwrap();
+        let transcript = run_vdaf(
+            configured_vdaf.vdaf(),
+            &random(),
+            &random(),
+            &(),
+            &random(),
+            &3,
+        );
+        let collector = setup_collector(&mut server, configured_vdaf);
 
         let batch_interval = Interval::new(
             Time::from_seconds_since_epoch(1_000_000, &TEST_TIME_PRECISION),
@@ -1354,9 +1407,16 @@ mod tests {
         install_test_trace_subscriber();
         initialize_rustls();
         let mut server = mockito::Server::new_async().await;
-        let vdaf = Prio3::new_count(2).unwrap();
-        let transcript = run_vdaf(&vdaf, &random(), &random(), &(), &random(), &true);
-        let collector = setup_collector(&mut server, vdaf);
+        let configured_vdaf = ConfiguredVdaf::prio3_count().unwrap();
+        let transcript = run_vdaf(
+            configured_vdaf.vdaf(),
+            &random(),
+            &random(),
+            &(),
+            &random(),
+            &true,
+        );
+        let collector = setup_collector(&mut server, configured_vdaf);
 
         let batch_id = random();
         let collect_resp = build_collect_response_fixed(&transcript, &collector, &(), batch_id);
@@ -1419,8 +1479,15 @@ mod tests {
         install_test_trace_subscriber();
         initialize_rustls();
         let mut server = mockito::Server::new_async().await;
-        let vdaf = Prio3::new_count(2).unwrap();
-        let transcript = run_vdaf(&vdaf, &random(), &random(), &(), &random(), &true);
+        let configured_vdaf = ConfiguredVdaf::prio3_count().unwrap();
+        let transcript = run_vdaf(
+            configured_vdaf.vdaf(),
+            &random(),
+            &random(),
+            &(),
+            &random(),
+            &true,
+        );
         let server_url = DapUrl::try_from(server.url().as_str()).unwrap();
         let hpke_keypair = HpkeKeypair::test();
         let collector = Collector::builder(
@@ -1428,14 +1495,13 @@ mod tests {
             server_url.clone(),
             AuthenticationToken::new_bearer_token_from_bytes(Vec::from([0x41u8; 16])).unwrap(),
             hpke_keypair,
-            vdaf,
+            configured_vdaf,
             TEST_TIME_PRECISION,
         )
         .with_helper_endpoint(server_url)
         .with_task_info(b"test task".to_vec())
         .with_min_batch_size(1)
         .with_batch_config(BatchConfig::TimeInterval)
-        .with_vdaf_config(VdafConfig::Prio3Count)
         .with_http_request_backoff(test_http_request_exponential_backoff())
         .with_collect_poll_backoff(test_http_request_exponential_backoff())
         .build()
@@ -1510,8 +1576,8 @@ mod tests {
         install_test_trace_subscriber();
         initialize_rustls();
         let mut server = mockito::Server::new_async().await;
-        let vdaf = Prio3::new_count(2).unwrap();
-        let collector = setup_collector(&mut server, vdaf);
+        let configured_vdaf = ConfiguredVdaf::prio3_count().unwrap();
+        let collector = setup_collector(&mut server, configured_vdaf);
         let matcher = collection_uri_regex_matcher(&collector.task_id);
 
         let mock_server_error = server
@@ -1605,8 +1671,8 @@ mod tests {
         install_test_trace_subscriber();
         initialize_rustls();
         let mut server = mockito::Server::new_async().await;
-        let vdaf = Prio3::new_count(2).unwrap();
-        let collector = setup_collector(&mut server, vdaf);
+        let configured_vdaf = ConfiguredVdaf::prio3_count().unwrap();
+        let collector = setup_collector(&mut server, configured_vdaf);
         let matcher = collection_uri_regex_matcher(&collector.task_id);
 
         let mock_collect_start = server
@@ -1865,8 +1931,8 @@ mod tests {
         install_test_trace_subscriber();
         initialize_rustls();
         let mut server = mockito::Server::new_async().await;
-        let vdaf = Prio3::new_count(2).unwrap();
-        let collector = setup_collector(&mut server, vdaf);
+        let configured_vdaf = ConfiguredVdaf::prio3_count().unwrap();
+        let collector = setup_collector(&mut server, configured_vdaf);
         let matcher = collection_uri_regex_matcher(&collector.task_id);
 
         let mock_collect_start = server
@@ -1948,8 +2014,8 @@ mod tests {
         install_test_trace_subscriber();
         initialize_rustls();
         let mut server = mockito::Server::new_async().await;
-        let vdaf = Prio3::new_count(2).unwrap();
-        let mut collector = setup_collector(&mut server, vdaf);
+        let configured_vdaf = ConfiguredVdaf::prio3_count().unwrap();
+        let mut collector = setup_collector(&mut server, configured_vdaf);
         collector.collect_poll_wait_parameters = collector
             .collect_poll_wait_parameters
             .without_max_times()
@@ -2058,8 +2124,8 @@ mod tests {
         install_test_trace_subscriber();
         initialize_rustls();
         let mut server = mockito::Server::new_async().await;
-        let vdaf = dummy::Vdaf::new(1);
-        let collector = setup_collector(&mut server, vdaf);
+        let configured_vdaf = ConfiguredVdaf::fake(1);
+        let collector = setup_collector(&mut server, configured_vdaf);
 
         let collection_job_id = random();
         let collection_job = CollectionJob::new(
@@ -2096,8 +2162,8 @@ mod tests {
         install_test_trace_subscriber();
         initialize_rustls();
         let mut server = mockito::Server::new_async().await;
-        let vdaf = dummy::Vdaf::new(1);
-        let collector = setup_collector(&mut server, vdaf);
+        let configured_vdaf = ConfiguredVdaf::fake(1);
+        let collector = setup_collector(&mut server, configured_vdaf);
 
         let collection_job_id = random();
         let collection_job = CollectionJob::new(
@@ -2130,9 +2196,16 @@ mod tests {
         install_test_trace_subscriber();
         initialize_rustls();
         let mut server = mockito::Server::new_async().await;
-        let vdaf = Prio3::new_count(2).unwrap();
-        let transcript = run_vdaf(&vdaf, &random(), &random(), &(), &random(), &true);
-        let collector = setup_collector(&mut server, vdaf);
+        let configured_vdaf = ConfiguredVdaf::prio3_count().unwrap();
+        let transcript = run_vdaf(
+            configured_vdaf.vdaf(),
+            &random(),
+            &random(),
+            &(),
+            &random(),
+            &true,
+        );
+        let collector = setup_collector(&mut server, configured_vdaf);
 
         let batch_interval = Interval::new(
             Time::from_seconds_since_epoch(1_000_000, &TEST_TIME_PRECISION),

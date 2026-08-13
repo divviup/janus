@@ -222,19 +222,19 @@ where
     let vdaf_config = VdafInstance::from(task_state.vdaf.clone())
         .to_vdaf_config()
         .map_err(|err| anyhow::anyhow!("unsupported VDAF for TaskConfiguration: {err}"))?;
-    let collector = Collector::builder(
+    let collector = Collector::builder_with_custom_vdaf(
         task_state.task_id,
         task_state.leader_url.clone(),
         task_state.auth_token.clone(),
         task_state.keypair.clone(),
         vdaf,
+        vdaf_config,
         time_precision,
     )
     .with_helper_endpoint(task_state.helper_url.clone())
     .with_task_info(INTEROP_TASK_INFO.to_vec())
     .with_min_batch_size(task_state.min_batch_size)
     .with_batch_config(task_state.batch_config.clone())
-    .with_vdaf_config(vdaf_config)
     .with_http_client(http_client.clone())
     .with_http_request_backoff(
         ExponentialWithTotalDelayBuilder::new()

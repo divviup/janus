@@ -1,13 +1,19 @@
 use std::str;
 
 use janus_messages::{TaskId, VdafConfig};
+#[cfg(feature = "test-util")]
+use prio::vdaf::dummy;
 use prio::{
     field::Field64,
     flp::{
-        gadgets::{Mul, ParallelSumGadget},
+        gadgets::{Mul, ParallelSum, ParallelSumGadget},
         types::SumVec,
     },
-    vdaf::{VdafError, prio3::Prio3, xof::XofHmacSha256Aes128},
+    vdaf::{
+        VdafError,
+        prio3::{Prio3, Prio3Count, Prio3Histogram, Prio3Sum, Prio3SumVec},
+        xof::XofHmacSha256Aes128,
+    },
 };
 use serde::{Deserialize, Serialize};
 
@@ -271,6 +277,118 @@ pub fn new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128<
         ALGORITHM_ID_PRIO3_SUM_VEC_FIELD64_MULTIPROOF_HMACSHA256_AES128,
         SumVec::new(max_measurement, length, chunk_length)?,
     )
+}
+
+/// A concrete VDAF paired with the [`VdafConfig`] describing it, both built from one set of
+/// parameters so that the values bound into HPKE AADs cannot drift from the VDAF in use.
+///
+/// Constructor arguments follow the wrapped `prio` constructor's order, not `VdafConfig`'s field
+/// order; the parameters are all integers, so a transposed call would compile.
+#[derive(Clone, Debug)]
+pub struct ConfiguredVdaf<V> {
+    vdaf: V,
+    config: VdafConfig,
+}
+
+impl<V> ConfiguredVdaf<V> {
+    pub fn vdaf(&self) -> &V {
+        &self.vdaf
+    }
+
+    pub fn config(&self) -> &VdafConfig {
+        &self.config
+    }
+
+    pub fn into_parts(self) -> (V, VdafConfig) {
+        (self.vdaf, self.config)
+    }
+}
+
+impl ConfiguredVdaf<Prio3Count> {
+    pub fn prio3_count() -> Result<Self, VdafError> {
+        Ok(Self {
+            vdaf: Prio3::new_count(2)?,
+            config: VdafConfig::Prio3Count,
+        })
+    }
+}
+
+impl ConfiguredVdaf<Prio3Sum> {
+    pub fn prio3_sum(max_measurement: u64) -> Result<Self, VdafError> {
+        Ok(Self {
+            vdaf: Prio3::new_sum(2, max_measurement)?,
+            config: VdafConfig::Prio3Sum { max_measurement },
+        })
+    }
+}
+
+impl ConfiguredVdaf<Prio3SumVec> {
+    pub fn prio3_sum_vec(
+        max_measurement: u64,
+        length: u32,
+        chunk_length: u32,
+    ) -> Result<Self, VdafError> {
+        Ok(Self {
+            vdaf: Prio3::new_sum_vec(
+                2,
+                u128::from(max_measurement),
+                length as usize,
+                chunk_length as usize,
+            )?,
+            config: VdafConfig::Prio3SumVec {
+                length,
+                max_measurement,
+                chunk_length,
+            },
+        })
+    }
+}
+
+impl ConfiguredVdaf<Prio3Histogram> {
+    pub fn prio3_histogram(length: u32, chunk_length: u32) -> Result<Self, VdafError> {
+        Ok(Self {
+            vdaf: Prio3::new_histogram(2, length as usize, chunk_length as usize)?,
+            config: VdafConfig::Prio3Histogram {
+                length,
+                chunk_length,
+            },
+        })
+    }
+}
+
+impl ConfiguredVdaf<Prio3SumVecField64MultiproofHmacSha256Aes128<ParallelSum<Field64, Mul>>> {
+    pub fn prio3_sum_vec_field64_multiproof_hmacsha256_aes128(
+        proofs: u8,
+        max_measurement: u64,
+        length: u32,
+        chunk_length: u32,
+    ) -> Result<Self, VdafError> {
+        Ok(Self {
+            vdaf: new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128(
+                proofs,
+                max_measurement,
+                length as usize,
+                chunk_length as usize,
+            )?,
+            config: VdafConfig::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+                length,
+                max_measurement,
+                chunk_length,
+                proofs,
+            },
+        })
+    }
+}
+
+#[cfg(feature = "test-util")]
+#[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
+impl ConfiguredVdaf<dummy::Vdaf> {
+    pub fn fake(rounds: u32) -> Self {
+        Self {
+            vdaf: dummy::Vdaf::new(rounds),
+            config: VdafConfig::Fake { rounds },
+        }
+    }
 }
 
 /// Internal implementation details of [`vdaf_dispatch`](crate::vdaf_dispatch).
@@ -675,15 +793,100 @@ macro_rules! vdaf_dispatch {
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Debug;
+
     use assert_matches::assert_matches;
     use janus_messages::VdafConfig;
-    use prio::dp::{
-        DifferentialPrivacyStrategy, PureDpBudget, Rational,
-        distributions::{DiscreteLaplaceDpStrategy, PureDpDiscreteLaplace},
+    use prio::{
+        dp::{
+            DifferentialPrivacyStrategy, PureDpBudget, Rational,
+            distributions::{DiscreteLaplaceDpStrategy, PureDpDiscreteLaplace},
+        },
+        field::Field64,
+        flp::gadgets::{Mul, ParallelSum},
+        vdaf::{dummy, prio3::Prio3},
     };
     use serde_test::{Token, assert_tokens};
 
-    use crate::vdaf::{VdafInstance, vdaf_dp_strategies};
+    use crate::vdaf::{
+        ConfiguredVdaf, VdafInstance, new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128,
+        vdaf_dp_strategies,
+    };
+
+    #[test]
+    fn configured_vdaf_pairing() {
+        // `Prio3`'s `Debug` carries the VDAF's parameters but it is not `PartialEq`.
+        fn assert_paired<V: Debug>(
+            configured: ConfiguredVdaf<V>,
+            expected_vdaf: V,
+            expected_config: VdafConfig,
+        ) {
+            assert_eq!(
+                format!("{:?}", configured.vdaf),
+                format!("{expected_vdaf:?}")
+            );
+            assert_eq!(configured.config, expected_config);
+            // The aggregators build their VDAF from `VdafInstance`, so the config must round-trip.
+            assert_eq!(
+                VdafInstance::try_from(&configured.config)
+                    .unwrap()
+                    .to_vdaf_config()
+                    .unwrap(),
+                configured.config
+            );
+        }
+
+        assert_paired(
+            ConfiguredVdaf::prio3_count().unwrap(),
+            Prio3::new_count(2).unwrap(),
+            VdafConfig::Prio3Count,
+        );
+        assert_paired(
+            ConfiguredVdaf::prio3_sum(4096).unwrap(),
+            Prio3::new_sum(2, 4096).unwrap(),
+            VdafConfig::Prio3Sum {
+                max_measurement: 4096,
+            },
+        );
+        assert_paired(
+            ConfiguredVdaf::prio3_sum_vec(4096, 8, 2).unwrap(),
+            Prio3::new_sum_vec(2, 4096, 8, 2).unwrap(),
+            VdafConfig::Prio3SumVec {
+                length: 8,
+                max_measurement: 4096,
+                chunk_length: 2,
+            },
+        );
+        assert_paired(
+            ConfiguredVdaf::prio3_histogram(12, 4).unwrap(),
+            Prio3::new_histogram(2, 12, 4).unwrap(),
+            VdafConfig::Prio3Histogram {
+                length: 12,
+                chunk_length: 4,
+            },
+        );
+        assert_paired(
+            ConfiguredVdaf::prio3_sum_vec_field64_multiproof_hmacsha256_aes128(3, 4096, 8, 2)
+                .unwrap(),
+            new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128::<ParallelSum<Field64, Mul>>(
+                3, 4096, 8, 2,
+            )
+            .unwrap(),
+            VdafConfig::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+                length: 8,
+                max_measurement: 4096,
+                chunk_length: 2,
+                proofs: 3,
+            },
+        );
+        // `dummy::Vdaf` keeps `rounds` in a closure and redacts its `Debug`, so only the config
+        // half of this pairing is actually asserted.
+        assert_paired(
+            ConfiguredVdaf::fake(3),
+            dummy::Vdaf::new(3),
+            VdafConfig::Fake { rounds: 3 },
+        );
+    }
 
     #[test]
     fn vdaf_instance_to_vdaf_config() {

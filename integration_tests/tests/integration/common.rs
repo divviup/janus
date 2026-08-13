@@ -261,19 +261,19 @@ where
     let (leader_endpoint, helper_endpoint, http_client) = task_parameters
         .endpoint_fragments
         .in_process_config(leader_port, helper_port);
-    let mut builder = Collector::builder(
+    let mut builder = Collector::builder_with_custom_vdaf(
         task_parameters.task_id,
         leader_endpoint.as_str().try_into().unwrap(),
         task_parameters.collector_auth_token.clone(),
         task_parameters.collector_hpke_keypair.clone(),
         vdaf,
+        task_parameters.vdaf.to_vdaf_config().unwrap(),
         task_parameters.time_precision,
     )
     .with_helper_endpoint(helper_endpoint.as_str().try_into().unwrap())
     .with_task_info(task_parameters.task_info.clone())
     .with_min_batch_size(task_parameters.min_batch_size)
     .with_batch_config(task_parameters.batch_mode.to_batch_config())
-    .with_vdaf_config(task_parameters.vdaf.to_vdaf_config().unwrap())
     .with_task_interval(task_parameters.task_interval)
     .with_http_request_backoff(test_http_request_exponential_backoff())
     .with_collect_poll_backoff(

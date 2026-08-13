@@ -630,20 +630,21 @@ fn new_collector<V: vdaf::Collector>(
     let task_id = options.task_id;
     let leader_endpoint = options.leader;
     let time_precision = TimePrecision::from_seconds(options.time_precision);
-    let collector = Collector::builder(
+    let collector = Collector::builder_with_custom_vdaf(
         task_id,
         leader_endpoint,
         authentication,
         hpke_keypair,
         vdaf,
+        // Placeholder (#4713). Only `new-job` gets this far, and it never computes an AAD.
+        VdafConfig::Prio3Count,
         time_precision,
     )
-    // Placeholders (#4713). Only `new-job` gets this far, and it never computes an AAD.
+    // Placeholders (#4713), as above.
     .with_helper_endpoint("http://unused.helper.example/".try_into().unwrap())
     .with_task_info(Vec::new())
     .with_min_batch_size(0)
     .with_batch_config(BatchConfig::TimeInterval)
-    .with_vdaf_config(VdafConfig::Prio3Count)
     .with_http_client(http_client)
     .with_collect_poll_backoff(
         ExponentialWithTotalDelayBuilder::new()
