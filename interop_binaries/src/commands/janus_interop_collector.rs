@@ -132,10 +132,8 @@ struct CollectPollResponse {
 struct TaskState {
     task_id: TaskId,
     keypair: HpkeKeypair,
-    leader_url: DapUrl,
     vdaf: VdafObject,
     auth_token: AuthenticationToken,
-    time_precision: TimePrecision,
     task_configuration: TaskConfiguration,
 }
 
@@ -194,7 +192,7 @@ async fn handle_add_task(
 
     let task_configuration = build_task_configuration(
         INTEROP_TASK_INFO.to_vec(),
-        request.leader.clone(),
+        request.leader,
         request.helper,
         time_precision,
         request.min_batch_size,
@@ -206,10 +204,8 @@ async fn handle_add_task(
     entry.or_insert(TaskState {
         task_id,
         keypair,
-        leader_url: request.leader,
         vdaf: request.vdaf,
         auth_token,
-        time_precision,
         task_configuration,
     });
 
@@ -232,12 +228,10 @@ where
 {
     let collector = Collector::builder_with_custom_vdaf(
         task_state.task_id,
-        task_state.leader_url.clone(),
         task_state.auth_token.clone(),
         task_state.keypair.clone(),
         vdaf,
         task_state.task_configuration.vdaf_config().clone(),
-        task_state.time_precision,
     )
     .with_task_configuration(task_state.task_configuration.clone())
     .with_http_client(http_client.clone())
@@ -298,7 +292,7 @@ async fn handle_collection_start(
 
     let query = match request.query.batch_mode {
         1 => {
-            let time_precision = task_state.time_precision;
+            let time_precision = *task_state.task_configuration.time_precision();
             let start = Time::from_seconds_since_epoch(
                 request
                     .query

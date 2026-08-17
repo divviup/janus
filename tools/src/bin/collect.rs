@@ -468,7 +468,6 @@ fn resolve_query(options: &Options) -> Result<ResolvedQuery, Error> {
              --batch-interval-duration are required\n",
         )
         .into()),
-        // Clap requires the two batch interval arguments together.
         (BatchConfig::TimeInterval, _, _) => {
             unreachable!("clap requires both batch interval arguments together")
         }
@@ -634,12 +633,10 @@ fn new_collector<V: vdaf::Collector>(
     let task_config = options.task_config;
     let collector = Collector::builder_with_custom_vdaf(
         options.task_id,
-        task_config.leader_aggregator_endpoint().clone(),
         authentication,
         hpke_keypair,
         vdaf,
         task_config.vdaf_config().clone(),
-        *task_config.time_precision(),
     )
     .with_task_configuration(task_config)
     .with_http_client(http_client)
@@ -921,9 +918,9 @@ mod tests {
         );
     }
 
-    /// The collector cross-checks the leader endpoint and time precision it is constructed with
-    /// against the ones in the task configuration, so a wiring mistake in `new_collector` would
-    /// fail every real invocation at build time while leaving the argument-parsing tests green.
+    /// The collector's task parameters are all resolved from the task configuration at build time,
+    /// so a wiring mistake in `new_collector` would fail every real invocation while leaving the
+    /// argument-parsing tests green.
     #[test]
     fn new_collector_accepts_task_config() {
         install_test_trace_subscriber();
