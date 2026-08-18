@@ -20,11 +20,12 @@ use janus_core::{
     auth_tokens::AuthenticationToken,
     hpke::HpkeKeypair,
     retries::ExponentialWithTotalDelayBuilder,
+    task_config::build_task_configuration,
     vdaf::{VdafInstance, new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128},
 };
 use janus_messages::{
-    BatchConfig, BatchId, Duration, HpkeConfig, Interval, PartialBatchSelector, Query, TaskId,
-    Time, TimePrecision, Url as DapUrl, batch_mode::BatchMode,
+    BatchId, Duration, HpkeConfig, Interval, PartialBatchSelector, Query, TaskConfiguration,
+    TaskId, Time, TimePrecision, Url as DapUrl, batch_mode::BatchMode,
 };
 use prio::{
     codec::{Decode, Encode},
@@ -131,13 +132,9 @@ struct CollectPollResponse {
 struct TaskState {
     task_id: TaskId,
     keypair: HpkeKeypair,
-    leader_url: DapUrl,
-    helper_url: DapUrl,
     vdaf: VdafObject,
     auth_token: AuthenticationToken,
-    time_precision: TimePrecision,
-    min_batch_size: u64,
-    batch_config: BatchConfig,
+    task_configuration: TaskConfiguration,
 }
 
 /// A collection job handle.
@@ -188,17 +185,28 @@ async fn handle_add_task(
             .context("invalid header value in \"collector_authentication_token\"")?;
 
     let batch_config = interop_batch_config(request.batch_mode)?;
+    let vdaf_config = VdafInstance::from(request.vdaf.clone())
+        .to_vdaf_config()
+        .map_err(|err| anyhow::anyhow!("unsupported VDAF for TaskConfiguration: {err}"))?;
+    let time_precision = TimePrecision::from_seconds(request.time_precision);
+
+    let task_configuration = build_task_configuration(
+        INTEROP_TASK_INFO.to_vec(),
+        request.leader,
+        request.helper,
+        time_precision,
+        request.min_batch_size,
+        batch_config,
+        vdaf_config,
+        None,
+    )?;
 
     entry.or_insert(TaskState {
         task_id,
         keypair,
-        leader_url: request.leader,
-        helper_url: request.helper,
         vdaf: request.vdaf,
         auth_token,
-        time_precision: TimePrecision::from_seconds(request.time_precision),
-        min_batch_size: request.min_batch_size,
-        batch_config,
+        task_configuration,
     });
 
     Ok(hpke_config)
@@ -218,23 +226,14 @@ where
     V::AggregationParam: Send + Sync + 'static,
     B: BatchMode,
 {
-    let time_precision = task_state.time_precision;
-    let vdaf_config = VdafInstance::from(task_state.vdaf.clone())
-        .to_vdaf_config()
-        .map_err(|err| anyhow::anyhow!("unsupported VDAF for TaskConfiguration: {err}"))?;
     let collector = Collector::builder_with_custom_vdaf(
         task_state.task_id,
-        task_state.leader_url.clone(),
         task_state.auth_token.clone(),
         task_state.keypair.clone(),
         vdaf,
-        vdaf_config,
-        time_precision,
+        task_state.task_configuration.vdaf_config().clone(),
     )
-    .with_helper_endpoint(task_state.helper_url.clone())
-    .with_task_info(INTEROP_TASK_INFO.to_vec())
-    .with_min_batch_size(task_state.min_batch_size)
-    .with_batch_config(task_state.batch_config.clone())
+    .with_task_configuration(task_state.task_configuration.clone())
     .with_http_client(http_client.clone())
     .with_http_request_backoff(
         ExponentialWithTotalDelayBuilder::new()
@@ -293,7 +292,7 @@ async fn handle_collection_start(
 
     let query = match request.query.batch_mode {
         1 => {
-            let time_precision = task_state.time_precision;
+            let time_precision = *task_state.task_configuration.time_precision();
             let start = Time::from_seconds_since_epoch(
                 request
                     .query

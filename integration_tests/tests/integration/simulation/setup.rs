@@ -338,16 +338,18 @@ impl Components {
 
         let collector = Collector::builder_with_custom_vdaf(
             *task.id(),
-            task.leader_aggregator_endpoint()
-                .as_str()
-                .try_into()
-                .unwrap(),
             task.collector_auth_token().clone(),
             task.collector_hpke_keypair().clone(),
             state.vdaf.clone(),
             leader_task.vdaf().to_vdaf_config().unwrap(),
-            *task.time_precision(),
         )
+        .with_leader_endpoint(
+            task.leader_aggregator_endpoint()
+                .as_str()
+                .try_into()
+                .unwrap(),
+        )
+        .with_time_precision(*task.time_precision())
         .with_helper_endpoint(
             task.helper_aggregator_endpoint()
                 .as_str()

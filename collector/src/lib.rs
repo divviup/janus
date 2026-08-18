@@ -34,12 +34,12 @@
 //! // aggregators byte-for-byte.
 //! let collector = Collector::builder(
 //!     task_id,
-//!     leader_url,
 //!     collector_credential.authentication_token(),
 //!     collector_credential.hpke_keypair(),
 //!     ConfiguredVdaf::prio3_count().unwrap(),
-//!     time_precision,
 //! )
+//! .with_leader_endpoint(leader_url)
+//! .with_time_precision(time_precision)
 //! .with_helper_endpoint(helper_url)
 //! .with_task_info(b"[task info]".to_vec())
 //! .with_min_batch_size(1000)
@@ -348,16 +348,20 @@ where
 pub struct CollectorBuilder<V: vdaf::Collector> {
     /// Unique identifier for the task.
     task_id: TaskId,
-    /// The base URL of the leader's aggregator API endpoints.
-    leader_endpoint: DapUrl,
     /// The authentication information needed to communicate with the leader aggregator.
     authentication: AuthenticationToken,
     /// HPKE keypair used for decryption of aggregate shares.
     hpke_keypair: HpkeKeypair,
     /// An implementation of the task's VDAF.
     vdaf: V,
-    /// The task's time precision.
-    time_precision: TimePrecision,
+    /// The base URL of the leader's aggregator API endpoints, bound into the task's
+    /// `TaskConfiguration`. Required before [`Self::build`] unless
+    /// [`Self::with_task_configuration`] supplies it; set via [`Self::with_leader_endpoint`].
+    leader_endpoint: Option<DapUrl>,
+    /// The task's time precision, bound into the task's `TaskConfiguration`. Required before
+    /// [`Self::build`] unless [`Self::with_task_configuration`] supplies it; set via
+    /// [`Self::with_time_precision`].
+    time_precision: Option<TimePrecision>,
     /// The base URL of the helper's aggregator API endpoints. Required before [`Self::build`]; set
     /// via [`Self::with_helper_endpoint`].
     helper_endpoint: Option<DapUrl>,
@@ -374,6 +378,9 @@ pub struct CollectorBuilder<V: vdaf::Collector> {
     vdaf_config: VdafConfig,
     /// Optional task validity interval bound into the task's `TaskConfiguration`.
     task_interval: Option<Interval>,
+    /// A pre-built `TaskConfiguration`. Mutually exclusive with the setters above;
+    /// set via [`Self::with_task_configuration`].
+    task_configuration: Option<TaskConfiguration>,
 
     /// HTTPS client.
     http_client: Option<reqwest::Client>,
@@ -384,31 +391,30 @@ pub struct CollectorBuilder<V: vdaf::Collector> {
 }
 
 impl<V: vdaf::Collector> CollectorBuilder<V> {
-    /// Construct a [`CollectorBuilder`] from required DAP task parameters and an implementation of
-    /// the task's VDAF. The caller is responsible for ensuring `vdaf_config` describes `vdaf`;
+    /// Construct a [`CollectorBuilder`] from an implementation of the task's VDAF and its
+    /// [`VdafConfig`]. The caller is responsible for ensuring `vdaf_config` describes `vdaf`;
     /// prefer [`Self::from_configured_vdaf`], which cannot mismatch the two.
     pub fn new(
         task_id: TaskId,
-        leader_endpoint: DapUrl,
         authentication: AuthenticationToken,
         hpke_keypair: HpkeKeypair,
         vdaf: V,
         vdaf_config: VdafConfig,
-        time_precision: TimePrecision,
     ) -> Self {
         Self {
             task_id,
-            leader_endpoint,
             authentication,
             hpke_keypair,
             vdaf,
-            time_precision,
+            leader_endpoint: None,
+            time_precision: None,
             helper_endpoint: None,
             task_info: None,
             min_batch_size: None,
             batch_config: None,
             vdaf_config,
             task_interval: None,
+            task_configuration: None,
             http_client: None,
             http_request_retry_parameters: http_request_exponential_backoff(),
             collect_poll_wait_parameters: ExponentialWithTotalDelayBuilder::new()
@@ -418,66 +424,110 @@ impl<V: vdaf::Collector> CollectorBuilder<V> {
         }
     }
 
-    /// Construct a [`CollectorBuilder`] from required DAP task parameters and a
-    /// [`ConfiguredVdaf`], which supplies both the VDAF and its [`VdafConfig`].
+    /// Construct a [`CollectorBuilder`] from a [`ConfiguredVdaf`], which supplies both the VDAF and
+    /// its [`VdafConfig`]. The remaining task parameters come from either
+    /// [`Self::with_task_configuration`] or the individual setters.
     pub fn from_configured_vdaf(
         task_id: TaskId,
-        leader_endpoint: DapUrl,
         authentication: AuthenticationToken,
         hpke_keypair: HpkeKeypair,
         configured_vdaf: ConfiguredVdaf<V>,
-        time_precision: TimePrecision,
     ) -> Self {
         let (vdaf, vdaf_config) = configured_vdaf.into_parts();
-        Self::new(
-            task_id,
-            leader_endpoint,
-            authentication,
-            hpke_keypair,
-            vdaf,
-            vdaf_config,
-            time_precision,
-        )
+        Self::new(task_id, authentication, hpke_keypair, vdaf, vdaf_config)
     }
 
     /// Finalize construction of a [`Collector`].
     pub fn build(self) -> Result<Collector<V>, Error> {
+        let task_configuration = self.resolve_task_configuration()?;
         let http_client = if let Some(http_client) = self.http_client {
             http_client
         } else {
             default_http_client()?
         };
-        let collector = Collector {
+        Ok(Collector {
             task_id: self.task_id,
-            // Stored verbatim; the trailing slash is applied at join time via `url_for_join`, so
-            // the bytes bound into HPKE AADs stay exactly as provisioned (DAP §4.1).
-            leader_endpoint: self.leader_endpoint,
-            helper_endpoint: self
-                .helper_endpoint
-                .ok_or(Error::InvalidParameter("helper_endpoint not set"))?,
+            task_configuration,
             authentication: self.authentication,
             hpke_keypair: self.hpke_keypair,
             vdaf: self.vdaf,
-            time_precision: self.time_precision,
-            task_info: self
-                .task_info
-                .ok_or(Error::InvalidParameter("task_info not set"))?,
-            min_batch_size: self
-                .min_batch_size
-                .ok_or(Error::InvalidParameter("min_batch_size not set"))?,
-            batch_config: self
-                .batch_config
-                .ok_or(Error::InvalidParameter("batch_config not set"))?,
-            vdaf_config: self.vdaf_config,
-            task_interval: self.task_interval,
             http_client,
             http_request_retry_parameters: self.http_request_retry_parameters,
             collect_poll_wait_parameters: self.collect_poll_wait_parameters,
+        })
+    }
+
+    /// Resolves the task's [`TaskConfiguration`], either from whatever was supplied to
+    /// [`Self::with_task_configuration`] or by composing one from the individual setters.
+    fn resolve_task_configuration(&self) -> Result<TaskConfiguration, Error> {
+        let Some(task_configuration) = &self.task_configuration else {
+            return Ok(build_task_configuration(
+                self.task_info
+                    .clone()
+                    .ok_or(Error::InvalidParameter("task_info not set"))?,
+                self.leader_endpoint
+                    .clone()
+                    .ok_or(Error::InvalidParameter("leader_endpoint not set"))?,
+                self.helper_endpoint
+                    .clone()
+                    .ok_or(Error::InvalidParameter("helper_endpoint not set"))?,
+                self.time_precision
+                    .ok_or(Error::InvalidParameter("time_precision not set"))?,
+                self.min_batch_size
+                    .ok_or(Error::InvalidParameter("min_batch_size not set"))?,
+                self.batch_config
+                    .clone()
+                    .ok_or(Error::InvalidParameter("batch_config not set"))?,
+                self.vdaf_config.clone(),
+                self.task_interval,
+            )?);
         };
-        // Fail fast if the resolved parameters cannot form a valid TaskConfiguration (e.g. invalid
-        // endpoint bytes), rather than deferring to the first collection's AAD construction.
-        collector.task_configuration()?;
-        Ok(collector)
+
+        // Since TaskConfiguration is the whole thing, including extensions this
+        // implementation does not model, composing from the setters can't reproduce it.
+        // If we got here, with_task_configuration was used, so enforce that the other
+        // setters _weren't_.
+        if self.helper_endpoint.is_some()
+            || self.task_info.is_some()
+            || self.min_batch_size.is_some()
+            || self.batch_config.is_some()
+            || self.task_interval.is_some()
+        {
+            return Err(Error::InvalidParameter(
+                "with_task_configuration is mutually exclusive with the individual \
+                 TaskConfiguration setters",
+            ));
+        }
+
+        // A disagreement with the task configuration would be a silent AAD bug, so cross-check
+        // whatever the caller supplied.
+        if &self.vdaf_config != task_configuration.vdaf_config() {
+            return Err(Error::InvalidParameter(
+                "vdaf_config disagrees with the task configuration's vdaf_config",
+            ));
+        }
+        if self
+            .leader_endpoint
+            .as_ref()
+            .is_some_and(|leader_endpoint| {
+                leader_endpoint != task_configuration.leader_aggregator_endpoint()
+            })
+        {
+            return Err(Error::InvalidParameter(
+                "leader_endpoint disagrees with the task configuration's \
+                 leader_aggregator_endpoint",
+            ));
+        }
+        if self
+            .time_precision
+            .is_some_and(|time_precision| &time_precision != task_configuration.time_precision())
+        {
+            return Err(Error::InvalidParameter(
+                "time_precision disagrees with the task configuration's time_precision",
+            ));
+        }
+
+        Ok(task_configuration.clone())
     }
 
     /// Provide an HTTPS client for the collector.
@@ -495,6 +545,22 @@ impl<V: vdaf::Collector> CollectorBuilder<V> {
     /// Replace the exponential backoff settings used while polling for aggregate shares.
     pub fn with_collect_poll_backoff(mut self, backoff: ExponentialWithTotalDelayBuilder) -> Self {
         self.collect_poll_wait_parameters = backoff;
+        self
+    }
+
+    /// Set the base URL of the leader's aggregator API endpoints, bound into the task's
+    /// `TaskConfiguration`. Required before [`Self::build`] unless
+    /// [`Self::with_task_configuration`] supplies it, in which case the two must agree.
+    pub fn with_leader_endpoint(mut self, leader_endpoint: DapUrl) -> Self {
+        self.leader_endpoint = Some(leader_endpoint);
+        self
+    }
+
+    /// Set the task's time precision, bound into the task's `TaskConfiguration`. Required before
+    /// [`Self::build`] unless [`Self::with_task_configuration`] supplies it, in which case the two
+    /// must agree.
+    pub fn with_time_precision(mut self, time_precision: TimePrecision) -> Self {
+        self.time_precision = Some(time_precision);
         self
     }
 
@@ -531,6 +597,15 @@ impl<V: vdaf::Collector> CollectorBuilder<V> {
         self.task_interval = task_interval;
         self
     }
+
+    /// Store a pre-built [`TaskConfiguration`], in place of composing one from the
+    /// individual setters above (which this is mutually exclusive with). Use this when the
+    /// configuration arrives already encoded, so that extensions this implementation does not
+    /// model survive into the HPKE AAD.
+    pub fn with_task_configuration(mut self, task_configuration: TaskConfiguration) -> Self {
+        self.task_configuration = Some(task_configuration);
+        self
+    }
 }
 
 /// A DAP collector.
@@ -539,12 +614,6 @@ impl<V: vdaf::Collector> CollectorBuilder<V> {
 pub struct Collector<V: vdaf::Collector> {
     /// Unique identifier for the task.
     task_id: TaskId,
-    /// The base URL of the leader's aggregator API endpoints.
-    #[educe(Debug(method(std::fmt::Display::fmt)))]
-    leader_endpoint: DapUrl,
-    /// The base URL of the helper's aggregator API endpoints.
-    #[educe(Debug(method(std::fmt::Display::fmt)))]
-    helper_endpoint: DapUrl,
     /// The authentication information needed to communicate with the leader aggregator.
     authentication: AuthenticationToken,
     /// HPKE keypair used for decryption of aggregate shares.
@@ -552,19 +621,8 @@ pub struct Collector<V: vdaf::Collector> {
     hpke_keypair: HpkeKeypair,
     /// An implementation of the task's VDAF.
     vdaf: V,
-    /// The task's time precision.
-    time_precision: TimePrecision,
-    /// Opaque task info bound into the task's `TaskConfiguration`.
-    #[educe(Debug(ignore))]
-    task_info: Vec<u8>,
-    /// Minimum batch size bound into the task's `TaskConfiguration`.
-    min_batch_size: u64,
-    /// Batch configuration bound into the task's `TaskConfiguration`.
-    batch_config: BatchConfig,
-    /// VDAF configuration bound into the task's `TaskConfiguration`.
-    vdaf_config: VdafConfig,
-    /// Optional task validity interval bound into the task's `TaskConfiguration`.
-    task_interval: Option<Interval>,
+    /// The task's configuration, bound into aggregate-share AADs.
+    task_configuration: TaskConfiguration,
 
     /// HTTPS client.
     #[educe(Debug(ignore))]
@@ -581,64 +639,46 @@ impl<V: vdaf::Collector> Collector<V> {
     /// they agree; a mismatch produces aggregate shares the collector cannot decrypt.
     pub fn builder_with_custom_vdaf(
         task_id: TaskId,
-        leader_endpoint: DapUrl,
         authentication: AuthenticationToken,
         hpke_keypair: HpkeKeypair,
         vdaf: V,
         vdaf_config: VdafConfig,
-        time_precision: TimePrecision,
     ) -> CollectorBuilder<V> {
-        CollectorBuilder::new(
-            task_id,
-            leader_endpoint,
-            authentication,
-            hpke_keypair,
-            vdaf,
-            vdaf_config,
-            time_precision,
-        )
+        CollectorBuilder::new(task_id, authentication, hpke_keypair, vdaf, vdaf_config)
     }
 
-    /// Creates a [`CollectorBuilder`] from the required set of DAP task parameters and a
-    /// [`ConfiguredVdaf`], which supplies both the VDAF and its [`VdafConfig`].
+    /// Creates a [`CollectorBuilder`] from a [`ConfiguredVdaf`], which supplies both the VDAF and
+    /// its [`VdafConfig`]. The remaining task parameters come from either
+    /// [`CollectorBuilder::with_task_configuration`] or the individual setters.
     pub fn builder(
         task_id: TaskId,
-        leader_endpoint: DapUrl,
         authentication: AuthenticationToken,
         hpke_keypair: HpkeKeypair,
         configured_vdaf: ConfiguredVdaf<V>,
-        time_precision: TimePrecision,
     ) -> CollectorBuilder<V> {
         CollectorBuilder::from_configured_vdaf(
             task_id,
-            leader_endpoint,
             authentication,
             hpke_keypair,
             configured_vdaf,
-            time_precision,
         )
     }
 
-    /// Builds this task's canonical [`TaskConfiguration`] for binding into aggregate-share AADs.
-    fn task_configuration(&self) -> Result<TaskConfiguration, Error> {
-        Ok(build_task_configuration(
-            self.task_info.clone(),
-            self.leader_endpoint.clone(),
-            self.helper_endpoint.clone(),
-            self.time_precision,
-            self.min_batch_size,
-            self.batch_config.clone(),
-            self.vdaf_config.clone(),
-            self.task_interval,
-        )?)
+    /// This task's [`TaskConfiguration`], as bound into aggregate-share AADs.
+    fn task_configuration(&self) -> &TaskConfiguration {
+        &self.task_configuration
     }
 
     /// Construct a URI for a collection.
     fn collection_job_uri(&self, collection_job_id: CollectionJobId) -> Result<Url, Error> {
-        Ok(url_for_join(&self.leader_endpoint)?.join(&format!(
-            "tasks/{}/collection_jobs/{collection_job_id}",
-            self.task_id
-        ))?)
+        // Joined at request time so the endpoint bytes bound into HPKE AADs stay verbatim
+        // (DAP §4.1).
+        Ok(
+            url_for_join(self.task_configuration.leader_aggregator_endpoint())?.join(&format!(
+                "tasks/{}/collection_jobs/{collection_job_id}",
+                self.task_id
+            ))?,
+        )
     }
 
     /// Construct a collection request to send to the leader aggregator.
@@ -769,7 +809,7 @@ impl<V: vdaf::Collector> Collector<V> {
 
         let aggregate_share_aad = AggregateShareAad::new(
             self.task_id,
-            self.task_configuration()?,
+            self.task_configuration().clone(),
             CollectionJobReq::new(job.query.clone(), job.aggregation_parameter.get_encoded()?),
         )
         .get_encoded()?;
@@ -808,11 +848,11 @@ impl<V: vdaf::Collector> Collector<V> {
                 collect_response
                     .interval
                     .start()
-                    .as_date_time(self.time_precision)?,
+                    .as_date_time(*self.task_configuration.time_precision())?,
                 collect_response
                     .interval
                     .duration()
-                    .to_chrono(&self.time_precision)?,
+                    .to_chrono(self.task_configuration.time_precision())?,
             ),
             aggregate_result,
         }))
@@ -965,13 +1005,14 @@ mod tests {
     use janus_messages::{
         AggregateShareAad, BatchConfig, BatchId, CollectionJobId, CollectionJobReq,
         CollectionJobResp, Duration, HpkeCiphertext, Interval, MediaType, PartialBatchSelector,
-        Query, Role, TaskId, Time, TimePrecision, Url as DapUrl,
+        Query, Role, TaskConfiguration, TaskExtension, TaskExtensionType, TaskId, Time,
+        TimePrecision, Url as DapUrl, VdafConfig,
         batch_mode::{LeaderSelected, TimeInterval},
         problem_type::DapProblemType,
     };
     use mockito::Matcher;
     use prio::{
-        codec::Encode,
+        codec::{Decode, Encode},
         field::Field64,
         vdaf::{self, AggregateShare, OutputShare, dummy},
     };
@@ -982,7 +1023,7 @@ mod tests {
     };
     use retry_after::RetryAfter;
 
-    use crate::{Collection, CollectionJob, Collector, Error, PollResult};
+    use crate::{Collection, CollectionJob, Collector, CollectorBuilder, Error, PollResult};
 
     const TEST_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(100);
 
@@ -994,12 +1035,12 @@ mod tests {
         let hpke_keypair = HpkeKeypair::test();
         Collector::builder(
             random(),
-            server_url.clone(),
             AuthenticationToken::new_bearer_token_from_string("Y29sbGVjdG9yIHRva2Vu").unwrap(),
             hpke_keypair,
             configured_vdaf,
-            TEST_TIME_PRECISION,
         )
+        .with_leader_endpoint(server_url.clone())
+        .with_time_precision(TEST_TIME_PRECISION)
         .with_helper_endpoint(server_url)
         .with_task_info(b"test task".to_vec())
         .with_min_batch_size(1)
@@ -1030,7 +1071,7 @@ mod tests {
     {
         let associated_data = AggregateShareAad::new(
             collector.task_id,
-            collector.task_configuration().unwrap(),
+            collector.task_configuration().clone(),
             CollectionJobReq::new(
                 Query::new_time_interval(batch_interval),
                 aggregation_parameter.get_encoded().unwrap(),
@@ -1069,7 +1110,7 @@ mod tests {
     {
         let associated_data = AggregateShareAad::new(
             collector.task_id,
-            collector.task_configuration().unwrap(),
+            collector.task_configuration().clone(),
             CollectionJobReq::new(
                 Query::new_leader_selected(),
                 aggregation_parameter.get_encoded().unwrap(),
@@ -1096,6 +1137,139 @@ mod tests {
         }
     }
 
+    /// A `TaskConfiguration` carrying an extension this implementation does not model, which
+    /// composing from the individual setters cannot reproduce.
+    fn task_configuration_with_unknown_extension() -> TaskConfiguration {
+        TaskConfiguration::new(
+            b"test task".to_vec(),
+            "http://leader.example.com".try_into().unwrap(),
+            "http://helper.example.com".try_into().unwrap(),
+            TEST_TIME_PRECISION,
+            1,
+            BatchConfig::TimeInterval,
+            VdafConfig::Fake { rounds: 1 },
+            Vec::from([TaskExtension::Unknown {
+                extension_type: TaskExtensionType::from(0x1234),
+                extension_data: b"opaque".to_vec(),
+            }]),
+        )
+        .unwrap()
+    }
+
+    fn builder_with_task_configuration(
+        task_configuration: TaskConfiguration,
+    ) -> CollectorBuilder<dummy::Vdaf> {
+        Collector::builder(
+            random(),
+            AuthenticationToken::new_bearer_token_from_string("Y29sbGVjdG9yIHRva2Vu").unwrap(),
+            HpkeKeypair::test(),
+            ConfiguredVdaf::fake(1),
+        )
+        .with_task_configuration(task_configuration)
+    }
+
+    #[test]
+    fn task_configuration_bound_identical() {
+        // The bytes bound into the AAD must be the bytes we were handed, extensions included:
+        // recomposing from the individual setters would silently drop the unknown extension and
+        // every aggregate share would fail to decrypt.
+        let encoded = task_configuration_with_unknown_extension()
+            .get_encoded()
+            .unwrap();
+        let collector =
+            builder_with_task_configuration(TaskConfiguration::get_decoded(&encoded).unwrap())
+                .build()
+                .unwrap();
+
+        assert_eq!(
+            collector.task_configuration().get_encoded().unwrap(),
+            encoded
+        );
+    }
+
+    #[test]
+    fn task_configuration_conflicts_with_setters() {
+        for builder in [
+            builder_with_task_configuration(task_configuration_with_unknown_extension())
+                .with_min_batch_size(1),
+            builder_with_task_configuration(task_configuration_with_unknown_extension())
+                .with_task_info(b"test task".to_vec()),
+            builder_with_task_configuration(task_configuration_with_unknown_extension())
+                .with_helper_endpoint("http://helper.example.com".try_into().unwrap()),
+            builder_with_task_configuration(task_configuration_with_unknown_extension())
+                .with_batch_config(BatchConfig::TimeInterval),
+            builder_with_task_configuration(task_configuration_with_unknown_extension())
+                .with_task_interval(Some(
+                    Interval::new(
+                        Time::from_time_precision_units(0),
+                        Duration::from_time_precision_units(1),
+                    )
+                    .unwrap(),
+                )),
+        ] {
+            assert_matches!(builder.build(), Err(Error::InvalidParameter(_)));
+        }
+    }
+
+    #[test]
+    fn task_configuration_disagreement_rejected() {
+        // The VDAF config arrives from `from_configured_vdaf`; the endpoint and time precision are
+        // optional, but a caller may still supply them. Each is also in the task configuration; a
+        // mismatch is an AAD byte-identity bug, so it must fail at build time.
+        assert_matches!(
+            Collector::builder(
+                random(),
+                AuthenticationToken::new_bearer_token_from_string("Y29sbGVjdG9yIHRva2Vu").unwrap(),
+                HpkeKeypair::test(),
+                ConfiguredVdaf::fake(2),
+            )
+            .with_task_configuration(task_configuration_with_unknown_extension())
+            .build(),
+            Err(Error::InvalidParameter(_))
+        );
+
+        assert_matches!(
+            builder_with_task_configuration(task_configuration_with_unknown_extension())
+                .with_leader_endpoint("http://leader.example.com/dap".try_into().unwrap())
+                .build(),
+            Err(Error::InvalidParameter(_))
+        );
+
+        assert_matches!(
+            builder_with_task_configuration(task_configuration_with_unknown_extension())
+                .with_time_precision(TimePrecision::from_seconds(3600))
+                .build(),
+            Err(Error::InvalidParameter(_))
+        );
+    }
+
+    #[test]
+    fn composed_task_configuration_requires_endpoint_and_time_precision() {
+        let builder = || {
+            Collector::builder(
+                random(),
+                AuthenticationToken::new_bearer_token_from_string("Y29sbGVjdG9yIHRva2Vu").unwrap(),
+                HpkeKeypair::test(),
+                ConfiguredVdaf::fake(1),
+            )
+            .with_helper_endpoint("http://helper.example.com".try_into().unwrap())
+            .with_task_info(b"test task".to_vec())
+            .with_min_batch_size(1)
+            .with_batch_config(BatchConfig::TimeInterval)
+        };
+
+        assert_matches!(
+            builder().with_time_precision(TEST_TIME_PRECISION).build(),
+            Err(Error::InvalidParameter("leader_endpoint not set"))
+        );
+        assert_matches!(
+            builder()
+                .with_leader_endpoint("http://leader.example.com".try_into().unwrap())
+                .build(),
+            Err(Error::InvalidParameter("time_precision not set"))
+        );
+    }
+
     #[test]
     fn leader_endpoint_preserved_and_joined() {
         install_test_trace_subscriber();
@@ -1109,12 +1283,12 @@ mod tests {
         ] {
             let collector = Collector::builder(
                 random(),
-                endpoint.try_into().unwrap(),
                 AuthenticationToken::new_bearer_token_from_string("Y29sbGVjdG9yIHRva2Vu").unwrap(),
                 hpke_keypair.clone(),
                 ConfiguredVdaf::fake(1),
-                TEST_TIME_PRECISION,
             )
+            .with_leader_endpoint(endpoint.try_into().unwrap())
+            .with_time_precision(TEST_TIME_PRECISION)
             .with_helper_endpoint("http://helper.example.com".try_into().unwrap())
             .with_task_info(b"test task".to_vec())
             .with_min_batch_size(1)
@@ -1124,7 +1298,13 @@ mod tests {
 
             // Stored verbatim (no trailing slash added) for byte-identical HPKE AADs (DAP §4.1),
             // while the request URI is still joined against a slash-terminated base.
-            assert_eq!(collector.leader_endpoint.as_str(), endpoint);
+            assert_eq!(
+                collector
+                    .task_configuration
+                    .leader_aggregator_endpoint()
+                    .as_str(),
+                endpoint
+            );
             assert_eq!(
                 collector
                     .collection_job_uri(collection_job_id)
@@ -1492,12 +1672,12 @@ mod tests {
         let hpke_keypair = HpkeKeypair::test();
         let collector = Collector::builder(
             random(),
-            server_url.clone(),
             AuthenticationToken::new_bearer_token_from_bytes(Vec::from([0x41u8; 16])).unwrap(),
             hpke_keypair,
             configured_vdaf,
-            TEST_TIME_PRECISION,
         )
+        .with_leader_endpoint(server_url.clone())
+        .with_time_precision(TEST_TIME_PRECISION)
         .with_helper_endpoint(server_url)
         .with_task_info(b"test task".to_vec())
         .with_min_batch_size(1)
@@ -1827,7 +2007,7 @@ mod tests {
 
         let associated_data = AggregateShareAad::new(
             collector.task_id,
-            collector.task_configuration().unwrap(),
+            collector.task_configuration().clone(),
             CollectionJobReq::new(
                 Query::new_time_interval(batch_interval),
                 ().get_encoded().unwrap(),

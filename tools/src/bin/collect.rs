@@ -1,9 +1,9 @@
 use std::{fmt::Debug, fs::File, path::PathBuf, process::exit, time::Duration as StdDuration};
 
-use anyhow::{Context, anyhow};
+use anyhow::Context;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use clap::{
-    Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum,
+    Args, CommandFactory, FromArgMatches, Parser, Subcommand,
     builder::{NonEmptyStringValueParser, StringValueParser, TypedValueParser},
     error::ErrorKind,
 };
@@ -14,20 +14,21 @@ use janus_collector::{
 use janus_core::{
     hpke::{HpkeKeypair, HpkePrivateKey},
     retries::ExponentialWithTotalDelayBuilder,
+    vdaf::VdafInstance,
+    vdaf_dispatch,
 };
 use janus_messages::{
     BatchConfig, CollectionJobId, Duration, HpkeConfig, Interval, PartialBatchSelector, Query,
-    TaskId, Time, TimePrecision, Url as DapUrl, VdafConfig,
+    TaskConfiguration, TaskId, Time,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
 };
 use prio::{
     codec::Decode,
-    vdaf::{self, Vdaf, prio3::Prio3},
+    vdaf::{self, Vdaf, VdafError},
 };
 use rand::random;
 use tracing_log::LogTracer;
 use tracing_subscriber::{EnvFilter, Registry, prelude::*};
-use url::Url;
 
 /// Enum to propagate errors through this program. Clap errors are handled separately from all
 /// others because [`clap::Error::exit`] takes care of its own error formatting, command-line help,
@@ -56,33 +57,14 @@ impl From<clap::Error> for Error {
     }
 }
 
-/// Decrypting an aggregate share requires binding the task's `TaskConfiguration` into the AAD, but
-/// this tool does not yet accept the parameters needed to reconstruct it, so [`new_collector`]
-/// supplies placeholders. Refuse up front rather than decrypt against an AAD we know is wrong and
-/// fail with an opaque HPKE error.
-fn ensure_aggregate_share_decryption_supported() -> Result<(), Error> {
-    Err(Error::Anyhow(anyhow!(
-        "collecting an aggregate share is not yet supported: the helper endpoint, task info, \
-         minimum batch size, batch config, and VDAF config are needed to reconstruct the task's \
-         TaskConfiguration, and this tool does not yet accept them. The `new-job` subcommand still \
-         works. See https://github.com/divviup/janus/issues/4713."
-    )))
+// `vdaf_dispatch!` applies `?` to the VDAF constructors it expands to.
+impl From<VdafError> for Error {
+    fn from(error: VdafError) -> Self {
+        Error::Anyhow(error.into())
+    }
 }
 
 // Parsers for command-line arguments:
-
-#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
-#[clap(rename_all = "lower")]
-enum VdafType {
-    /// Prio3Count
-    Count,
-    /// Prio3Sum
-    Sum,
-    /// Prio3SumVec
-    SumVec,
-    /// Prio3Histogram
-    Histogram,
-}
 
 #[derive(Clone)]
 struct HpkeConfigValueParser {
@@ -151,12 +133,35 @@ fn private_collector_credential_parser(
     serde_json::from_str(s)
 }
 
-/// Parses an endpoint into a byte-preserving [`DapUrl`], rejecting a value that is not a parseable
-/// URL. The exact bytes are kept for later HPKE AAD binding (`DapUrl` alone only checks ASCII); the
-/// `url::Url` parse is a discarded validity gate.
-fn leader_endpoint_parser(s: &str) -> Result<DapUrl, anyhow::Error> {
-    Url::parse(s)?;
-    Ok(DapUrl::try_from(s)?)
+#[derive(Clone)]
+struct TaskConfigurationValueParser {
+    inner: NonEmptyStringValueParser,
+}
+
+impl TaskConfigurationValueParser {
+    fn new() -> TaskConfigurationValueParser {
+        TaskConfigurationValueParser {
+            inner: NonEmptyStringValueParser::new(),
+        }
+    }
+}
+
+impl TypedValueParser for TaskConfigurationValueParser {
+    type Value = TaskConfiguration;
+
+    fn parse_ref(
+        &self,
+        cmd: &clap::Command,
+        arg: Option<&clap::Arg>,
+        value: &std::ffi::OsStr,
+    ) -> Result<Self::Value, clap::Error> {
+        let input = self.inner.parse_ref(cmd, arg, value)?;
+        let bytes = URL_SAFE_NO_PAD
+            .decode(input)
+            .map_err(|err| clap::Error::raw(ErrorKind::ValueValidation, err))?;
+        TaskConfiguration::get_decoded(&bytes)
+            .map_err(|err| clap::Error::raw(ErrorKind::ValueValidation, err))
+    }
 }
 
 #[derive(Debug, Args, PartialEq, Eq)]
@@ -307,39 +312,24 @@ struct Options {
     /// DAP task identifier, encoded with unpadded base64url
     #[clap(long, help_heading = "DAP Task Parameters", display_order = 0)]
     task_id: TaskId,
-    /// The leader aggregator's endpoint URL
+    /// The task's DAP TaskConfiguration message, encoded with unpadded base64url
+    ///
+    /// This supplies the aggregator endpoints, time precision, batch configuration, and VDAF
+    /// configuration. Its bytes are bound into the HPKE additional authenticated data, so it must
+    /// be exactly the message the aggregators were provisioned with.
     #[clap(
         long,
-        value_parser = leader_endpoint_parser,
+        value_parser = TaskConfigurationValueParser::new(),
         help_heading = "DAP Task Parameters",
         display_order = 1
     )]
-    leader: DapUrl,
-    /// The task's time precision, in seconds
-    #[clap(long, help_heading = "DAP Task Parameters", display_order = 2)]
-    time_precision: u64,
+    task_config: TaskConfiguration,
 
     #[clap(flatten)]
     authentication: AuthenticationOptions,
 
     #[clap(flatten)]
     hpke_config: HpkeConfigOptions,
-
-    /// VDAF algorithm
-    #[clap(
-        long,
-        value_enum,
-        help_heading = "VDAF Algorithm and Parameters",
-        display_order = 0
-    )]
-    vdaf: VdafType,
-    /// Number of vector elements, when used with --vdaf=sumvec or number of histogram buckets,
-    /// when used with --vdaf=histogram
-    #[clap(long, help_heading = "VDAF Algorithm and Parameters")]
-    length: Option<usize>,
-    /// Maximum measurement value, for use with --vdaf=sum or --vdaf=sumvec
-    #[clap(long, help_heading = "VDAF Algorithm and Parameters")]
-    max_measurement: Option<u64>,
 
     #[clap(flatten)]
     query: QueryOptions,
@@ -446,77 +436,90 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
+/// The batch to collect, resolved against the task's batch configuration.
+enum ResolvedQuery {
+    TimeInterval(Interval),
+    LeaderSelected,
+}
+
+/// Resolves the query arguments against the batch configuration in `--task-config`. The batch mode
+/// comes from the task configuration and the batch interval from the command line, so clap cannot
+/// rule out a disagreement between them.
+fn resolve_query(options: &Options) -> Result<ResolvedQuery, Error> {
+    let batch_config = options.task_config.batch_config();
+    match (
+        batch_config,
+        options.query.batch_interval_start,
+        options.query.batch_interval_duration,
+    ) {
+        (BatchConfig::TimeInterval, Some(start), Some(duration)) => {
+            let time_precision = options.task_config.time_precision();
+            Ok(ResolvedQuery::TimeInterval(
+                Interval::new(
+                    Time::from_seconds_since_epoch(start, time_precision),
+                    Duration::from_seconds(duration, time_precision),
+                )
+                .map_err(|err| Error::Anyhow(err.into()))?,
+            ))
+        }
+        (BatchConfig::TimeInterval, None, None) => Err(clap::Error::raw(
+            ErrorKind::MissingRequiredArgument,
+            "the task is a time-interval task, so --batch-interval-start and \
+             --batch-interval-duration are required\n",
+        )
+        .into()),
+        (BatchConfig::TimeInterval, _, _) => {
+            unreachable!("clap requires both batch interval arguments together")
+        }
+        (BatchConfig::LeaderSelected, None, None) => Ok(ResolvedQuery::LeaderSelected),
+        (BatchConfig::LeaderSelected, _, _) => Err(clap::Error::raw(
+            ErrorKind::ArgumentConflict,
+            "the task is a leader-selected task, so --batch-interval-start and \
+             --batch-interval-duration must not be provided\n",
+        )
+        .into()),
+        (batch_config, _, _) => Err(clap::Error::raw(
+            ErrorKind::ValueValidation,
+            format!(
+                "unsupported batch mode in --task-config: {}\n",
+                batch_config.batch_mode()
+            ),
+        )
+        .into()),
+    }
+}
+
 macro_rules! options_query_dispatch {
     ($options:expr, ($query:ident) => $body:tt) => {
-        match (
-            &$options.query.batch_interval_start,
-            &$options.query.batch_interval_duration,
-        ) {
-            (Some(batch_interval_start), Some(batch_interval_duration)) => {
-                let time_precision = &TimePrecision::from_seconds($options.time_precision);
-                let $query = Query::new_time_interval(
-                    Interval::new(
-                        Time::from_seconds_since_epoch(*batch_interval_start, time_precision),
-                        Duration::from_seconds(*batch_interval_duration, time_precision),
-                    )
-                    .map_err(|err| Error::Anyhow(err.into()))?,
-                );
+        match resolve_query(&$options)? {
+            ResolvedQuery::TimeInterval(batch_interval) => {
+                let $query = Query::new_time_interval(batch_interval);
                 $body
             }
-            (None, None) => {
+            ResolvedQuery::LeaderSelected => {
                 let $query = Query::new_leader_selected();
                 $body
             }
-            _ => unreachable!("clap argument parsing shouldn't allow this to be possible"),
         }
     };
 }
 
 macro_rules! options_vdaf_dispatch {
-    ($options:expr, ($vdaf:ident) => $body:tt) => {
-        match ($options.vdaf, $options.length, $options.max_measurement) {
-            (VdafType::Count, None, None) => {
-                let $vdaf = Prio3::new_count(2).map_err(|err| Error::Anyhow(err.into()))?;
-                let body = $body;
-                body
-            }
-            (VdafType::Sum, None, Some(max_measurement)) => {
-                let $vdaf = Prio3::new_sum(2, u64::from(max_measurement))
-                    .map_err(|err| Error::Anyhow(err.into()))?;
-                let body = $body;
-                body
-            }
-            (VdafType::SumVec, Some(length), Some(max_measurement)) => {
-                // We can take advantage of the fact that Prio3SumVec unsharding does not use the
-                // chunk_length parameter and avoid asking the user for it.
-                let $vdaf = Prio3::new_sum_vec(2, max_measurement as u128, length, 1)
-                    .map_err(|err| Error::Anyhow(err.into()))?;
-                let body = $body;
-                body
-            }
-            (VdafType::Histogram, Some(length), None) => {
-                // We can take advantage of the fact that Prio3Histogram unsharding does not use the
-                // chunk_length parameter and avoid asking the user for it.
-                let $vdaf =
-                    Prio3::new_histogram(2, length, 1).map_err(|err| Error::Anyhow(err.into()))?;
-                let body = $body;
-                body
-            }
-            _ => Err(clap::Error::raw(
-                ErrorKind::ArgumentConflict,
-                format!(
-                    "incorrect VDAF parameter arguments were supplied for {}",
-                    $options
-                        .vdaf
-                        .to_possible_value()
-                        .unwrap()
-                        .get_help()
-                        .unwrap(),
-                ),
-            )
-            .into()),
-        }
-    };
+    ($options:expr, ($vdaf:ident) => $body:tt) => {{
+        let vdaf_instance = VdafInstance::try_from($options.task_config.vdaf_config())
+            .map_err(|err| {
+                clap::Error::raw(
+                    ErrorKind::ValueValidation,
+                    format!("unsupported VDAF in --task-config: {err}\n"),
+                )
+            })?;
+        vdaf_dispatch!(&vdaf_instance, ($vdaf, VdafType, _VERIFY_KEY_LEN) => {
+            // The multiproof VDAF's constructor is generic over its gadget, so pin the arm's
+            // concrete type rather than leaving it to inference at the call sites.
+            let $vdaf: VdafType = $vdaf;
+            $body
+        })
+    }};
 }
 
 macro_rules! options_dispatch {
@@ -533,15 +536,17 @@ macro_rules! options_dispatch {
 async fn run(options: Options) -> Result<(), Error> {
     let http_client = default_http_client().map_err(|err| Error::Anyhow(err.into()))?;
     options_dispatch!(options, (query, vdaf) => {
+        // Every VDAF this tool dispatches to has a trivial aggregation parameter.
+        let agg_param: &<VdafType as Vdaf>::AggregationParam = &Default::default();
         match options.subcommand {
             Some(Subcommands::NewJob { collection_job_id }) => {
                 let collection_job_id = collection_job_id.unwrap_or_else(random);
-                run_new_job(options, vdaf, http_client, query, &(), collection_job_id).await
+                run_new_job(options, vdaf, http_client, query, agg_param, collection_job_id).await
             }
             Some(Subcommands::PollJob { collection_job_id }) => {
-                run_poll_job(options, vdaf, http_client, query, &(), collection_job_id).await
+                run_poll_job(options, vdaf, http_client, query, agg_param, collection_job_id).await
             }
-            _ => run_collection(options, vdaf, http_client, query, &()).await,
+            _ => run_collection(options, vdaf, http_client, query, agg_param).await,
         }
     })
 }
@@ -556,7 +561,6 @@ async fn run_collection<V: vdaf::Collector, B: BatchModeExt>(
 where
     V::AggregateResult: Debug,
 {
-    ensure_aggregate_share_decryption_supported()?;
     let collection = new_collector(options, vdaf, http_client)?
         .collection(query, agg_param)
         .collect()
@@ -598,7 +602,6 @@ async fn run_poll_job<V: vdaf::Collector, B: BatchModeExt>(
 where
     V::AggregateResult: Debug,
 {
-    ensure_aggregate_share_decryption_supported()?;
     let collection_job = CollectionJob::new(collection_job_id, query, agg_param.clone());
     let poll_result = new_collector(options, vdaf, http_client)?
         .poll_once(&collection_job)
@@ -627,24 +630,15 @@ fn new_collector<V: vdaf::Collector>(
     http_client: reqwest::Client,
 ) -> Result<Collector<V>, Error> {
     let (authentication, hpke_keypair) = options.credential()?;
-    let task_id = options.task_id;
-    let leader_endpoint = options.leader;
-    let time_precision = TimePrecision::from_seconds(options.time_precision);
+    let task_config = options.task_config;
     let collector = Collector::builder_with_custom_vdaf(
-        task_id,
-        leader_endpoint,
+        options.task_id,
         authentication,
         hpke_keypair,
         vdaf,
-        // Placeholder (#4713). Only `new-job` gets this far, and it never computes an AAD.
-        VdafConfig::Prio3Count,
-        time_precision,
+        task_config.vdaf_config().clone(),
     )
-    // Placeholders (#4713), as above.
-    .with_helper_endpoint("http://unused.helper.example/".try_into().unwrap())
-    .with_task_info(Vec::new())
-    .with_min_batch_size(0)
-    .with_batch_config(BatchConfig::TimeInterval)
+    .with_task_configuration(task_config)
     .with_http_client(http_client)
     .with_collect_poll_backoff(
         ExponentialWithTotalDelayBuilder::new()
@@ -735,14 +729,14 @@ mod tests {
         initialize_rustls,
         test_util::install_test_trace_subscriber,
     };
-    use janus_messages::{CollectionJobId, TaskId, Url as DapUrl};
-    use prio::codec::Encode;
+    use janus_messages::{BatchConfig, TaskConfiguration, TaskId, TimePrecision, VdafConfig};
+    use prio::{codec::Encode, vdaf::prio3::Prio3};
     use rand::random;
     use tempfile::NamedTempFile;
 
     use crate::{
         AuthenticationOptions, AuthenticationToken, Error, HpkeConfigOptions, Options,
-        QueryOptions, Subcommands, VdafType, run,
+        QueryOptions, Subcommands, default_http_client, new_collector, run,
     };
 
     const SAMPLE_COLLECTOR_CREDENTIAL: &str = r#"{
@@ -756,64 +750,32 @@ mod tests {
 }
 "#;
 
+    const LEADER_ENDPOINT: &str = "https://example.com/dap/";
+
+    fn task_config(batch_config: BatchConfig) -> TaskConfiguration {
+        TaskConfiguration::new(
+            b"test task".to_vec(),
+            LEADER_ENDPOINT.try_into().unwrap(),
+            "https://helper.example.com/dap/".try_into().unwrap(),
+            TimePrecision::from_seconds(300),
+            100,
+            batch_config,
+            VdafConfig::Prio3Count,
+            Vec::new(),
+        )
+        .unwrap()
+    }
+
+    fn task_config_argument(batch_config: BatchConfig) -> String {
+        format!(
+            "--task-config={}",
+            URL_SAFE_NO_PAD.encode(task_config(batch_config).get_encoded().unwrap())
+        )
+    }
+
     #[test]
     fn verify_app() {
         Options::command().debug_assert();
-    }
-
-    /// The paths that decrypt an aggregate share must refuse before contacting the leader, rather
-    /// than build an AAD from the placeholders in `new_collector` and fail to decrypt. See #4713.
-    #[tokio::test]
-    async fn aggregate_share_decryption_refused() {
-        install_test_trace_subscriber();
-        initialize_rustls();
-
-        let hpke_keypair = HpkeKeypair::test();
-        let task_id: TaskId = random();
-        let auth_token = AuthenticationToken::DapAuth(random());
-        let arguments = [
-            "collect".to_string(),
-            format!(
-                "--task-id={}",
-                URL_SAFE_NO_PAD.encode(task_id.get_encoded().unwrap())
-            ),
-            "--leader=https://example.com/dap/".to_string(),
-            format!("--dap-auth-token={}", auth_token.as_str()),
-            format!(
-                "--hpke-config={}",
-                URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded().unwrap())
-            ),
-            format!(
-                "--hpke-private-key={}",
-                URL_SAFE_NO_PAD.encode(hpke_keypair.private_key().as_ref())
-            ),
-            "--vdaf=count".to_string(),
-            "--batch-interval-start=1000000".to_string(),
-            "--batch-interval-duration=1000".to_string(),
-            "--time-precision=300".to_string(),
-        ];
-
-        let collection_job_id: CollectionJobId = random();
-
-        // The default (collect-and-wait) path, and the poll path.
-        for subcommand in [
-            Vec::new(),
-            Vec::from([
-                "poll-job".to_string(),
-                "--".to_string(),
-                collection_job_id.to_string(),
-            ]),
-        ] {
-            let options =
-                Options::try_parse_from(arguments.iter().cloned().chain(subcommand)).unwrap();
-            assert_matches!(
-                run(options).await.unwrap_err(),
-                Error::Anyhow(err) => assert!(
-                    err.to_string().contains("issues/4713"),
-                    "unexpected error: {err}"
-                )
-            );
-        }
     }
 
     #[tokio::test]
@@ -827,14 +789,12 @@ mod tests {
         let encoded_private_key = URL_SAFE_NO_PAD.encode(hpke_keypair.private_key().as_ref());
 
         let task_id = random();
-        let leader = DapUrl::try_from("https://example.com/dap/").unwrap();
         let auth_token = AuthenticationToken::DapAuth(random());
 
         let expected = Options {
             subcommand: None,
             task_id,
-            leader: leader.clone(),
-            time_precision: 300,
+            task_config: task_config(BatchConfig::TimeInterval),
             authentication: AuthenticationOptions {
                 dap_auth_token: Some(auth_token.clone()),
                 authorization_bearer_token: None,
@@ -845,30 +805,24 @@ mod tests {
                 collector_credential_file: None,
                 collector_credential: None,
             },
-            vdaf: VdafType::Count,
-            length: None,
-            max_measurement: None,
             query: QueryOptions {
                 batch_interval_start: Some(1_000_000),
                 batch_interval_duration: Some(1_000),
             },
         };
         let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded().unwrap());
+        let task_config_argument = task_config_argument(BatchConfig::TimeInterval);
         let correct_arguments = [
             "collect",
             &format!("--task-id={task_id_encoded}"),
-            "--leader",
-            leader.as_str(),
+            &task_config_argument,
             &format!("--dap-auth-token={}", auth_token.as_str()),
             &format!("--hpke-config={encoded_hpke_config}"),
             &format!("--hpke-private-key={encoded_private_key}"),
-            "--vdaf",
-            "count",
             "--batch-interval-start",
             "1000000",
             "--batch-interval-duration",
             "1000",
-            "--time-precision=300",
         ];
         match Options::try_parse_from(correct_arguments) {
             Ok(got) => assert_eq!(got, expected),
@@ -885,16 +839,26 @@ mod tests {
             Options::try_parse_from([
                 "collect",
                 &format!("--task-id={task_id_encoded}"),
-                "--leader",
-                leader.as_str(),
+                &task_config_argument,
                 &format!("--dap-auth-token={}", auth_token.as_str()),
-                "--vdaf",
-                "count",
                 "--batch-interval-start",
                 "1000000",
                 "--batch-interval-duration",
                 "1000",
-                "--time-precision=300",
+            ])
+            .unwrap_err()
+            .kind(),
+            ErrorKind::MissingRequiredArgument,
+        );
+
+        // Missing the task configuration entirely.
+        assert_eq!(
+            Options::try_parse_from([
+                "collect",
+                &format!("--task-id={task_id_encoded}"),
+                &format!("--dap-auth-token={}", auth_token.as_str()),
+                &format!("--hpke-config={encoded_hpke_config}"),
+                &format!("--hpke-private-key={encoded_private_key}"),
             ])
             .unwrap_err()
             .kind(),
@@ -918,79 +882,130 @@ mod tests {
         );
 
         let mut bad_arguments = correct_arguments;
-        bad_arguments[3] = "http:bad:url:///dap@";
+        bad_arguments[2] = "--task-config=not valid base64";
+        assert_eq!(
+            Options::try_parse_from(bad_arguments).unwrap_err().kind(),
+            ErrorKind::ValueValidation,
+        );
+
+        // A truncated task configuration: valid base64url, but not a decodable message.
+        let mut bad_arguments = correct_arguments;
+        let truncated = task_config(BatchConfig::TimeInterval)
+            .get_encoded()
+            .unwrap();
+        let bad_argument = format!(
+            "--task-config={}",
+            URL_SAFE_NO_PAD.encode(&truncated[..truncated.len() / 2])
+        );
+        bad_arguments[2] = &bad_argument;
         assert_eq!(
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),
             ErrorKind::ValueValidation,
         );
 
         let mut bad_arguments = correct_arguments;
-        bad_arguments[5] = "--hpke-config=not valid base64";
+        bad_arguments[4] = "--hpke-config=not valid base64";
         assert_eq!(
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),
             ErrorKind::ValueValidation,
         );
 
         let mut bad_arguments = correct_arguments;
-        bad_arguments[6] = "--hpke-private-key=not valid base64";
+        bad_arguments[5] = "--hpke-private-key=not valid base64";
         assert_eq!(
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),
             ErrorKind::ValueValidation,
         );
+    }
 
+    /// The collector's task parameters are all resolved from the task configuration at build time,
+    /// so a wiring mistake in `new_collector` would fail every real invocation while leaving the
+    /// argument-parsing tests green.
+    #[test]
+    fn new_collector_accepts_task_config() {
+        install_test_trace_subscriber();
+        initialize_rustls();
+
+        let hpke_keypair = HpkeKeypair::test();
+        let task_id: TaskId = random();
+        let auth_token = AuthenticationToken::DapAuth(random());
+        let options = Options::try_parse_from([
+            "collect".to_string(),
+            format!(
+                "--task-id={}",
+                URL_SAFE_NO_PAD.encode(task_id.get_encoded().unwrap())
+            ),
+            task_config_argument(BatchConfig::TimeInterval),
+            format!("--dap-auth-token={}", auth_token.as_str()),
+            format!(
+                "--hpke-config={}",
+                URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded().unwrap())
+            ),
+            format!(
+                "--hpke-private-key={}",
+                URL_SAFE_NO_PAD.encode(hpke_keypair.private_key().as_ref())
+            ),
+            "--batch-interval-start=1000000".to_string(),
+            "--batch-interval-duration=1000".to_string(),
+        ])
+        .unwrap();
+
+        new_collector(
+            options,
+            Prio3::new_count(2).unwrap(),
+            default_http_client().unwrap(),
+        )
+        .unwrap();
+    }
+
+    /// The task configuration states the batch mode and the command line selects the batch, so
+    /// clap cannot rule out a disagreement between them.
+    #[tokio::test]
+    async fn query_must_match_batch_config() {
+        install_test_trace_subscriber();
+        initialize_rustls();
+
+        let hpke_keypair = HpkeKeypair::test();
+        let task_id: TaskId = random();
+        let auth_token = AuthenticationToken::DapAuth(random());
         let base_arguments = Vec::from([
             "collect".to_string(),
-            format!("--task-id={task_id_encoded}"),
-            "--leader".to_string(),
-            leader.to_string(),
+            format!(
+                "--task-id={}",
+                URL_SAFE_NO_PAD.encode(task_id.get_encoded().unwrap())
+            ),
             format!("--dap-auth-token={}", auth_token.as_str()),
-            format!("--hpke-config={encoded_hpke_config}"),
-            format!("--hpke-private-key={encoded_private_key}"),
-            "--batch-interval-start".to_string(),
-            "1000000".to_string(),
-            "--batch-interval-duration".to_string(),
-            "1000".to_string(),
-            "--time-precision=300".to_string(),
+            format!(
+                "--hpke-config={}",
+                URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded().unwrap())
+            ),
+            format!(
+                "--hpke-private-key={}",
+                URL_SAFE_NO_PAD.encode(hpke_keypair.private_key().as_ref())
+            ),
         ]);
 
-        let mut bad_arguments = base_arguments.clone();
-        bad_arguments.extend(["--vdaf=histogram".to_string(), "--length=apple".to_string()]);
-        assert_eq!(
-            Options::try_parse_from(bad_arguments).unwrap_err().kind(),
-            ErrorKind::ValueValidation
-        );
-
-        let mut bad_arguments = base_arguments.clone();
-        bad_arguments.extend(["--vdaf=histogram".to_string()]);
-        let bad_options = Options::try_parse_from(bad_arguments).unwrap();
+        // A time-interval task with no batch interval.
+        let mut arguments = base_arguments.clone();
+        arguments.push(task_config_argument(BatchConfig::TimeInterval));
+        let options = Options::try_parse_from(arguments).unwrap();
         assert_matches!(
-            run(bad_options).await.unwrap_err(),
-            Error::Clap(err) => assert_eq!(err.kind(), ErrorKind::ArgumentConflict)
+            run(options).await.unwrap_err(),
+            Error::Clap(err) => assert_eq!(err.kind(), ErrorKind::MissingRequiredArgument)
         );
 
-        let mut bad_arguments = base_arguments.clone();
-        bad_arguments.extend(["--vdaf=sum".to_string()]);
-        let bad_options = Options::try_parse_from(bad_arguments).unwrap();
-        assert_matches!(
-            run(bad_options).await.unwrap_err(),
-            Error::Clap(err) => assert_eq!(err.kind(), ErrorKind::ArgumentConflict)
-        );
-
-        let mut good_arguments = base_arguments.clone();
-        good_arguments.extend(["--vdaf=sum".to_string(), "--max-measurement=8".to_string()]);
-        Options::try_parse_from(good_arguments).unwrap();
-
-        let mut good_arguments = base_arguments.clone();
-        good_arguments.extend([
-            "--vdaf=sumvec".to_string(),
-            "--max-measurement=8".to_string(),
-            "--length=10".to_string(),
+        // A leader-selected task with a batch interval.
+        let mut arguments = base_arguments;
+        arguments.extend([
+            task_config_argument(BatchConfig::LeaderSelected),
+            "--batch-interval-start=1000000".to_string(),
+            "--batch-interval-duration=1000".to_string(),
         ]);
-        Options::try_parse_from(good_arguments).unwrap();
-
-        let mut good_arguments = base_arguments.clone();
-        good_arguments.extend(["--vdaf=histogram".to_string(), "--length=4".to_string()]);
-        Options::try_parse_from(good_arguments).unwrap();
+        let options = Options::try_parse_from(arguments).unwrap();
+        assert_matches!(
+            run(options).await.unwrap_err(),
+            Error::Clap(err) => assert_eq!(err.kind(), ErrorKind::ArgumentConflict)
+        );
     }
 
     #[test]
@@ -998,20 +1013,18 @@ mod tests {
         let task_id: TaskId = random();
         let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded().unwrap());
 
-        let leader = DapUrl::try_from("https://example.com/dap/").unwrap();
-
         let hpke_keypair = HpkeKeypair::test();
         let encoded_hpke_config =
             URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded().unwrap());
         let encoded_private_key = URL_SAFE_NO_PAD.encode(hpke_keypair.private_key().as_ref());
         let auth_token = AuthenticationToken::DapAuth(random());
+        let task_config_argument = task_config_argument(BatchConfig::LeaderSelected);
 
         // Check parsing arguments for a leader-selected query.
         let expected = Options {
             subcommand: None,
             task_id,
-            leader: leader.clone(),
-            time_precision: 300,
+            task_config: task_config(BatchConfig::LeaderSelected),
             authentication: AuthenticationOptions {
                 dap_auth_token: Some(auth_token.clone()),
                 authorization_bearer_token: None,
@@ -1022,9 +1035,6 @@ mod tests {
                 collector_credential_file: None,
                 collector_credential: None,
             },
-            vdaf: VdafType::Count,
-            length: None,
-            max_measurement: None,
             query: QueryOptions {
                 batch_interval_start: None,
                 batch_interval_duration: None,
@@ -1033,33 +1043,25 @@ mod tests {
         let correct_arguments = [
             "collect",
             &format!("--task-id={task_id_encoded}"),
-            "--leader",
-            leader.as_str(),
+            &task_config_argument,
             &format!("--dap-auth-token={}", auth_token.as_str()),
             &format!("--hpke-config={encoded_hpke_config}"),
             &format!("--hpke-private-key={encoded_private_key}"),
-            "--vdaf",
-            "count",
-            "--time-precision=300",
         ];
         match Options::try_parse_from(correct_arguments) {
             Ok(got) => assert_eq!(got, expected),
             Err(e) => panic!("{e}\narguments were {correct_arguments:?}"),
         }
 
-        // Check that clap enforces all the constraints we need on combinations of query arguments.
-        // This allows us to treat a default match branch as `unreachable!()` when unpacking the
-        // argument matches.
+        // Clap requires the two batch interval arguments together, which is what lets
+        // `resolve_query` treat a lone one as unreachable.
         let base_arguments = Vec::from([
             "collect".to_string(),
             format!("--task-id={task_id_encoded}"),
-            "--leader".to_string(),
-            "https://example.com/dap/".to_string(),
+            task_config_argument,
             format!("--dap-auth-token={}", auth_token.as_str()),
             format!("--hpke-config={encoded_hpke_config}"),
             format!("--hpke-private-key={encoded_private_key}"),
-            "--vdaf=count".to_string(),
-            "--time-precision=300".to_string(),
         ]);
 
         Options::try_parse_from(base_arguments.clone()).unwrap();
@@ -1092,16 +1094,13 @@ mod tests {
         let base_arguments = Vec::from([
             "collect".to_string(),
             format!("--task-id={task_id_encoded}"),
-            "--leader".to_string(),
-            "https://example.com/dap/".to_string(),
+            task_config_argument(BatchConfig::TimeInterval),
             format!("--hpke-config={encoded_hpke_config}"),
             format!("--hpke-private-key={encoded_private_key}"),
             "--batch-interval-start".to_string(),
             "1000000".to_string(),
             "--batch-interval-duration".to_string(),
             "1000".to_string(),
-            "--vdaf=count".to_string(),
-            "--time-precision=300".to_string(),
         ]);
 
         let dap_auth_token: DapAuthToken = random();
@@ -1171,14 +1170,11 @@ mod tests {
         let base_arguments = Vec::from([
             "collect".to_string(),
             format!("--task-id={task_id_encoded}"),
-            "--leader".to_string(),
-            "https://example.com/dap/".to_string(),
+            task_config_argument(BatchConfig::TimeInterval),
             "--batch-interval-start".to_string(),
             "1000000".to_string(),
             "--batch-interval-duration".to_string(),
             "1000".to_string(),
-            "--vdaf=count".to_string(),
-            "--time-precision=300".to_string(),
         ]);
 
         // Missing all credential args entirely.
@@ -1250,14 +1246,11 @@ mod tests {
         let base_arguments = Vec::from([
             "collect".to_string(),
             format!("--task-id={task_id_encoded}"),
-            "--leader".to_string(),
-            "https://example.com/dap/".to_string(),
+            task_config_argument(BatchConfig::TimeInterval),
             "--batch-interval-start".to_string(),
             "1000000".to_string(),
             "--batch-interval-duration".to_string(),
             "1000".to_string(),
-            "--vdaf=count".to_string(),
-            "--time-precision=300".to_string(),
             format!("--authorization-bearer-token={}", bearer_token.as_str()),
             format!("--collector-credential={SAMPLE_COLLECTOR_CREDENTIAL}"),
         ]);
@@ -1276,7 +1269,6 @@ mod tests {
     fn hpke_config() {
         let task_id: TaskId = random();
         let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded().unwrap());
-        let leader = DapUrl::try_from("https://example.com/dap/").unwrap();
         let hpke_keypair = HpkeKeypair::test();
         let encoded_hpke_config =
             URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded().unwrap());
@@ -1286,12 +1278,8 @@ mod tests {
         let base_arguments = Vec::from([
             "collect".to_string(),
             format!("--task-id={task_id_encoded}"),
-            "--leader".to_string(),
-            leader.to_string(),
+            task_config_argument(BatchConfig::TimeInterval),
             format!("--dap-auth-token={}", auth_token.as_str()),
-            "--vdaf".to_string(),
-            "count".to_string(),
-            "--time-precision=300".to_string(),
         ]);
 
         let mut correct_arguments = base_arguments.clone();
@@ -1349,16 +1337,15 @@ mod tests {
         let encoded_private_key = URL_SAFE_NO_PAD.encode(hpke_keypair.private_key().as_ref());
 
         let task_id = random();
-        let leader = DapUrl::try_from("https://example.com/dap/").unwrap();
         let auth_token = AuthenticationToken::DapAuth(random());
+        let task_config_argument = task_config_argument(BatchConfig::TimeInterval);
 
         let mut expected = Options {
             subcommand: Some(Subcommands::NewJob {
                 collection_job_id: None,
             }),
             task_id,
-            leader: leader.clone(),
-            time_precision: 300,
+            task_config: task_config(BatchConfig::TimeInterval),
             authentication: AuthenticationOptions {
                 dap_auth_token: Some(auth_token.clone()),
                 authorization_bearer_token: None,
@@ -1369,9 +1356,6 @@ mod tests {
                 collector_credential_file: None,
                 collector_credential: None,
             },
-            vdaf: VdafType::Count,
-            length: None,
-            max_measurement: None,
             query: QueryOptions {
                 batch_interval_start: Some(1_000_000),
                 batch_interval_duration: Some(1_000),
@@ -1381,18 +1365,14 @@ mod tests {
         let correct_arguments = [
             "collect",
             &format!("--task-id={task_id_encoded}"),
-            "--leader",
-            leader.as_str(),
+            &task_config_argument,
             &format!("--dap-auth-token={}", auth_token.as_str()),
             &format!("--hpke-config={encoded_hpke_config}"),
             &format!("--hpke-private-key={encoded_private_key}"),
-            "--vdaf",
-            "count",
             "--batch-interval-start",
             "1000000",
             "--batch-interval-duration",
             "1000",
-            "--time-precision=300",
             "new-job",
         ];
         match Options::try_parse_from(correct_arguments) {
@@ -1407,18 +1387,14 @@ mod tests {
         let correct_arguments = [
             "collect",
             &format!("--task-id={task_id_encoded}"),
-            "--leader",
-            leader.as_str(),
+            &task_config_argument,
             &format!("--dap-auth-token={}", auth_token.as_str()),
             &format!("--hpke-config={encoded_hpke_config}"),
             &format!("--hpke-private-key={encoded_private_key}"),
-            "--vdaf",
-            "count",
             "--batch-interval-start",
             "1000000",
             "--batch-interval-duration",
             "1000",
-            "--time-precision=300",
             "new-job",
             "--", // prevent ID from being interpreted as a flag, in case it starts with a hyphen.
             &format!("{collection_job_id}"),
@@ -1437,14 +1413,13 @@ mod tests {
         let encoded_private_key = URL_SAFE_NO_PAD.encode(hpke_keypair.private_key().as_ref());
 
         let task_id = random();
-        let leader = DapUrl::try_from("https://example.com/dap/").unwrap();
         let auth_token = AuthenticationToken::DapAuth(random());
+        let task_config_argument = task_config_argument(BatchConfig::TimeInterval);
         let collection_job_id = random();
         let expected = Options {
             subcommand: Some(Subcommands::PollJob { collection_job_id }),
             task_id,
-            leader: leader.clone(),
-            time_precision: 300,
+            task_config: task_config(BatchConfig::TimeInterval),
             authentication: AuthenticationOptions {
                 dap_auth_token: Some(auth_token.clone()),
                 authorization_bearer_token: None,
@@ -1455,9 +1430,6 @@ mod tests {
                 collector_credential_file: None,
                 collector_credential: None,
             },
-            vdaf: VdafType::Count,
-            length: None,
-            max_measurement: None,
             query: QueryOptions {
                 batch_interval_start: Some(1_000_000),
                 batch_interval_duration: Some(1_000),
@@ -1467,18 +1439,14 @@ mod tests {
         let correct_arguments = [
             "collect",
             &format!("--task-id={task_id_encoded}"),
-            "--leader",
-            leader.as_str(),
+            &task_config_argument,
             &format!("--dap-auth-token={}", auth_token.as_str()),
             &format!("--hpke-config={encoded_hpke_config}"),
             &format!("--hpke-private-key={encoded_private_key}"),
-            "--vdaf",
-            "count",
             "--batch-interval-start",
             "1000000",
             "--batch-interval-duration",
             "1000",
-            "--time-precision=300",
             "poll-job",
             "--", // prevent ID from being interpreted as a flag, in case it starts with a hyphen.
             &collection_job_id.to_string(),

@@ -263,13 +263,13 @@ where
         .in_process_config(leader_port, helper_port);
     let mut builder = Collector::builder_with_custom_vdaf(
         task_parameters.task_id,
-        leader_endpoint.as_str().try_into().unwrap(),
         task_parameters.collector_auth_token.clone(),
         task_parameters.collector_hpke_keypair.clone(),
         vdaf,
         task_parameters.vdaf.to_vdaf_config().unwrap(),
-        task_parameters.time_precision,
     )
+    .with_leader_endpoint(leader_endpoint.as_str().try_into().unwrap())
+    .with_time_precision(task_parameters.time_precision)
     .with_helper_endpoint(helper_endpoint.as_str().try_into().unwrap())
     .with_task_info(task_parameters.task_info.clone())
     .with_min_batch_size(task_parameters.min_batch_size)
