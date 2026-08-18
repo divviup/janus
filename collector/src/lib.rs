@@ -439,95 +439,95 @@ impl<V: vdaf::Collector> CollectorBuilder<V> {
 
     /// Finalize construction of a [`Collector`].
     pub fn build(self) -> Result<Collector<V>, Error> {
-        let task_configuration = self.resolve_task_configuration()?;
-        let http_client = if let Some(http_client) = self.http_client {
+        let Self {
+            task_id,
+            authentication,
+            hpke_keypair,
+            vdaf,
+            leader_endpoint,
+            time_precision,
+            helper_endpoint,
+            task_info,
+            min_batch_size,
+            batch_config,
+            vdaf_config,
+            task_interval,
+            task_configuration,
+            http_client,
+            http_request_retry_parameters,
+            collect_poll_wait_parameters,
+        } = self;
+
+        let task_configuration = match task_configuration {
+            None => build_task_configuration(
+                task_info.ok_or(Error::InvalidParameter("task_info not set"))?,
+                leader_endpoint.ok_or(Error::InvalidParameter("leader_endpoint not set"))?,
+                helper_endpoint.ok_or(Error::InvalidParameter("helper_endpoint not set"))?,
+                time_precision.ok_or(Error::InvalidParameter("time_precision not set"))?,
+                min_batch_size.ok_or(Error::InvalidParameter("min_batch_size not set"))?,
+                batch_config.ok_or(Error::InvalidParameter("batch_config not set"))?,
+                vdaf_config,
+                task_interval,
+            )?,
+            Some(task_configuration) => {
+                // Since TaskConfiguration is the whole thing, including extensions this
+                // implementation does not model, composing from the setters can't reproduce it.
+                // If we got here, with_task_configuration was used, so enforce that the other
+                // setters _weren't_.
+                if helper_endpoint.is_some()
+                    || task_info.is_some()
+                    || min_batch_size.is_some()
+                    || batch_config.is_some()
+                    || task_interval.is_some()
+                {
+                    return Err(Error::InvalidParameter(
+                        "with_task_configuration is mutually exclusive with the individual \
+                         TaskConfiguration setters",
+                    ));
+                }
+
+                // A disagreement with the task configuration would be a silent AAD bug, so
+                // cross-check whatever the caller supplied.
+                if &vdaf_config != task_configuration.vdaf_config() {
+                    return Err(Error::InvalidParameter(
+                        "vdaf_config disagrees with the task configuration's vdaf_config",
+                    ));
+                }
+                if leader_endpoint.is_some_and(|leader_endpoint| {
+                    &leader_endpoint != task_configuration.leader_aggregator_endpoint()
+                }) {
+                    return Err(Error::InvalidParameter(
+                        "leader_endpoint disagrees with the task configuration's \
+                         leader_aggregator_endpoint",
+                    ));
+                }
+                if time_precision.is_some_and(|time_precision| {
+                    &time_precision != task_configuration.time_precision()
+                }) {
+                    return Err(Error::InvalidParameter(
+                        "time_precision disagrees with the task configuration's time_precision",
+                    ));
+                }
+
+                task_configuration
+            }
+        };
+
+        let http_client = if let Some(http_client) = http_client {
             http_client
         } else {
             default_http_client()?
         };
         Ok(Collector {
-            task_id: self.task_id,
+            task_id,
             task_configuration,
-            authentication: self.authentication,
-            hpke_keypair: self.hpke_keypair,
-            vdaf: self.vdaf,
+            authentication,
+            hpke_keypair,
+            vdaf,
             http_client,
-            http_request_retry_parameters: self.http_request_retry_parameters,
-            collect_poll_wait_parameters: self.collect_poll_wait_parameters,
+            http_request_retry_parameters,
+            collect_poll_wait_parameters,
         })
-    }
-
-    /// Resolves the task's [`TaskConfiguration`], either from whatever was supplied to
-    /// [`Self::with_task_configuration`] or by composing one from the individual setters.
-    fn resolve_task_configuration(&self) -> Result<TaskConfiguration, Error> {
-        let Some(task_configuration) = &self.task_configuration else {
-            return Ok(build_task_configuration(
-                self.task_info
-                    .clone()
-                    .ok_or(Error::InvalidParameter("task_info not set"))?,
-                self.leader_endpoint
-                    .clone()
-                    .ok_or(Error::InvalidParameter("leader_endpoint not set"))?,
-                self.helper_endpoint
-                    .clone()
-                    .ok_or(Error::InvalidParameter("helper_endpoint not set"))?,
-                self.time_precision
-                    .ok_or(Error::InvalidParameter("time_precision not set"))?,
-                self.min_batch_size
-                    .ok_or(Error::InvalidParameter("min_batch_size not set"))?,
-                self.batch_config
-                    .clone()
-                    .ok_or(Error::InvalidParameter("batch_config not set"))?,
-                self.vdaf_config.clone(),
-                self.task_interval,
-            )?);
-        };
-
-        // Since TaskConfiguration is the whole thing, including extensions this
-        // implementation does not model, composing from the setters can't reproduce it.
-        // If we got here, with_task_configuration was used, so enforce that the other
-        // setters _weren't_.
-        if self.helper_endpoint.is_some()
-            || self.task_info.is_some()
-            || self.min_batch_size.is_some()
-            || self.batch_config.is_some()
-            || self.task_interval.is_some()
-        {
-            return Err(Error::InvalidParameter(
-                "with_task_configuration is mutually exclusive with the individual \
-                 TaskConfiguration setters",
-            ));
-        }
-
-        // A disagreement with the task configuration would be a silent AAD bug, so cross-check
-        // whatever the caller supplied.
-        if &self.vdaf_config != task_configuration.vdaf_config() {
-            return Err(Error::InvalidParameter(
-                "vdaf_config disagrees with the task configuration's vdaf_config",
-            ));
-        }
-        if self
-            .leader_endpoint
-            .as_ref()
-            .is_some_and(|leader_endpoint| {
-                leader_endpoint != task_configuration.leader_aggregator_endpoint()
-            })
-        {
-            return Err(Error::InvalidParameter(
-                "leader_endpoint disagrees with the task configuration's \
-                 leader_aggregator_endpoint",
-            ));
-        }
-        if self
-            .time_precision
-            .is_some_and(|time_precision| &time_precision != task_configuration.time_precision())
-        {
-            return Err(Error::InvalidParameter(
-                "time_precision disagrees with the task configuration's time_precision",
-            ));
-        }
-
-        Ok(task_configuration.clone())
     }
 
     /// Provide an HTTPS client for the collector.
