@@ -43,7 +43,7 @@ console-subscriber = "0.5.0"
 constcat = "0.6"
 deadpool = "0.12.2"
 deadpool-postgres = "0.14.1"
-divviup-client = "0.4"
+divviup-client = "0.5"
 educe = { version = "0.7.4", default-features = false, features = ["Debug", "PartialEq", "Eq"] }
 futures = "0.3.32"
 hex = "0.4.3"
