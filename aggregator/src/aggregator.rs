@@ -4,6 +4,7 @@ use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
     fmt::Debug,
+    marker::PhantomData,
     panic,
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -55,8 +56,8 @@ use janus_messages::{
     AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq, AggregationJobResp,
     AggregationJobStep, CollectionJobExtension, CollectionJobId, CollectionJobReq,
     CollectionJobResp, Duration, ExtensionType, HpkeConfig, HpkeConfigList, InputShareAad,
-    Interval, PartialBatchSelector, PlaintextInputShare, Report, ReportError, ReportUploadStatus,
-    Role, TaskConfiguration, TaskExtension, TaskId, UploadErrors, Url as DapUrl, VerifyResp,
+    Interval, PlaintextInputShare, Report, ReportError, ReportUploadStatus, Role,
+    TaskConfiguration, TaskExtension, TaskId, UploadErrors, Url as DapUrl, VerifyResp,
     batch_mode::{LeaderSelected, TimeInterval},
     extensions_are_strictly_increasing,
 };
@@ -3428,13 +3429,11 @@ impl VdafOps {
                 )?;
 
                 CollectionJobResp::<B> {
-                    partial_batch_selector: PartialBatchSelector::new(
-                        B::partial_batch_identifier(collection_job.batch_identifier()).clone(),
-                    ),
                     report_count: *report_count,
                     interval: *client_timestamp_interval,
                     leader_encrypted_agg_share: encrypted_leader_aggregate_share,
                     helper_encrypted_agg_share: encrypted_helper_aggregate_share.clone(),
+                    phantom: PhantomData,
                 }
                 .get_encoded()
                 .map_err(Error::MessageEncode)

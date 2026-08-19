@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+
 use prio::codec::{Decode, Encode};
 
 use super::{task_configuration_hex, test_task_configuration};
@@ -234,8 +236,7 @@ fn roundtrip_collection_job_resp() {
     // TimeInterval.
     roundtrip_encoding(&[
         (
-            CollectionJobResp {
-                partial_batch_selector: PartialBatchSelector::new_time_interval(),
+            CollectionJobResp::<TimeInterval> {
                 report_count: 0,
                 interval,
                 leader_encrypted_agg_share: HpkeCiphertext::new(
@@ -248,14 +249,9 @@ fn roundtrip_collection_job_resp() {
                     Vec::from("01234"),
                     Vec::from("567"),
                 ),
+                phantom: PhantomData,
             },
             concat!(
-                concat!(
-                    // partial_batch_selector
-                    "01",   // batch_mode
-                    "0000", // length
-                    "",     // opaque data
-                ),
                 "0000000000000000", // report_count
                 concat!(
                     // interval
@@ -293,8 +289,7 @@ fn roundtrip_collection_job_resp() {
             ),
         ),
         (
-            CollectionJobResp {
-                partial_batch_selector: PartialBatchSelector::new_time_interval(),
+            CollectionJobResp::<TimeInterval> {
                 report_count: 23,
                 interval,
                 leader_encrypted_agg_share: HpkeCiphertext::new(
@@ -307,14 +302,9 @@ fn roundtrip_collection_job_resp() {
                     Vec::from("01234"),
                     Vec::from("567"),
                 ),
+                phantom: PhantomData,
             },
             concat!(
-                concat!(
-                    // partial_batch_selector
-                    "01",   // batch_mode
-                    "0000", // length
-                    "",     // opaque data
-                ),
                 "0000000000000017", // report_count
                 concat!(
                     // interval
@@ -356,10 +346,7 @@ fn roundtrip_collection_job_resp() {
     // LeaderSelected.
     roundtrip_encoding(&[
         (
-            CollectionJobResp {
-                partial_batch_selector: PartialBatchSelector::new_leader_selected(BatchId::from(
-                    [3u8; 32],
-                )),
+            CollectionJobResp::<LeaderSelected> {
                 report_count: 0,
                 interval,
                 leader_encrypted_agg_share: HpkeCiphertext::new(
@@ -372,15 +359,9 @@ fn roundtrip_collection_job_resp() {
                     Vec::from("01234"),
                     Vec::from("567"),
                 ),
+                phantom: PhantomData,
             },
             concat!(
-                concat!(
-                    // partial_batch_selector
-                    "02",   // batch_mode
-                    "0020", // length
-                    // opaque data
-                    "0303030303030303030303030303030303030303030303030303030303030303",
-                ),
                 "0000000000000000", // report_count
                 concat!(
                     // interval
@@ -418,10 +399,7 @@ fn roundtrip_collection_job_resp() {
             ),
         ),
         (
-            CollectionJobResp {
-                partial_batch_selector: PartialBatchSelector::new_leader_selected(BatchId::from(
-                    [4u8; 32],
-                )),
+            CollectionJobResp::<LeaderSelected> {
                 report_count: 23,
                 interval,
                 leader_encrypted_agg_share: HpkeCiphertext::new(
@@ -434,15 +412,9 @@ fn roundtrip_collection_job_resp() {
                     Vec::from("01234"),
                     Vec::from("567"),
                 ),
+                phantom: PhantomData,
             },
             concat!(
-                concat!(
-                    // partial_batch_selector
-                    "02",   // batch_mode
-                    "0020", // length
-                    // opaque data
-                    "0404040404040404040404040404040404040404040404040404040404040404",
-                ),
                 "0000000000000017", // report_count
                 concat!(
                     // interval

@@ -11,6 +11,7 @@ use std::{
     fmt::{self, Debug, Display, Formatter},
     hash::{Hash, Hasher},
     io::{Cursor, Read},
+    marker::PhantomData,
     num::TryFromIntError,
     str::{self, FromStr},
 };
@@ -2033,11 +2034,11 @@ impl Distribution<CollectionJobId> for StandardUniform {
 /// aggregate shares for a given query.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CollectionJobResp<B: BatchMode> {
-    pub partial_batch_selector: PartialBatchSelector<B>,
     pub report_count: u64,
     pub interval: Interval,
     pub leader_encrypted_agg_share: HpkeCiphertext,
     pub helper_encrypted_agg_share: HpkeCiphertext,
+    pub phantom: PhantomData<B>,
 }
 
 impl<B: BatchMode> MediaType for CollectionJobResp<B> {
@@ -2048,7 +2049,6 @@ impl<B: BatchMode> Encode for CollectionJobResp<B> {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         // The encoding includes an implicit discriminator byte called CollectionJobStatus in the
         // DAP specification.
-        self.partial_batch_selector.encode(bytes)?;
         self.report_count.encode(bytes)?;
         self.interval.encode(bytes)?;
         self.leader_encrypted_agg_share.encode(bytes)?;
@@ -2057,8 +2057,7 @@ impl<B: BatchMode> Encode for CollectionJobResp<B> {
 
     fn encoded_len(&self) -> Option<usize> {
         Some(
-            self.partial_batch_selector.encoded_len()?
-                + self.report_count.encoded_len()?
+            self.report_count.encoded_len()?
                 + self.interval.encoded_len()?
                 + self.leader_encrypted_agg_share.encoded_len()?
                 + self.helper_encrypted_agg_share.encoded_len()?,
@@ -2069,18 +2068,17 @@ impl<B: BatchMode> Encode for CollectionJobResp<B> {
 impl<B: BatchMode> Decode for CollectionJobResp<B> {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         Ok({
-            let partial_batch_selector = PartialBatchSelector::decode(bytes)?;
             let report_count = u64::decode(bytes)?;
             let interval = Interval::decode(bytes)?;
             let leader_encrypted_agg_share = HpkeCiphertext::decode(bytes)?;
             let helper_encrypted_agg_share = HpkeCiphertext::decode(bytes)?;
 
             Self {
-                partial_batch_selector,
                 report_count,
                 interval,
                 leader_encrypted_agg_share,
                 helper_encrypted_agg_share,
+                phantom: PhantomData,
             }
         })
     }
