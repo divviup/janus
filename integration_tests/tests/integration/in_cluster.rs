@@ -5,8 +5,8 @@ use std::{env, iter, str::FromStr, time::Duration};
 use chrono::{TimeDelta, prelude::*};
 use clap::{CommandFactory, FromArgMatches, Parser};
 use divviup_client::{
-    Client, DivviupClient, Histogram, HpkeConfig, NewAggregator, NewSharedAggregator, NewTask,
-    SumVec, Vdaf,
+    DivviupClient, Histogram, HpkeConfig, NewAggregator, NewSharedAggregator, NewTask, SumVec,
+    Vdaf, reqwest::Client,
 };
 use janus_aggregator_core::task::{AggregationMode, BatchMode, test_util::TaskBuilder};
 #[cfg(feature = "ohttp")]
@@ -30,8 +30,6 @@ use prio::{
     field::{Field128, FieldElementWithInteger},
     vdaf::prio3::Prio3,
 };
-use trillium_rustls::RustlsConfig;
-use trillium_tokio::ClientConfig;
 use url::Url;
 use uuid::Uuid;
 
@@ -188,12 +186,8 @@ impl InClusterJanusPair {
             _ => panic!("missing or invalid environment variables"),
         };
 
-        let divviup_api = DivviupClient::new(
-            divviup_api_token,
-            Client::new(RustlsConfig::<ClientConfig>::default()),
-        )
-        .with_default_pool()
-        .with_url(divviup_api_url);
+        let divviup_api =
+            DivviupClient::new(divviup_api_token, Client::new()).with_url(divviup_api_url);
 
         let aggregators = divviup_api.aggregators(divviup_account_id).await.unwrap();
         let leader_aggregator_dap_url = aggregators
@@ -309,12 +303,8 @@ impl InClusterJanusPair {
             .await;
         let port = port_forward.local_port();
 
-        let divviup_api = DivviupClient::new(
-            "DUATignored".to_string(),
-            Client::new(RustlsConfig::<ClientConfig>::default()),
-        )
-        .with_default_pool()
-        .with_url(format!("http://127.0.0.1:{port}").parse().unwrap());
+        let divviup_api = DivviupClient::new("DUATignored".to_string(), Client::new())
+            .with_url(format!("http://127.0.0.1:{port}").parse().unwrap());
 
         // Create an account first. (We should be implicitly logged in as a testing user already,
         // assuming divviup-api was built with the integration-testing feature)
