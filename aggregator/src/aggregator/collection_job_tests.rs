@@ -433,11 +433,10 @@ async fn collection_job_success_leader_selected() {
         let mut response = test_case.get_collection_job(&collection_job_id).await;
         assert_eq!(
             response.headers().get("content-type").unwrap(),
-            CollectionJobResp::<LeaderSelected>::MEDIA_TYPE,
+            CollectionJobResp::MEDIA_TYPE,
         );
 
-        let collect_resp: CollectionJobResp<LeaderSelected> =
-            decode_response_body(&mut response).await;
+        let collect_resp: CollectionJobResp = decode_response_body(&mut response).await;
         let (
             report_count,
             interval,

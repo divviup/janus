@@ -74,7 +74,6 @@ mod credential;
 
 use std::{
     convert::TryFrom,
-    marker::PhantomData,
     time::{Duration as StdDuration, SystemTime},
 };
 
@@ -264,7 +263,7 @@ impl<'a, V: vdaf::Collector, B: BatchMode> CollectionRequestBuilder<'a, V, B> {
 
     /// Send the collection request to the leader aggregator, wait for it to complete, and return
     /// the result of the aggregation.
-    pub async fn collect(self) -> Result<Collection<V::AggregateResult, B>, Error> {
+    pub async fn collect(self) -> Result<Collection<V::AggregateResult>, Error> {
         let collector = self.collector;
         let job = self.start().await?;
         collector.poll_until_complete(&job).await
@@ -275,12 +274,9 @@ impl<'a, V: vdaf::Collector, B: BatchMode> CollectionRequestBuilder<'a, V, B> {
 #[educe(Debug)]
 /// The result of a collection request poll operation. This will either provide the collection
 /// result or indicate that the collection is still being processed.
-pub enum PollResult<T, B>
-where
-    B: BatchMode,
-{
+pub enum PollResult<T> {
     /// The collection result from a completed collection request.
-    CollectionResult(#[educe(Debug(ignore))] Collection<T, B>),
+    CollectionResult(#[educe(Debug(ignore))] Collection<T>),
     /// The collection request is not yet ready. If present, the [`RetryAfter`] object is the time
     /// at which the leader recommends retrying the request.
     NotReady(Option<RetryAfter>),
@@ -288,20 +284,13 @@ where
 
 /// The result of a collection operation.
 #[derive(Debug, PartialEq, Eq)]
-pub struct Collection<T, B>
-where
-    B: BatchMode,
-{
+pub struct Collection<T> {
     report_count: u64,
     interval: (DateTime<Utc>, Duration),
     aggregate_result: T,
-    phantom: PhantomData<B>,
 }
 
-impl<T, B> Collection<T, B>
-where
-    B: BatchMode,
-{
+impl<T> Collection<T> {
     /// Retrieves the number of client reports included in this collection.
     pub fn report_count(&self) -> u64 {
         self.report_count
@@ -320,10 +309,7 @@ where
 
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
-impl<T, B> Collection<T, B>
-where
-    B: BatchMode,
-{
+impl<T> Collection<T> {
     /// Creates a new [`Collection`].
     pub fn new(
         report_count: u64,
@@ -334,7 +320,6 @@ where
             report_count,
             interval,
             aggregate_result,
-            phantom: PhantomData,
         }
     }
 }
@@ -754,7 +739,7 @@ impl<V: vdaf::Collector> Collector<V> {
     pub async fn poll_once<B: BatchMode>(
         &self,
         job: &CollectionJob<V::AggregationParam, B>,
-    ) -> Result<PollResult<V::AggregateResult, B>, Error> {
+    ) -> Result<PollResult<V::AggregateResult>, Error> {
         let collection_job_url = self.collection_job_uri(job.collection_job_id)?;
         let response_res =
             retry_http_request(self.http_request_retry_parameters.build(), || async {
@@ -797,10 +782,10 @@ impl<V: vdaf::Collector> Collector<V> {
             return Ok(PollResult::NotReady(retry_after_opt));
         }
 
-        check_content_type::<CollectionJobResp<TimeInterval>>(response.headers())
+        check_content_type::<CollectionJobResp>(response.headers())
             .map_err(|e| Error::BadResponse(e.into()))?;
 
-        let collect_response = CollectionJobResp::<B>::get_decoded(body)?;
+        let collect_response = CollectionJobResp::get_decoded(body)?;
 
         let aggregate_share_aad = AggregateShareAad::new(
             self.task_id,
@@ -849,7 +834,6 @@ impl<V: vdaf::Collector> Collector<V> {
                     .to_chrono(self.task_configuration.time_precision())?,
             ),
             aggregate_result,
-            phantom: PhantomData,
         }))
     }
 
@@ -864,7 +848,7 @@ impl<V: vdaf::Collector> Collector<V> {
     pub async fn poll_until_complete<B: BatchMode>(
         &self,
         job: &CollectionJob<V::AggregationParam, B>,
-    ) -> Result<Collection<V::AggregateResult, B>, Error> {
+    ) -> Result<Collection<V::AggregateResult>, Error> {
         let starttime = Instant::now();
         let deadline = self
             .collect_poll_wait_parameters
@@ -985,7 +969,7 @@ impl<V: vdaf::Collector> Collector<V> {
 
 #[cfg(test)]
 mod tests {
-    use std::{marker::PhantomData, time::SystemTime};
+    use std::time::SystemTime;
 
     use assert_matches::assert_matches;
     use chrono::{DateTime, TimeZone, Utc};
@@ -1058,7 +1042,7 @@ mod tests {
         collector: &Collector<V>,
         aggregation_parameter: &V::AggregationParam,
         batch_interval: Interval,
-    ) -> CollectionJobResp<TimeInterval>
+    ) -> CollectionJobResp
     where
         V: vdaf::Aggregator<SEED_SIZE, 16> + vdaf::Collector,
         V::OutputShare: Eq,
@@ -1088,7 +1072,6 @@ mod tests {
                 &associated_data.get_encoded().unwrap(),
             )
             .unwrap(),
-            phantom: PhantomData,
         }
     }
 
@@ -1096,7 +1079,7 @@ mod tests {
         transcript: &VdafTranscript<SEED_SIZE, V>,
         collector: &Collector<V>,
         aggregation_parameter: &V::AggregationParam,
-    ) -> CollectionJobResp<LeaderSelected>
+    ) -> CollectionJobResp
     where
         V: vdaf::Aggregator<SEED_SIZE, 16> + vdaf::Collector,
         V::OutputShare: Eq,
@@ -1126,7 +1109,6 @@ mod tests {
                 &associated_data.get_encoded().unwrap(),
             )
             .unwrap(),
-            phantom: PhantomData,
         }
     }
 
@@ -1389,10 +1371,7 @@ mod tests {
             .mock("GET", collection_job_path.as_str())
             .match_authentication_token(&collector.authentication)
             .with_status(200)
-            .with_header(
-                CONTENT_TYPE.as_str(),
-                CollectionJobResp::<TimeInterval>::MEDIA_TYPE,
-            )
+            .with_header(CONTENT_TYPE.as_str(), CollectionJobResp::MEDIA_TYPE)
             .with_body(collect_resp.get_encoded().unwrap())
             .expect(1)
             .create_async()
@@ -1470,10 +1449,7 @@ mod tests {
         let mocked_collect_complete = server
             .mock("GET", collection_job_path.as_str())
             .with_status(200)
-            .with_header(
-                CONTENT_TYPE.as_str(),
-                CollectionJobResp::<TimeInterval>::MEDIA_TYPE,
-            )
+            .with_header(CONTENT_TYPE.as_str(), CollectionJobResp::MEDIA_TYPE)
             .with_body(collect_resp.get_encoded().unwrap())
             .expect(1)
             .create_async()
@@ -1547,10 +1523,7 @@ mod tests {
         let mocked_collect_complete = server
             .mock("GET", collection_job_path.as_str())
             .with_status(200)
-            .with_header(
-                CONTENT_TYPE.as_str(),
-                CollectionJobResp::<TimeInterval>::MEDIA_TYPE,
-            )
+            .with_header(CONTENT_TYPE.as_str(), CollectionJobResp::MEDIA_TYPE)
             .with_body(collect_resp.get_encoded().unwrap())
             .expect(1)
             .create_async()
@@ -1617,10 +1590,7 @@ mod tests {
         let mocked_collect_complete = server
             .mock("GET", collection_job_path.as_str())
             .with_status(200)
-            .with_header(
-                CONTENT_TYPE.as_str(),
-                CollectionJobResp::<LeaderSelected>::MEDIA_TYPE,
-            )
+            .with_header(CONTENT_TYPE.as_str(), CollectionJobResp::MEDIA_TYPE)
             .with_body(collect_resp.get_encoded().unwrap())
             .expect(1)
             .create_async()
@@ -1713,10 +1683,7 @@ mod tests {
             .mock("GET", collection_job_path.as_str())
             .match_header(AUTHORIZATION.as_str(), "Bearer AAAAAAAAAAAAAAAA")
             .with_status(200)
-            .with_header(
-                CONTENT_TYPE.as_str(),
-                CollectionJobResp::<TimeInterval>::MEDIA_TYPE,
-            )
+            .with_header(CONTENT_TYPE.as_str(), CollectionJobResp::MEDIA_TYPE)
             .with_body(collect_resp.get_encoded().unwrap())
             .expect(1)
             .create_async()
@@ -1960,12 +1927,9 @@ mod tests {
         let mock_collection_job_bad_ciphertext = server
             .mock("GET", collection_job_path.as_str())
             .with_status(200)
-            .with_header(
-                CONTENT_TYPE.as_str(),
-                CollectionJobResp::<TimeInterval>::MEDIA_TYPE,
-            )
+            .with_header(CONTENT_TYPE.as_str(), CollectionJobResp::MEDIA_TYPE)
             .with_body(
-                CollectionJobResp::<TimeInterval> {
+                CollectionJobResp {
                     report_count: 1,
                     interval: batch_interval,
                     leader_encrypted_agg_share: HpkeCiphertext::new(
@@ -1978,7 +1942,6 @@ mod tests {
                         Vec::new(),
                         Vec::new(),
                     ),
-                    phantom: PhantomData,
                 }
                 .get_encoded()
                 .unwrap(),
@@ -2000,7 +1963,7 @@ mod tests {
                 ().get_encoded().unwrap(),
             ),
         );
-        let collect_resp = CollectionJobResp::<TimeInterval> {
+        let collect_resp = CollectionJobResp {
             report_count: 1,
             interval: batch_interval,
             leader_encrypted_agg_share: hpke::seal(
@@ -2017,15 +1980,11 @@ mod tests {
                 &associated_data.get_encoded().unwrap(),
             )
             .unwrap(),
-            phantom: PhantomData,
         };
         let mock_collection_job_bad_shares = server
             .mock("GET", collection_job_path.as_str())
             .with_status(200)
-            .with_header(
-                CONTENT_TYPE.as_str(),
-                CollectionJobResp::<TimeInterval>::MEDIA_TYPE,
-            )
+            .with_header(CONTENT_TYPE.as_str(), CollectionJobResp::MEDIA_TYPE)
             .with_body(collect_resp.get_encoded().unwrap())
             .expect_at_least(1)
             .create_async()
@@ -2036,7 +1995,7 @@ mod tests {
 
         mock_collection_job_bad_shares.assert_async().await;
 
-        let collect_resp = CollectionJobResp::<TimeInterval> {
+        let collect_resp = CollectionJobResp {
             report_count: 1,
             interval: batch_interval,
             leader_encrypted_agg_share: hpke::seal(
@@ -2060,15 +2019,11 @@ mod tests {
                 &associated_data.get_encoded().unwrap(),
             )
             .unwrap(),
-            phantom: PhantomData,
         };
         let mock_collection_job_wrong_length = server
             .mock("GET", collection_job_path.as_str())
             .with_status(200)
-            .with_header(
-                CONTENT_TYPE.as_str(),
-                CollectionJobResp::<TimeInterval>::MEDIA_TYPE,
-            )
+            .with_header(CONTENT_TYPE.as_str(), CollectionJobResp::MEDIA_TYPE)
             .with_body(collect_resp.get_encoded().unwrap())
             .expect_at_least(1)
             .create_async()
@@ -2410,10 +2365,7 @@ mod tests {
             .with_status(200)
             .match_authentication_token(&collector.authentication)
             .match_header(CONTENT_LENGTH.as_str(), "0")
-            .with_header(
-                CONTENT_TYPE.as_str(),
-                CollectionJobResp::<TimeInterval>::MEDIA_TYPE,
-            )
+            .with_header(CONTENT_TYPE.as_str(), CollectionJobResp::MEDIA_TYPE)
             .with_body(collect_resp.get_encoded().unwrap())
             .expect(1)
             .create_async()

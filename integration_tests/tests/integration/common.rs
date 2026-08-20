@@ -144,7 +144,7 @@ pub async fn collect_generic<V, B>(
     collector: &Collector<V>,
     query: Query<B>,
     aggregation_parameter: &V::AggregationParam,
-) -> Result<Collection<V::AggregateResult, B>, janus_collector::Error>
+) -> Result<Collection<V::AggregateResult>, janus_collector::Error>
 where
     V: vdaf::Client<16> + vdaf::Collector + InteropClientEncoding,
     B: batch_mode::BatchMode,

@@ -900,7 +900,7 @@ async fn collection_jobs_put<C: Clock>(
         StatusCode::CREATED,
         [(
             CONTENT_TYPE,
-            HeaderValue::from_static(CollectionJobResp::<TimeInterval>::MEDIA_TYPE),
+            HeaderValue::from_static(CollectionJobResp::MEDIA_TYPE),
         )],
         response_bytes,
     )
@@ -922,7 +922,7 @@ async fn collection_jobs_get<C: Clock>(
         StatusCode::OK,
         [(
             CONTENT_TYPE,
-            HeaderValue::from_static(CollectionJobResp::<TimeInterval>::MEDIA_TYPE),
+            HeaderValue::from_static(CollectionJobResp::MEDIA_TYPE),
         )],
         response_bytes,
     )

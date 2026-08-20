@@ -4,7 +4,6 @@ use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
     fmt::Debug,
-    marker::PhantomData,
     panic,
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -3428,12 +3427,11 @@ impl VdafOps {
                     .map_err(Error::MessageEncode)?,
                 )?;
 
-                CollectionJobResp::<B> {
+                CollectionJobResp {
                     report_count: *report_count,
                     interval: *client_timestamp_interval,
                     leader_encrypted_agg_share: encrypted_leader_aggregate_share,
                     helper_encrypted_agg_share: encrypted_helper_aggregate_share.clone(),
-                    phantom: PhantomData,
                 }
                 .get_encoded()
                 .map_err(Error::MessageEncode)

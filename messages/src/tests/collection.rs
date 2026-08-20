@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 use prio::codec::{Decode, Encode};
 
 use super::{task_configuration_hex, test_task_configuration};
@@ -233,10 +231,9 @@ fn roundtrip_collection_job_resp() {
         duration: Duration::from_seconds(12345, &TEST_TIME_PRECISION),
     };
 
-    // TimeInterval.
     roundtrip_encoding(&[
         (
-            CollectionJobResp::<TimeInterval> {
+            CollectionJobResp {
                 report_count: 0,
                 interval,
                 leader_encrypted_agg_share: HpkeCiphertext::new(
@@ -249,7 +246,6 @@ fn roundtrip_collection_job_resp() {
                     Vec::from("01234"),
                     Vec::from("567"),
                 ),
-                phantom: PhantomData,
             },
             concat!(
                 "0000000000000000", // report_count
@@ -289,7 +285,7 @@ fn roundtrip_collection_job_resp() {
             ),
         ),
         (
-            CollectionJobResp::<TimeInterval> {
+            CollectionJobResp {
                 report_count: 23,
                 interval,
                 leader_encrypted_agg_share: HpkeCiphertext::new(
@@ -302,117 +298,6 @@ fn roundtrip_collection_job_resp() {
                     Vec::from("01234"),
                     Vec::from("567"),
                 ),
-                phantom: PhantomData,
-            },
-            concat!(
-                "0000000000000017", // report_count
-                concat!(
-                    // interval
-                    "000000000000D431", // start
-                    "0000000000003039", // duration
-                ),
-                concat!(
-                    // leader_encrypted_agg_share
-                    "0A", // config_id
-                    concat!(
-                        // encapsulated_context
-                        "0004",     // length
-                        "30313233", // opaque data
-                    ),
-                    concat!(
-                        // payload
-                        "00000004", // length
-                        "34353637", // opaque data
-                    ),
-                ),
-                concat!(
-                    // helper_encrypted_agg_share
-                    "0C", // config_id
-                    concat!(
-                        // encapsulated_context
-                        "0005",       // length
-                        "3031323334", // opaque data
-                    ),
-                    concat!(
-                        // payload
-                        "00000003", // length
-                        "353637",   // opaque data
-                    ),
-                )
-            ),
-        ),
-    ]);
-
-    // LeaderSelected.
-    roundtrip_encoding(&[
-        (
-            CollectionJobResp::<LeaderSelected> {
-                report_count: 0,
-                interval,
-                leader_encrypted_agg_share: HpkeCiphertext::new(
-                    HpkeConfigId::from(10),
-                    Vec::from("0123"),
-                    Vec::from("4567"),
-                ),
-                helper_encrypted_agg_share: HpkeCiphertext::new(
-                    HpkeConfigId::from(12),
-                    Vec::from("01234"),
-                    Vec::from("567"),
-                ),
-                phantom: PhantomData,
-            },
-            concat!(
-                "0000000000000000", // report_count
-                concat!(
-                    // interval
-                    "000000000000D431", // start
-                    "0000000000003039", // duration
-                ),
-                concat!(
-                    // leader_encrypted_agg_share
-                    "0A", // config_id
-                    concat!(
-                        // encapsulated_context
-                        "0004",     // length
-                        "30313233", // opaque data
-                    ),
-                    concat!(
-                        // payload
-                        "00000004", // length
-                        "34353637", // opaque data
-                    ),
-                ),
-                concat!(
-                    // helper_encrypted_agg_share
-                    "0C", // config_id
-                    concat!(
-                        // encapsulated_context
-                        "0005",       // length
-                        "3031323334", // opaque data
-                    ),
-                    concat!(
-                        // payload
-                        "00000003", // length
-                        "353637",   // opaque data
-                    ),
-                )
-            ),
-        ),
-        (
-            CollectionJobResp::<LeaderSelected> {
-                report_count: 23,
-                interval,
-                leader_encrypted_agg_share: HpkeCiphertext::new(
-                    HpkeConfigId::from(10),
-                    Vec::from("0123"),
-                    Vec::from("4567"),
-                ),
-                helper_encrypted_agg_share: HpkeCiphertext::new(
-                    HpkeConfigId::from(12),
-                    Vec::from("01234"),
-                    Vec::from("567"),
-                ),
-                phantom: PhantomData,
             },
             concat!(
                 "0000000000000017", // report_count

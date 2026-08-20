@@ -570,10 +570,8 @@ pub(super) struct State {
         HashMap<CollectionJobId, CollectionJob<(), TimeInterval>>,
     pub(super) collection_jobs_leader_selected:
         HashMap<CollectionJobId, CollectionJob<(), LeaderSelected>>,
-    pub(super) aggregate_results_time_interval:
-        HashMap<CollectionJobId, Collection<Vec<u128>, TimeInterval>>,
-    pub(super) aggregate_results_leader_selected:
-        HashMap<CollectionJobId, Collection<Vec<u128>, LeaderSelected>>,
+    pub(super) aggregate_results_time_interval: HashMap<CollectionJobId, Collection<Vec<u128>>>,
+    pub(super) aggregate_results_leader_selected: HashMap<CollectionJobId, Collection<Vec<u128>>>,
     pub(super) next_measurement: usize,
 }
 
@@ -641,8 +639,8 @@ impl State {
     }
 }
 
-fn check_aggregate_results_valid<B: janus_messages::batch_mode::BatchMode>(
-    map: &HashMap<CollectionJobId, Collection<Vec<u128>, B>>,
+fn check_aggregate_results_valid(
+    map: &HashMap<CollectionJobId, Collection<Vec<u128>>>,
     state: &State,
 ) -> bool {
     for collection in map.values() {
