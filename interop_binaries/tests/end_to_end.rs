@@ -553,14 +553,6 @@ async fn run(
             "error: {:?}",
             collection_poll_response_object.get("error"),
         );
-        if let QueryKind::LeaderSelected = query_kind {
-            let batch_id_encoded = collection_poll_response_object
-                .get("batch_id")
-                .expect("completed collection_poll response is missing \"batch_id\"")
-                .as_str()
-                .expect("\"batch_id\" value is not a string");
-            URL_SAFE_NO_PAD.decode(batch_id_encoded).unwrap();
-        }
         collection_poll_response_object
             .get("report_count")
             .expect("completed collection_poll response is missing \"report_count\"")
