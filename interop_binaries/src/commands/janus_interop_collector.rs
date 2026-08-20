@@ -24,8 +24,8 @@ use janus_core::{
     vdaf::{VdafInstance, new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128},
 };
 use janus_messages::{
-    BatchId, Duration, HpkeConfig, Interval, PartialBatchSelector, Query, TaskConfiguration,
-    TaskId, Time, TimePrecision, Url as DapUrl, batch_mode::BatchMode,
+    Duration, HpkeConfig, Interval, Query, TaskConfiguration, TaskId, Time, TimePrecision,
+    Url as DapUrl, batch_mode::BatchMode,
 };
 use prio::{
     codec::{Decode, Encode},
@@ -98,7 +98,6 @@ struct CollectPollRequest {
 
 #[derive(Debug, Clone)]
 struct CollectResult {
-    partial_batch_selector: Option<BatchId>,
     report_count: u64,
     interval_start: i64,
     interval_duration: i64,
@@ -218,7 +217,6 @@ async fn handle_collect_generic<V, B>(
     query: Query<B>,
     vdaf: V,
     agg_param_encoded: &[u8],
-    batch_convert_fn: impl Fn(&PartialBatchSelector<B>) -> Option<BatchId> + Send + 'static,
     result_convert_fn: impl Fn(&V::AggregateResult) -> AggregationResult + Send + 'static,
 ) -> anyhow::Result<JoinHandle<anyhow::Result<CollectResult>>>
 where
@@ -256,7 +254,6 @@ where
         let collect_result = collector.collection(query, &agg_param).collect().await?;
         let (interval_start, interval_duration) = collect_result.interval();
         Ok(CollectResult {
-            partial_batch_selector: batch_convert_fn(collect_result.partial_batch_selector()),
             report_count: collect_result.report_count(),
             interval_start: interval_start.timestamp(),
             interval_duration: interval_duration.num_seconds(),
@@ -331,7 +328,6 @@ async fn handle_collection_start(
                     Query::new_time_interval(batch_interval),
                     vdaf,
                     &agg_param,
-                    |_| None,
                     |result| AggregationResult::Number(NumberAsString((*result).into())),
                 )
                 .await?
@@ -349,7 +345,6 @@ async fn handle_collection_start(
                     Query::new_time_interval(batch_interval),
                     vdaf,
                     &agg_param,
-                    |_| None,
                     |result| AggregationResult::Number(NumberAsString(u128::from(*result))),
                 )
                 .await?
@@ -372,7 +367,6 @@ async fn handle_collection_start(
                     Query::new_time_interval(batch_interval),
                     vdaf,
                     &agg_param,
-                    |_| None,
                     |result| {
                         let converted = result.iter().cloned().map(NumberAsString).collect();
                         AggregationResult::NumberVec(converted)
@@ -401,7 +395,6 @@ async fn handle_collection_start(
                     Query::new_time_interval(batch_interval),
                     vdaf,
                     &agg_param,
-                    |_| None,
                     |result: &Vec<u64>| {
                         let converted = result
                             .iter()
@@ -431,7 +424,6 @@ async fn handle_collection_start(
                     Query::new_time_interval(batch_interval),
                     vdaf,
                     &agg_param,
-                    |_| None,
                     |result| {
                         let converted = result.iter().cloned().map(NumberAsString).collect();
                         AggregationResult::NumberVec(converted)
@@ -448,7 +440,6 @@ async fn handle_collection_start(
                     Query::new_leader_selected(),
                     vdaf,
                     &agg_param,
-                    |selector| Some(*selector.batch_id()),
                     |result| AggregationResult::Number(NumberAsString((*result).into())),
                 )
                 .await?
@@ -463,7 +454,6 @@ async fn handle_collection_start(
                     Query::new_leader_selected(),
                     vdaf,
                     &agg_param,
-                    |selector| Some(*selector.batch_id()),
                     |result| AggregationResult::Number(NumberAsString(u128::from(*result))),
                 )
                 .await?
@@ -486,7 +476,6 @@ async fn handle_collection_start(
                     Query::new_leader_selected(),
                     vdaf,
                     &agg_param,
-                    |selector| Some(*selector.batch_id()),
                     |result| {
                         let converted = result.iter().cloned().map(NumberAsString).collect();
                         AggregationResult::NumberVec(converted)
@@ -515,7 +504,6 @@ async fn handle_collection_start(
                     Query::new_leader_selected(),
                     vdaf,
                     &agg_param,
-                    |selector| Some(*selector.batch_id()),
                     |result: &Vec<u64>| {
                         let converted = result
                             .iter()
@@ -545,7 +533,6 @@ async fn handle_collection_start(
                     Query::new_leader_selected(),
                     vdaf,
                     &agg_param,
-                    |selector| Some(*selector.batch_id()),
                     |result| {
                         let converted = result.iter().cloned().map(NumberAsString).collect();
                         AggregationResult::NumberVec(converted)
@@ -726,9 +713,7 @@ async fn collection_poll_handler(
         Ok(Some(collect_result)) => Json(CollectPollResponse {
             status: COMPLETE,
             error: None,
-            batch_id: collect_result
-                .partial_batch_selector
-                .map(|batch_id| URL_SAFE_NO_PAD.encode(batch_id.as_ref())),
+            batch_id: None,
             report_count: Some(collect_result.report_count),
             interval_start: Some(collect_result.interval_start),
             interval_duration: Some(collect_result.interval_duration),

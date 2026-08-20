@@ -74,6 +74,7 @@ mod credential;
 
 use std::{
     convert::TryFrom,
+    marker::PhantomData,
     time::{Duration as StdDuration, SystemTime},
 };
 
@@ -94,8 +95,8 @@ use janus_core::{
 };
 use janus_messages::{
     AggregateShareAad, BatchConfig, CollectionJobExtension, CollectionJobId, CollectionJobReq,
-    CollectionJobResp, Interval, MediaType, PartialBatchSelector, Query, Role, TaskConfiguration,
-    TaskId, TimePrecision, Url as DapUrl, VdafConfig,
+    CollectionJobResp, Interval, MediaType, Query, Role, TaskConfiguration, TaskId, TimePrecision,
+    Url as DapUrl, VdafConfig,
     batch_mode::{BatchMode, TimeInterval},
 };
 use prio::{
@@ -291,21 +292,16 @@ pub struct Collection<T, B>
 where
     B: BatchMode,
 {
-    partial_batch_selector: PartialBatchSelector<B>,
     report_count: u64,
     interval: (DateTime<Utc>, Duration),
     aggregate_result: T,
+    phantom: PhantomData<B>,
 }
 
 impl<T, B> Collection<T, B>
 where
     B: BatchMode,
 {
-    /// Retrieves the partial batch selector of this collection.
-    pub fn partial_batch_selector(&self) -> &PartialBatchSelector<B> {
-        &self.partial_batch_selector
-    }
-
     /// Retrieves the number of client reports included in this collection.
     pub fn report_count(&self) -> u64 {
         self.report_count
@@ -330,16 +326,15 @@ where
 {
     /// Creates a new [`Collection`].
     pub fn new(
-        partial_batch_selector: PartialBatchSelector<B>,
         report_count: u64,
         interval: (DateTime<Utc>, Duration),
         aggregate_result: T,
     ) -> Self {
         Self {
-            partial_batch_selector,
             report_count,
             interval,
             aggregate_result,
+            phantom: PhantomData,
         }
     }
 }
@@ -842,7 +837,6 @@ impl<V: vdaf::Collector> Collector<V> {
         )?;
 
         Ok(PollResult::CollectionResult(Collection {
-            partial_batch_selector: collect_response.partial_batch_selector.clone(),
             report_count: collect_response.report_count,
             interval: (
                 collect_response
@@ -855,6 +849,7 @@ impl<V: vdaf::Collector> Collector<V> {
                     .to_chrono(self.task_configuration.time_precision())?,
             ),
             aggregate_result,
+            phantom: PhantomData,
         }))
     }
 
@@ -990,7 +985,7 @@ impl<V: vdaf::Collector> Collector<V> {
 
 #[cfg(test)]
 mod tests {
-    use std::time::SystemTime;
+    use std::{marker::PhantomData, time::SystemTime};
 
     use assert_matches::assert_matches;
     use chrono::{DateTime, TimeZone, Utc};
@@ -1003,10 +998,9 @@ mod tests {
         vdaf::ConfiguredVdaf,
     };
     use janus_messages::{
-        AggregateShareAad, BatchConfig, BatchId, CollectionJobId, CollectionJobReq,
-        CollectionJobResp, Duration, HpkeCiphertext, Interval, MediaType, PartialBatchSelector,
-        Query, Role, TaskConfiguration, TaskExtension, TaskExtensionType, TaskId, Time,
-        TimePrecision, Url as DapUrl, VdafConfig,
+        AggregateShareAad, BatchConfig, CollectionJobId, CollectionJobReq, CollectionJobResp,
+        Duration, HpkeCiphertext, Interval, MediaType, Query, Role, TaskConfiguration,
+        TaskExtension, TaskExtensionType, TaskId, Time, TimePrecision, Url as DapUrl, VdafConfig,
         batch_mode::{LeaderSelected, TimeInterval},
         problem_type::DapProblemType,
     };
@@ -1078,7 +1072,6 @@ mod tests {
             ),
         );
         CollectionJobResp {
-            partial_batch_selector: PartialBatchSelector::new_time_interval(),
             report_count: 1,
             interval: batch_interval,
             leader_encrypted_agg_share: hpke::seal(
@@ -1095,6 +1088,7 @@ mod tests {
                 &associated_data.get_encoded().unwrap(),
             )
             .unwrap(),
+            phantom: PhantomData,
         }
     }
 
@@ -1102,7 +1096,6 @@ mod tests {
         transcript: &VdafTranscript<SEED_SIZE, V>,
         collector: &Collector<V>,
         aggregation_parameter: &V::AggregationParam,
-        batch_id: BatchId,
     ) -> CollectionJobResp<LeaderSelected>
     where
         V: vdaf::Aggregator<SEED_SIZE, 16> + vdaf::Collector,
@@ -1117,7 +1110,6 @@ mod tests {
             ),
         );
         CollectionJobResp {
-            partial_batch_selector: PartialBatchSelector::new_leader_selected(batch_id),
             report_count: 1,
             interval: Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
             leader_encrypted_agg_share: hpke::seal(
@@ -1134,6 +1126,7 @@ mod tests {
                 &associated_data.get_encoded().unwrap(),
             )
             .unwrap(),
+            phantom: PhantomData,
         }
     }
 
@@ -1412,7 +1405,6 @@ mod tests {
         assert_eq!(
             collection,
             Collection::new(
-                PartialBatchSelector::new_time_interval(),
                 1,
                 (
                     DateTime::<Utc>::from_timestamp(1_000_000, 0).unwrap(),
@@ -1491,7 +1483,6 @@ mod tests {
         assert_eq!(
             collection,
             Collection::new(
-                PartialBatchSelector::new_time_interval(),
                 1,
                 (
                     DateTime::<Utc>::from_timestamp(1_000_000, 0).unwrap(),
@@ -1569,7 +1560,6 @@ mod tests {
         assert_eq!(
             collection,
             Collection::new(
-                PartialBatchSelector::new_time_interval(),
                 1,
                 (
                     DateTime::<Utc>::from_timestamp(1_000_000, 0).unwrap(),
@@ -1598,8 +1588,7 @@ mod tests {
         );
         let collector = setup_collector(&mut server, configured_vdaf);
 
-        let batch_id = random();
-        let collect_resp = build_collect_response_fixed(&transcript, &collector, &(), batch_id);
+        let collect_resp = build_collect_response_fixed(&transcript, &collector, &());
         let matcher = collection_uri_regex_matcher(&collector.task_id);
 
         let mocked_collect_start_success = server
@@ -1641,7 +1630,6 @@ mod tests {
         assert_eq!(
             collection,
             Collection::new(
-                PartialBatchSelector::new_leader_selected(batch_id),
                 1,
                 (
                     DateTime::<Utc>::from_timestamp(0, 0).unwrap(),
@@ -1738,7 +1726,6 @@ mod tests {
         assert_eq!(
             agg_result,
             Collection::new(
-                PartialBatchSelector::new_time_interval(),
                 1,
                 (
                     DateTime::<Utc>::from_timestamp(1_000_000, 0).unwrap(),
@@ -1978,8 +1965,7 @@ mod tests {
                 CollectionJobResp::<TimeInterval>::MEDIA_TYPE,
             )
             .with_body(
-                CollectionJobResp {
-                    partial_batch_selector: PartialBatchSelector::new_time_interval(),
+                CollectionJobResp::<TimeInterval> {
                     report_count: 1,
                     interval: batch_interval,
                     leader_encrypted_agg_share: HpkeCiphertext::new(
@@ -1992,6 +1978,7 @@ mod tests {
                         Vec::new(),
                         Vec::new(),
                     ),
+                    phantom: PhantomData,
                 }
                 .get_encoded()
                 .unwrap(),
@@ -2013,8 +2000,7 @@ mod tests {
                 ().get_encoded().unwrap(),
             ),
         );
-        let collect_resp = CollectionJobResp {
-            partial_batch_selector: PartialBatchSelector::new_time_interval(),
+        let collect_resp = CollectionJobResp::<TimeInterval> {
             report_count: 1,
             interval: batch_interval,
             leader_encrypted_agg_share: hpke::seal(
@@ -2031,6 +2017,7 @@ mod tests {
                 &associated_data.get_encoded().unwrap(),
             )
             .unwrap(),
+            phantom: PhantomData,
         };
         let mock_collection_job_bad_shares = server
             .mock("GET", collection_job_path.as_str())
@@ -2049,8 +2036,7 @@ mod tests {
 
         mock_collection_job_bad_shares.assert_async().await;
 
-        let collect_resp = CollectionJobResp {
-            partial_batch_selector: PartialBatchSelector::new_time_interval(),
+        let collect_resp = CollectionJobResp::<TimeInterval> {
             report_count: 1,
             interval: batch_interval,
             leader_encrypted_agg_share: hpke::seal(
@@ -2074,6 +2060,7 @@ mod tests {
                 &associated_data.get_encoded().unwrap(),
             )
             .unwrap(),
+            phantom: PhantomData,
         };
         let mock_collection_job_wrong_length = server
             .mock("GET", collection_job_path.as_str())

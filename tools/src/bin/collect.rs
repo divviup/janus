@@ -18,9 +18,8 @@ use janus_core::{
     vdaf_dispatch,
 };
 use janus_messages::{
-    BatchConfig, CollectionJobId, Duration, HpkeConfig, Interval, PartialBatchSelector, Query,
-    TaskConfiguration, TaskId, Time,
-    batch_mode::{BatchMode, LeaderSelected, TimeInterval},
+    BatchConfig, CollectionJobId, Duration, HpkeConfig, Interval, Query, TaskConfiguration, TaskId,
+    Time, batch_mode::BatchMode,
 };
 use prio::{
     codec::Decode,
@@ -551,7 +550,7 @@ async fn run(options: Options) -> Result<(), Error> {
     })
 }
 
-async fn run_collection<V: vdaf::Collector, B: BatchModeExt>(
+async fn run_collection<V: vdaf::Collector, B: BatchMode>(
     options: Options,
     vdaf: V,
     http_client: reqwest::Client,
@@ -570,7 +569,7 @@ where
     Ok(())
 }
 
-async fn run_new_job<V: vdaf::Collector, B: BatchModeExt>(
+async fn run_new_job<V: vdaf::Collector, B: BatchMode>(
     options: Options,
     vdaf: V,
     http_client: reqwest::Client,
@@ -591,7 +590,7 @@ where
     Ok(())
 }
 
-async fn run_poll_job<V: vdaf::Collector, B: BatchModeExt>(
+async fn run_poll_job<V: vdaf::Collector, B: BatchMode>(
     options: Options,
     vdaf: V,
     http_client: reqwest::Client,
@@ -653,15 +652,9 @@ fn new_collector<V: vdaf::Collector>(
     Ok(collector)
 }
 
-fn print_collection<V: vdaf::Collector, B: BatchModeExt>(
+fn print_collection<V: vdaf::Collector, B: BatchMode>(
     collection: Collection<<V as Vdaf>::AggregateResult, B>,
 ) -> Result<(), Error> {
-    if !B::IS_PARTIAL_BATCH_SELECTOR_TRIVIAL {
-        println!(
-            "Batch: {}",
-            B::format_partial_batch_selector(collection.partial_batch_selector())
-        );
-    }
     let (start, duration) = collection.interval();
 
     println!("Number of reports: {}", collection.report_count());
@@ -688,31 +681,6 @@ fn install_tracing_subscriber() -> anyhow::Result<()> {
     LogTracer::init()?;
 
     Ok(())
-}
-
-trait BatchModeExt: BatchMode {
-    const IS_PARTIAL_BATCH_SELECTOR_TRIVIAL: bool;
-
-    fn format_partial_batch_selector(partial_batch_selector: &PartialBatchSelector<Self>)
-    -> String;
-}
-
-impl BatchModeExt for TimeInterval {
-    const IS_PARTIAL_BATCH_SELECTOR_TRIVIAL: bool = true;
-
-    fn format_partial_batch_selector(_: &PartialBatchSelector<Self>) -> String {
-        "()".to_string()
-    }
-}
-
-impl BatchModeExt for LeaderSelected {
-    const IS_PARTIAL_BATCH_SELECTOR_TRIVIAL: bool = false;
-
-    fn format_partial_batch_selector(
-        partial_batch_selector: &PartialBatchSelector<Self>,
-    ) -> String {
-        URL_SAFE_NO_PAD.encode(partial_batch_selector.batch_id().as_ref())
-    }
 }
 
 #[cfg(test)]

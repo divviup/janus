@@ -516,7 +516,6 @@ impl Simulation {
             let result = self.components.collector.poll_once(collection_job).await;
             match result {
                 Ok(PollResult::CollectionResult(collection)) => {
-                    let partial_batch_selector = collection.partial_batch_selector().clone();
                     let report_count = collection.report_count();
                     let interval = *collection.interval();
                     let aggregate_result = collection.aggregate_result().clone();
@@ -525,8 +524,7 @@ impl Simulation {
                         .aggregate_results_leader_selected
                         .insert(*collection_job_id, collection);
                     if let Some(old_collection) = old_opt {
-                        if &partial_batch_selector != old_collection.partial_batch_selector()
-                            || report_count != old_collection.report_count()
+                        if report_count != old_collection.report_count()
                             || &interval != old_collection.interval()
                             || &aggregate_result != old_collection.aggregate_result()
                         {
