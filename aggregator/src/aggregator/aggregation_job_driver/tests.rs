@@ -34,10 +34,10 @@ use janus_core::{
     vdaf::{VERIFY_KEY_LENGTH_PRIO3, VdafInstance},
 };
 use janus_messages::{
-    AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
-    Duration, Extension, ExtensionType, Interval, MediaType, PartialBatchSelector, ReportError,
-    ReportIdChecksum, ReportMetadata, ReportShare, Role, Time, TimePrecision, VerifyContinue,
-    VerifyInit, VerifyResp, VerifyStepResult,
+    AggregationJobContinueReq, AggregationJobExtension, AggregationJobInitializeReq,
+    AggregationJobResp, AggregationJobStep, Duration, Extension, ExtensionType, Interval,
+    MediaType, ReportError, ReportIdChecksum, ReportMetadata, ReportShare, Role, Time,
+    TimePrecision, VerifyContinue, VerifyInit, VerifyResp, VerifyStepResult,
     batch_mode::{LeaderSelected, TimeInterval},
     problem_type::DapProblemType,
 };
@@ -242,7 +242,7 @@ async fn aggregation_job_driver() {
     let helper_responses = Vec::from([
         (
             "PUT",
-            AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
+            AggregationJobInitializeReq::MEDIA_TYPE,
             AggregationJobResp::MEDIA_TYPE,
             AggregationJobResp {
                 verify_resps: Vec::from([VerifyResp::new(
@@ -682,7 +682,7 @@ async fn leader_sync_time_interval_aggregation_job_init_single_step() {
     let leader_request = AggregationJobInitializeReq::new(
         0,
         ().get_encoded().unwrap(),
-        PartialBatchSelector::new_time_interval(),
+        Vec::new(),
         Vec::from([VerifyInit::new(
             ReportShare::new(
                 report.metadata().clone(),
@@ -728,7 +728,7 @@ async fn leader_sync_time_interval_aggregation_job_init_single_step() {
         .match_authentication_token(agg_auth_token)
         .match_header(
             CONTENT_TYPE.as_str(),
-            AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
+            AggregationJobInitializeReq::MEDIA_TYPE,
         )
         .match_body(leader_request.get_encoded().unwrap())
         .with_status(201)
@@ -1077,7 +1077,7 @@ async fn leader_sync_time_interval_aggregation_job_init_two_steps() {
     let leader_request = AggregationJobInitializeReq::new(
         0,
         aggregation_param.get_encoded().unwrap(),
-        PartialBatchSelector::new_time_interval(),
+        Vec::new(),
         Vec::from([VerifyInit::new(
             ReportShare::new(
                 report.metadata().clone(),
@@ -1111,7 +1111,7 @@ async fn leader_sync_time_interval_aggregation_job_init_two_steps() {
         .match_authentication_token(agg_auth_token)
         .match_header(
             CONTENT_TYPE.as_str(),
-            AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
+            AggregationJobInitializeReq::MEDIA_TYPE,
         )
         .match_body(leader_request.get_encoded().unwrap())
         .with_status(201)
@@ -1452,7 +1452,7 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
     let leader_request = AggregationJobInitializeReq::new(
         0,
         ().get_encoded().unwrap(),
-        PartialBatchSelector::new_time_interval(),
+        Vec::new(),
         Vec::from([
             VerifyInit::new(
                 ReportShare::new(
@@ -1510,7 +1510,7 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
         .match_authentication_token(agg_auth_token)
         .match_header(
             CONTENT_TYPE.as_str(),
-            AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
+            AggregationJobInitializeReq::MEDIA_TYPE,
         )
         .match_body(leader_request.get_encoded().unwrap())
         .with_status(201)
@@ -1787,7 +1787,7 @@ async fn leader_sync_leader_selected_aggregation_job_init_single_step() {
     let leader_request = AggregationJobInitializeReq::new(
         0,
         ().get_encoded().unwrap(),
-        PartialBatchSelector::new_leader_selected(batch_id),
+        Vec::from([AggregationJobExtension::leader_selected_batch_id(&batch_id)]),
         Vec::from([VerifyInit::new(
             ReportShare::new(
                 report.metadata().clone(),
@@ -1833,7 +1833,7 @@ async fn leader_sync_leader_selected_aggregation_job_init_single_step() {
         .match_authentication_token(agg_auth_token)
         .match_header(
             CONTENT_TYPE.as_str(),
-            AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
+            AggregationJobInitializeReq::MEDIA_TYPE,
         )
         .match_body(leader_request.get_encoded().unwrap())
         .with_status(201)
@@ -2111,7 +2111,7 @@ async fn leader_sync_leader_selected_aggregation_job_init_two_steps() {
     let leader_request = AggregationJobInitializeReq::new(
         0,
         aggregation_param.get_encoded().unwrap(),
-        PartialBatchSelector::new_leader_selected(batch_id),
+        Vec::from([AggregationJobExtension::leader_selected_batch_id(&batch_id)]),
         Vec::from([VerifyInit::new(
             ReportShare::new(
                 report.metadata().clone(),
@@ -2145,7 +2145,7 @@ async fn leader_sync_leader_selected_aggregation_job_init_two_steps() {
         .match_authentication_token(agg_auth_token)
         .match_header(
             CONTENT_TYPE.as_str(),
-            AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
+            AggregationJobInitializeReq::MEDIA_TYPE,
         )
         .match_body(leader_request.get_encoded().unwrap())
         .with_status(201)
@@ -3037,7 +3037,7 @@ async fn leader_async_aggregation_job_init_to_pending() {
     let leader_request = AggregationJobInitializeReq::new(
         0,
         aggregation_param.get_encoded().unwrap(),
-        PartialBatchSelector::new_time_interval(),
+        Vec::new(),
         Vec::from([VerifyInit::new(
             ReportShare::new(
                 report.metadata().clone(),
@@ -3060,7 +3060,7 @@ async fn leader_async_aggregation_job_init_to_pending() {
         .match_authentication_token(agg_auth_token)
         .match_header(
             CONTENT_TYPE.as_str(),
-            AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
+            AggregationJobInitializeReq::MEDIA_TYPE,
         )
         .match_body(leader_request.get_encoded().unwrap())
         .with_status(201)
@@ -3295,7 +3295,7 @@ async fn leader_async_aggregation_job_init_to_pending_two_step() {
     let leader_request = AggregationJobInitializeReq::new(
         0,
         aggregation_param.get_encoded().unwrap(),
-        PartialBatchSelector::new_time_interval(),
+        Vec::new(),
         Vec::from([VerifyInit::new(
             ReportShare::new(
                 report.metadata().clone(),
@@ -3318,7 +3318,7 @@ async fn leader_async_aggregation_job_init_to_pending_two_step() {
         .match_authentication_token(agg_auth_token)
         .match_header(
             CONTENT_TYPE.as_str(),
-            AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
+            AggregationJobInitializeReq::MEDIA_TYPE,
         )
         .match_body(leader_request.get_encoded().unwrap())
         .with_status(201)
@@ -6399,7 +6399,7 @@ async fn abandon_failing_aggregation_job_with_retryable_error() {
         .match_authentication_token(agg_auth_token)
         .match_header(
             CONTENT_TYPE.as_str(),
-            AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
+            AggregationJobInitializeReq::MEDIA_TYPE,
         )
         .with_status(500)
         .expect(3)
@@ -6418,7 +6418,7 @@ async fn abandon_failing_aggregation_job_with_retryable_error() {
         .match_authentication_token(agg_auth_token)
         .match_header(
             CONTENT_TYPE.as_str(),
-            AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
+            AggregationJobInitializeReq::MEDIA_TYPE,
         )
         .with_status(500)
         .expect(1)
@@ -6651,7 +6651,7 @@ async fn abandon_failing_aggregation_job_with_fatal_error() {
         .match_authentication_token(agg_auth_token)
         .match_header(
             CONTENT_TYPE.as_str(),
-            AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
+            AggregationJobInitializeReq::MEDIA_TYPE,
         )
         .with_status(404)
         .expect(1)
@@ -6670,7 +6670,7 @@ async fn abandon_failing_aggregation_job_with_fatal_error() {
         .match_authentication_token(agg_auth_token)
         .match_header(
             CONTENT_TYPE.as_str(),
-            AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
+            AggregationJobInitializeReq::MEDIA_TYPE,
         )
         .with_status(500)
         .expect(1)

@@ -9,7 +9,7 @@ use num_enum::TryFromPrimitive;
 use prio::codec::{CodecError, Decode, Encode};
 use serde::{Deserialize, Serialize};
 
-use crate::{BatchId, Interval, Query};
+use crate::{AggregationJobExtension, AggregationJobExtensionType, BatchId, Interval, Query};
 
 /// BatchMode represents a DAP batch mode. This is a task-level configuration setting which
 /// determines how individual client reports are grouped together into batches for collection.
@@ -31,8 +31,8 @@ pub trait BatchMode: Clone + Debug + PartialEq + Eq + Send + Sync + 'static {
         + Send
         + Sync;
 
-    /// The type of a batch identifier as it appears in a `PartialBatchSelector`. Will be either
-    /// the same type as `BatchIdentifier`, or `()`.
+    /// The type of a batch identifier as conveyed by an aggregation job's extensions. Will be
+    /// either the same type as `BatchIdentifier`, or `()`.
     type PartialBatchIdentifier: Debug
         + Clone
         + Hash
@@ -59,6 +59,19 @@ pub trait BatchMode: Clone + Debug + PartialEq + Eq + Send + Sync + 'static {
         query: &Query<Self>,
         partial_batch_identifier: &Self::PartialBatchIdentifier,
     ) -> Self::BatchIdentifier;
+
+    /// Builds the aggregation job extensions that convey `partial_batch_identifier` to the helper
+    /// in an [`AggregationJobInitializeReq`](crate::AggregationJobInitializeReq).
+    fn aggregation_job_extensions(
+        partial_batch_identifier: &Self::PartialBatchIdentifier,
+    ) -> Vec<AggregationJobExtension>;
+
+    /// Recovers the partial batch identifier from an aggregation job's extensions. Returns `None`
+    /// if a required extension is absent or malformed; the helper reports this as the DAP
+    /// `invalidMessage` error.
+    fn partial_batch_identifier_from_extensions(
+        extensions: &[AggregationJobExtension],
+    ) -> Option<Self::PartialBatchIdentifier>;
 }
 
 /// Represents the `time-interval` DAP batch mode.
@@ -81,6 +94,14 @@ impl BatchMode for TimeInterval {
         _: &Self::PartialBatchIdentifier,
     ) -> Self::BatchIdentifier {
         *query.batch_interval()
+    }
+
+    fn aggregation_job_extensions(_: &()) -> Vec<AggregationJobExtension> {
+        Vec::new()
+    }
+
+    fn partial_batch_identifier_from_extensions(_: &[AggregationJobExtension]) -> Option<()> {
+        Some(())
     }
 }
 
@@ -106,6 +127,21 @@ impl BatchMode for LeaderSelected {
         partial_batch_identifier: &Self::PartialBatchIdentifier,
     ) -> Self::BatchIdentifier {
         *partial_batch_identifier
+    }
+
+    fn aggregation_job_extensions(batch_id: &BatchId) -> Vec<AggregationJobExtension> {
+        Vec::from([AggregationJobExtension::leader_selected_batch_id(batch_id)])
+    }
+
+    fn partial_batch_identifier_from_extensions(
+        extensions: &[AggregationJobExtension],
+    ) -> Option<BatchId> {
+        extensions
+            .iter()
+            .find(|extension| {
+                extension.extension_type() == AggregationJobExtensionType::LeaderSelectedBatchId
+            })
+            .and_then(|extension| BatchId::get_decoded(extension.extension_data()).ok())
     }
 }
 

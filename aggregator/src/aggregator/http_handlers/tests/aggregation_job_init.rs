@@ -23,10 +23,11 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    AggregateShareReq, AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, BatchId,
-    BatchSelector, CollectionJobReq, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId,
-    InputShareAad, Interval, MediaType, PartialBatchSelector, Query, ReportError, ReportIdChecksum,
-    ReportMetadata, ReportShare, Role, Time, VerifyInit, VerifyStepResult,
+    AggregateShareReq, AggregationJobExtension, AggregationJobExtensionType, AggregationJobId,
+    AggregationJobInitializeReq, AggregationJobResp, BatchId, BatchSelector, CollectionJobReq,
+    Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, InputShareAad, Interval, MediaType,
+    Query, ReportError, ReportIdChecksum, ReportMetadata, ReportShare, Role, Time, VerifyInit,
+    VerifyStepResult,
     batch_mode::{LeaderSelected, TimeInterval},
 };
 use prio::{codec::Encode, vdaf::dummy};
@@ -69,12 +70,7 @@ async fn aggregate_leader() {
         .await
         .unwrap();
 
-    let request = AggregationJobInitializeReq::new(
-        0,
-        Vec::new(),
-        PartialBatchSelector::new_time_interval(),
-        Vec::new(),
-    );
+    let request = AggregationJobInitializeReq::new(0, Vec::new(), Vec::new(), Vec::new());
     let aggregation_job_id: AggregationJobId = random();
 
     let mut response = put_aggregation_job(&task, &aggregation_job_id, &request, &router).await;
@@ -163,12 +159,7 @@ async fn aggregate_wrong_agg_auth_token() {
         .await
         .unwrap();
 
-    let request = AggregationJobInitializeReq::new(
-        0,
-        Vec::new(),
-        PartialBatchSelector::new_time_interval(),
-        Vec::new(),
-    );
+    let request = AggregationJobInitializeReq::new(0, Vec::new(), Vec::new(), Vec::new());
     let aggregation_job_id: AggregationJobId = random();
 
     let wrong_token_value = AuthenticationToken::DapAuth(random());
@@ -191,10 +182,7 @@ async fn aggregate_wrong_agg_auth_token() {
                     .unwrap()
                     .path(),
             )
-            .header(
-                "content-type",
-                AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
-            )
+            .header("content-type", AggregationJobInitializeReq::MEDIA_TYPE)
             .body(Body::from(request.get_encoded().unwrap()))
             .unwrap();
 
@@ -599,7 +587,7 @@ async fn aggregate_init_sync() {
     let request = AggregationJobInitializeReq::new(
         0,
         aggregation_param.get_encoded().unwrap(),
-        PartialBatchSelector::new_time_interval(),
+        Vec::new(),
         Vec::from([
             verify_init_0.clone(),
             verify_init_1.clone(),
@@ -866,7 +854,7 @@ async fn aggregate_init_async() {
     let request = AggregationJobInitializeReq::new(
         0,
         aggregation_param.get_encoded().unwrap(),
-        PartialBatchSelector::new_time_interval(),
+        Vec::new(),
         Vec::from([verify_init_0.clone(), verify_init_1.clone()]),
     );
 
@@ -999,7 +987,7 @@ async fn aggregate_init_batch_already_collected() {
     let request = AggregationJobInitializeReq::new(
         0,
         aggregation_param.get_encoded().unwrap(),
-        PartialBatchSelector::new_leader_selected(batch_id),
+        Vec::from([AggregationJobExtension::leader_selected_batch_id(&batch_id)]),
         Vec::from([verify_init.clone()]),
     );
 
@@ -1049,7 +1037,7 @@ async fn aggregate_init_batch_already_collected() {
         .with_authentication_token(task.aggregator_auth_token())
         .header(
             http::header::CONTENT_TYPE,
-            AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
+            AggregationJobInitializeReq::MEDIA_TYPE,
         )
         .body(Body::from(request.get_encoded().unwrap()))
         .unwrap();
@@ -1074,6 +1062,149 @@ async fn aggregate_init_batch_already_collected() {
 
     assert_task_aggregation_counter(&datastore, *task.id(), TaskAggregationCounter::default())
         .await;
+}
+
+#[tokio::test]
+async fn aggregate_init_leader_selected_missing_batch_id() {
+    let HttpHandlerTest {
+        clock,
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        router,
+        hpke_keypair,
+        ..
+    } = HttpHandlerTest::new().await;
+
+    let task = TaskBuilder::new(
+        BatchMode::LeaderSelected {
+            batch_time_window_size: None,
+        },
+        AggregationMode::Synchronous,
+        VdafInstance::Fake { rounds: 1 },
+    )
+    .build();
+
+    let helper_task = task.helper_view().unwrap();
+    datastore.put_aggregator_task(&helper_task).await.unwrap();
+
+    let verify_init_generator = VerifyInitGenerator::new(
+        clock.clone(),
+        helper_task.clone(),
+        hpke_keypair.config().clone(),
+        dummy::Vdaf::new(1),
+        dummy::AggregationParam(0),
+    );
+    let (verify_init, _) = verify_init_generator.next(&0);
+
+    // A leader-selected aggregation job that omits the `leader_selected_batch_id` extension is an
+    // `invalidMessage`.
+    let request = AggregationJobInitializeReq::new(
+        0,
+        dummy::AggregationParam(0).get_encoded().unwrap(),
+        Vec::new(),
+        Vec::from([verify_init]),
+    );
+
+    let aggregation_job_id: AggregationJobId = random();
+    let req = Request::builder()
+        .method(Method::PUT)
+        .uri(
+            task.aggregation_job_uri(&aggregation_job_id, None)
+                .unwrap()
+                .path(),
+        )
+        .with_authentication_token(task.aggregator_auth_token())
+        .header(
+            http::header::CONTENT_TYPE,
+            AggregationJobInitializeReq::MEDIA_TYPE,
+        )
+        .body(Body::from(request.get_encoded().unwrap()))
+        .unwrap();
+    let mut response = router.clone().oneshot(req).await.unwrap();
+
+    assert_eq!(
+        take_problem_details(&mut response).await,
+        json!({
+            "status": StatusCode::BAD_REQUEST.as_u16(),
+            "type": "urn:ietf:params:ppm:dap:error:invalidMessage",
+            "title": "The message type for a response was incorrect or the payload was malformed.",
+            "taskid": format!("{}", task.id()),
+            "detail": "aggregation job is missing a required batch identifier extension",
+        }),
+    );
+}
+
+#[tokio::test]
+async fn aggregate_init_leader_selected_malformed_batch_id() {
+    let HttpHandlerTest {
+        clock,
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        router,
+        hpke_keypair,
+        ..
+    } = HttpHandlerTest::new().await;
+
+    let task = TaskBuilder::new(
+        BatchMode::LeaderSelected {
+            batch_time_window_size: None,
+        },
+        AggregationMode::Synchronous,
+        VdafInstance::Fake { rounds: 1 },
+    )
+    .build();
+
+    let helper_task = task.helper_view().unwrap();
+    datastore.put_aggregator_task(&helper_task).await.unwrap();
+
+    let verify_init_generator = VerifyInitGenerator::new(
+        clock.clone(),
+        helper_task.clone(),
+        hpke_keypair.config().clone(),
+        dummy::Vdaf::new(1),
+        dummy::AggregationParam(0),
+    );
+    let (verify_init, _) = verify_init_generator.next(&0);
+
+    // A `leader_selected_batch_id` extension whose payload is not a valid (32-byte) batch ID is an
+    // `invalidMessage`.
+    let request = AggregationJobInitializeReq::new(
+        0,
+        dummy::AggregationParam(0).get_encoded().unwrap(),
+        Vec::from([AggregationJobExtension::new(
+            AggregationJobExtensionType::LeaderSelectedBatchId,
+            Vec::from([1, 2, 3]),
+        )]),
+        Vec::from([verify_init]),
+    );
+
+    let aggregation_job_id: AggregationJobId = random();
+    let req = Request::builder()
+        .method(Method::PUT)
+        .uri(
+            task.aggregation_job_uri(&aggregation_job_id, None)
+                .unwrap()
+                .path(),
+        )
+        .with_authentication_token(task.aggregator_auth_token())
+        .header(
+            http::header::CONTENT_TYPE,
+            AggregationJobInitializeReq::MEDIA_TYPE,
+        )
+        .body(Body::from(request.get_encoded().unwrap()))
+        .unwrap();
+    let mut response = router.clone().oneshot(req).await.unwrap();
+
+    assert_eq!(
+        take_problem_details(&mut response).await,
+        json!({
+            "status": StatusCode::BAD_REQUEST.as_u16(),
+            "type": "urn:ietf:params:ppm:dap:error:invalidMessage",
+            "title": "The message type for a response was incorrect or the payload was malformed.",
+            "taskid": format!("{}", task.id()),
+            "detail": "aggregation job is missing a required batch identifier extension",
+        }),
+    );
 }
 
 #[tokio::test]
@@ -1108,7 +1239,7 @@ async fn aggregate_init_verify_init_failed() {
     let request = AggregationJobInitializeReq::new(
         0,
         dummy::AggregationParam(0).get_encoded().unwrap(),
-        PartialBatchSelector::new_time_interval(),
+        Vec::new(),
         Vec::from([verify_init.clone()]),
     );
 
@@ -1175,7 +1306,7 @@ async fn aggregate_init_verify_step_failed() {
     let request = AggregationJobInitializeReq::new(
         0,
         dummy::AggregationParam(0).get_encoded().unwrap(),
-        PartialBatchSelector::new_time_interval(),
+        Vec::new(),
         Vec::from([verify_init.clone()]),
     );
 
@@ -1243,7 +1374,7 @@ async fn aggregate_init_duplicated_report_id() {
     let request = AggregationJobInitializeReq::new(
         0,
         dummy::AggregationParam(0).get_encoded().unwrap(),
-        PartialBatchSelector::new_time_interval(),
+        Vec::new(),
         Vec::from([verify_init.clone(), verify_init]),
     );
     let aggregation_job_id: AggregationJobId = random();
@@ -1297,7 +1428,7 @@ async fn aggregate_init_partially_replayed_aggregation_init() {
 
     let batch_id = BatchId::from([12; 32]);
     let agg_param = dummy::AggregationParam(0).get_encoded().unwrap();
-    let partial_batch_selector = PartialBatchSelector::new_leader_selected(batch_id);
+    let extensions = Vec::from([AggregationJobExtension::leader_selected_batch_id(&batch_id)]);
 
     let helper_task = task.helper_view().unwrap();
     let verify_init_generator = VerifyInitGenerator::new(
@@ -1329,7 +1460,7 @@ async fn aggregate_init_partially_replayed_aggregation_init() {
     let request = AggregationJobInitializeReq::new(
         0,
         agg_param.clone(),
-        partial_batch_selector.clone(),
+        extensions.clone(),
         Vec::from([verify_init_1.clone(), verify_init_2.clone()]),
     );
 
@@ -1354,7 +1485,7 @@ async fn aggregate_init_partially_replayed_aggregation_init() {
     let request = AggregationJobInitializeReq::new(
         0,
         agg_param.clone(),
-        partial_batch_selector,
+        extensions,
         Vec::from([
             verify_init_1.clone(),
             verify_init_2.clone(),

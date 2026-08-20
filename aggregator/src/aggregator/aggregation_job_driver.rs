@@ -34,8 +34,8 @@ use janus_core::{
 };
 use janus_messages::{
     AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp, MediaType,
-    PartialBatchSelector, ReportError, ReportMetadata, ReportShare, Role, VerifyContinue,
-    VerifyInit, VerifyResp, VerifyStepResult,
+    ReportError, ReportMetadata, ReportShare, Role, VerifyContinue, VerifyInit, VerifyResp,
+    VerifyStepResult,
     batch_mode::{LeaderSelected, TimeInterval},
     extensions_are_strictly_increasing,
 };
@@ -646,14 +646,14 @@ where
 
         let (resp, retry_after) = if !verify_inits.is_empty() {
             // Construct request, send it to the helper, and process the response.
-            let request = AggregationJobInitializeReq::<B>::new(
+            let request = AggregationJobInitializeReq::new(
                 // Janus uses a single verification key per task.
                 0,
                 aggregation_job
                     .aggregation_parameter()
                     .get_encoded()
                     .map_err(Error::MessageEncode)?,
-                PartialBatchSelector::new(aggregation_job.partial_batch_identifier().clone()),
+                B::aggregation_job_extensions(aggregation_job.partial_batch_identifier()),
                 verify_inits,
             );
 
@@ -667,7 +667,7 @@ where
                     })?,
                 AGGREGATION_JOB_ROUTE,
                 Some(RequestBody {
-                    content_type: AggregationJobInitializeReq::<B>::MEDIA_TYPE,
+                    content_type: AggregationJobInitializeReq::MEDIA_TYPE,
                     body: Bytes::from(request.get_encoded().map_err(Error::MessageEncode)?),
                 }),
                 // The only way a task wouldn't have an aggregator auth token in it is in the

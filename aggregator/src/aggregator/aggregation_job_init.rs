@@ -567,7 +567,6 @@ pub mod test_util {
     use janus_messages::{
         AggregationJobId, AggregationJobInitializeReq, Extension, HpkeConfig, MediaType,
         ReportMetadata, ReportShare, VerifyInit,
-        batch_mode::{self},
     };
     use prio::{
         codec::Encode,
@@ -690,10 +689,10 @@ pub mod test_util {
         }
     }
 
-    pub async fn put_aggregation_job<B: batch_mode::BatchMode>(
+    pub async fn put_aggregation_job(
         task: &Task,
         aggregation_job_id: &AggregationJobId,
-        aggregation_job: &AggregationJobInitializeReq<B>,
+        aggregation_job: &AggregationJobInitializeReq,
         router: &Router,
     ) -> http::Response<Body> {
         let request = Request::builder()
@@ -706,7 +705,7 @@ pub mod test_util {
             .with_authentication_token(task.aggregator_auth_token())
             .header(
                 header::CONTENT_TYPE,
-                AggregationJobInitializeReq::<B>::MEDIA_TYPE,
+                AggregationJobInitializeReq::MEDIA_TYPE,
             )
             .body(Body::from(aggregation_job.get_encoded().unwrap()))
             .unwrap();
@@ -737,9 +736,10 @@ mod tests {
         vdaf::VdafInstance,
     };
     use janus_messages::{
-        AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, Duration, Extension,
-        ExtensionType, Interval, MediaType, PartialBatchSelector, ReportError, ReportMetadata,
-        TimePrecision, VerifyResp, VerifyStepResult, batch_mode::TimeInterval,
+        AggregationJobExtension, AggregationJobExtensionType, AggregationJobId,
+        AggregationJobInitializeReq, AggregationJobResp, Duration, Extension, ExtensionType,
+        Interval, MediaType, ReportError, ReportMetadata, TimePrecision, VerifyResp,
+        VerifyStepResult,
     };
     use prio::{
         codec::Encode,
@@ -766,7 +766,7 @@ mod tests {
         pub(super) task: Task,
         pub(super) verify_init_generator: VerifyInitGenerator<VERIFY_KEY_SIZE, V>,
         pub(super) aggregation_job_id: AggregationJobId,
-        pub(super) aggregation_job_init_req: AggregationJobInitializeReq<TimeInterval>,
+        pub(super) aggregation_job_init_req: AggregationJobInitializeReq,
         aggregation_job_init_resp: Option<AggregationJobResp>,
         pub(super) aggregation_param: V::AggregationParam,
         pub(super) router: Router,
@@ -894,7 +894,7 @@ mod tests {
         let aggregation_job_init_req = AggregationJobInitializeReq::new(
             0,
             aggregation_param.get_encoded().unwrap(),
-            PartialBatchSelector::new_time_interval(),
+            Vec::new(),
             verify_inits.clone(),
         );
 
@@ -934,7 +934,7 @@ mod tests {
             .with_authentication_token(test_case.task.aggregator_auth_token())
             .header(
                 header::CONTENT_TYPE,
-                AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
+                AggregationJobInitializeReq::MEDIA_TYPE,
             )
             .body(Body::from(
                 test_case.aggregation_job_init_req.get_encoded().unwrap(),
@@ -984,7 +984,7 @@ mod tests {
                     )
                     .header(
                         header::CONTENT_TYPE,
-                        AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
+                        AggregationJobInitializeReq::MEDIA_TYPE,
                     )
                     .body(Body::from(
                         test_case.aggregation_job_init_req.get_encoded().unwrap(),
@@ -1021,7 +1021,7 @@ mod tests {
         let aggregation_job_init_req = AggregationJobInitializeReq::new(
             0,
             dummy::AggregationParam(1).get_encoded().unwrap(),
-            PartialBatchSelector::new_time_interval(),
+            Vec::new(),
             Vec::from([verify_init]),
         );
 
@@ -1053,7 +1053,7 @@ mod tests {
         let mutated_aggregation_job_init_req = AggregationJobInitializeReq::new(
             0,
             dummy::AggregationParam(1).get_encoded().unwrap(),
-            PartialBatchSelector::new_time_interval(),
+            Vec::new(),
             test_case.aggregation_job_init_req.verify_inits().to_vec(),
         );
 
@@ -1092,7 +1092,7 @@ mod tests {
             let mutated_aggregation_job_init_req = AggregationJobInitializeReq::new(
                 0,
                 test_case.aggregation_param.get_encoded().unwrap(),
-                PartialBatchSelector::new_time_interval(),
+                Vec::new(),
                 mutated_verify_inits,
             );
             let response = put_aggregation_job(
@@ -1130,7 +1130,7 @@ mod tests {
         let mutated_aggregation_job_init_req = AggregationJobInitializeReq::new(
             0,
             test_case.aggregation_param.get_encoded().unwrap(),
-            PartialBatchSelector::new_time_interval(),
+            Vec::new(),
             mutated_verify_inits,
         );
 
@@ -1158,7 +1158,7 @@ mod tests {
         test_case.aggregation_job_init_req = AggregationJobInitializeReq::new(
             0,
             test_case.aggregation_param.get_encoded().unwrap(),
-            PartialBatchSelector::new_time_interval(),
+            Vec::new(),
             Vec::from([
                 // Barely tolerable.
                 test_case
@@ -1285,7 +1285,7 @@ mod tests {
         let aggregation_job_init_req = AggregationJobInitializeReq::new(
             0,
             aggregation_param.get_encoded().unwrap(),
-            PartialBatchSelector::new_time_interval(),
+            Vec::new(),
             Vec::from([
                 // Report with timestamp before task end should be accepted.
                 verify_init_generator
@@ -1433,7 +1433,7 @@ mod tests {
         let aggregation_job_init_req = AggregationJobInitializeReq::new(
             0,
             aggregation_param.get_encoded().unwrap(),
-            PartialBatchSelector::new_time_interval(),
+            Vec::new(),
             Vec::from([
                 // Report with timestamp after task start should be accepted.
                 verify_init_generator
@@ -1486,41 +1486,60 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn aggregation_job_init_wrong_query() {
+    async fn aggregation_job_init_out_of_order_extensions() {
         let test_case = setup_aggregate_init_test().await;
 
-        // setup_aggregate_init_test sets up a task with a time interval query. We send a
-        // leader-selected query which should yield an error.
-        let wrong_query = AggregationJobInitializeReq::new(
+        // Extensions must be in strictly increasing order of extension type; a decreasing pair is
+        // an `invalidMessage`.
+        let request = AggregationJobInitializeReq::new(
             0,
             test_case.aggregation_param.get_encoded().unwrap(),
-            PartialBatchSelector::new_leader_selected(random()),
+            Vec::from([
+                AggregationJobExtension::new(AggregationJobExtensionType::from(2), Vec::new()),
+                AggregationJobExtension::new(AggregationJobExtensionType::from(1), Vec::new()),
+            ]),
             test_case.aggregation_job_init_req.verify_inits().to_vec(),
         );
 
-        let req = Request::builder()
-            .method("PUT")
-            .uri(
-                test_case
-                    .task
-                    .aggregation_job_uri(&random(), None)
-                    .unwrap()
-                    .path(),
-            )
-            .with_authentication_token(test_case.task.aggregator_auth_token())
-            .header(
-                header::CONTENT_TYPE,
-                AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
-            )
-            .body(Body::from(wrong_query.get_encoded().unwrap()))
-            .unwrap();
-        let mut response = test_case.router.clone().oneshot(req).await.unwrap();
+        let mut response =
+            put_aggregation_job(&test_case.task, &random(), &request, &test_case.router).await;
         assert_eq!(
             take_problem_details(&mut response).await,
             json!({
                 "status": StatusCode::BAD_REQUEST.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:invalidMessage",
                 "title": "The message type for a response was incorrect or the payload was malformed.",
+                "taskid": format!("{}", test_case.task.id()),
+                "detail": "aggregation job extensions are not in strictly increasing order",
+            }),
+        );
+    }
+
+    #[tokio::test]
+    async fn aggregation_job_init_unsupported_extension() {
+        let test_case = setup_aggregate_init_test().await;
+
+        // An extension type the helper does not recognize is an `unsupportedExtension`.
+        let request = AggregationJobInitializeReq::new(
+            0,
+            test_case.aggregation_param.get_encoded().unwrap(),
+            Vec::from([AggregationJobExtension::new(
+                AggregationJobExtensionType::from(0xffff),
+                Vec::new(),
+            )]),
+            test_case.aggregation_job_init_req.verify_inits().to_vec(),
+        );
+
+        let mut response =
+            put_aggregation_job(&test_case.task, &random(), &request, &test_case.router).await;
+        assert_eq!(
+            take_problem_details(&mut response).await,
+            json!({
+                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "type": "urn:ietf:params:ppm:dap:error:unsupportedExtension",
+                "title": "The message includes an unsupported extension.",
+                "taskid": format!("{}", test_case.task.id()),
+                "detail": "unrecognized aggregation job extension type",
             }),
         );
     }

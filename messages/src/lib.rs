@@ -1907,73 +1907,6 @@ impl<B: BatchMode> Decode for CollectionJobReq<B> {
     }
 }
 
-/// DAP protocol message representing a partial batch selector, identifying a batch of interest in
-/// cases where some batch modes can infer the selector.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PartialBatchSelector<B: BatchMode> {
-    batch_identifier: B::PartialBatchIdentifier,
-}
-
-impl<B: BatchMode> PartialBatchSelector<B> {
-    /// Constructs a new partial batch selector.
-    ///
-    /// This method would typically be used for code which is generic over the batch mode. Batch
-    /// mode-specific code will typically call one of [`Self::new_time_interval`] or
-    /// [`Self::new_leader_selected`].
-    pub fn new(batch_identifier: B::PartialBatchIdentifier) -> Self {
-        Self { batch_identifier }
-    }
-
-    /// Gets the batch identifier associated with this collect response.
-    ///
-    /// This method would typically be used for code which is generic over the batch mode. Batch
-    /// mode-specific code will typically call [`Self::batch_id`].
-    pub fn batch_identifier(&self) -> &B::PartialBatchIdentifier {
-        &self.batch_identifier
-    }
-}
-
-impl PartialBatchSelector<TimeInterval> {
-    /// Constructs a new partial batch selector for a time-interval task.
-    pub fn new_time_interval() -> Self {
-        Self::new(())
-    }
-}
-
-impl PartialBatchSelector<LeaderSelected> {
-    /// Constructs a new partial batch selector for a leader-selected task.
-    pub fn new_leader_selected(batch_id: BatchId) -> Self {
-        Self::new(batch_id)
-    }
-
-    /// Gets the batch ID associated with this partial batch selector.
-    pub fn batch_id(&self) -> &BatchId {
-        self.batch_identifier()
-    }
-}
-
-impl<B: BatchMode> Encode for PartialBatchSelector<B> {
-    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
-        B::CODE.encode(bytes)?;
-        encode_u16_items(bytes, &(), slice::from_ref(&self.batch_identifier))
-    }
-
-    fn encoded_len(&self) -> Option<usize> {
-        Some(1 + 2 + self.batch_identifier.encoded_len()?)
-    }
-}
-
-impl<B: BatchMode> Decode for PartialBatchSelector<B> {
-    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        batch_mode::Code::decode_expecting_value(bytes, B::CODE)?;
-
-        let buf = decode_u16_items(&(), bytes)?;
-        let batch_identifier = B::PartialBatchIdentifier::get_decoded(&buf)?;
-
-        Ok(Self { batch_identifier })
-    }
-}
-
 /// DAP protocol message representing an identifier for a collection.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CollectionJobId([u8; Self::LEN]);
@@ -2598,30 +2531,150 @@ impl Distribution<AggregationJobId> for StandardUniform {
     }
 }
 
+/// DAP protocol message representing an extension included in an aggregation job initialization
+/// request, conveying additional parameters for the aggregation job to the helper.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AggregationJobExtension {
+    extension_type: AggregationJobExtensionType,
+    extension_data: Vec<u8>,
+}
+
+impl AggregationJobExtension {
+    /// Construct an aggregation job extension from its type and payload.
+    pub fn new(
+        extension_type: AggregationJobExtensionType,
+        extension_data: Vec<u8>,
+    ) -> AggregationJobExtension {
+        AggregationJobExtension {
+            extension_type,
+            extension_data,
+        }
+    }
+
+    /// Constructs the `leader_selected_batch_id` extension, carrying the batch ID selected by the
+    /// leader for a leader-selected batch mode aggregation job.
+    pub fn leader_selected_batch_id(batch_id: &BatchId) -> AggregationJobExtension {
+        AggregationJobExtension::new(
+            AggregationJobExtensionType::LeaderSelectedBatchId,
+            batch_id.as_ref().to_vec(),
+        )
+    }
+
+    /// Returns the type of this extension.
+    pub fn extension_type(&self) -> AggregationJobExtensionType {
+        self.extension_type
+    }
+
+    /// Returns the unparsed data representing this extension.
+    pub fn extension_data(&self) -> &[u8] {
+        &self.extension_data
+    }
+}
+
+impl Encode for AggregationJobExtension {
+    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
+        self.extension_type.encode(bytes)?;
+        encode_u16_items(bytes, &(), &self.extension_data)
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        // Extra 2 bytes for the data length prefix.
+        Some(self.extension_type.encoded_len()? + 2 + self.extension_data.len())
+    }
+}
+
+impl Decode for AggregationJobExtension {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let extension_type = AggregationJobExtensionType::decode(bytes)?;
+        let extension_data = decode_u16_items(&(), bytes)?;
+
+        Ok(Self {
+            extension_type,
+            extension_data,
+        })
+    }
+}
+
+/// DAP protocol message representing the type of an aggregation job extension.
+///
+/// Equality, ordering, and hashing are all defined in terms of the underlying codepoint, so
+/// `Unknown(0x0000)` compares and hashes equal to `Reserved`.
+#[derive(Clone, Copy, Debug, FromPrimitive, IntoPrimitive)]
+#[repr(u16)]
+#[non_exhaustive]
+pub enum AggregationJobExtensionType {
+    Reserved = 0x0000,
+    LeaderSelectedBatchId = 0x0001,
+    #[num_enum(catch_all)]
+    Unknown(u16),
+}
+
+impl PartialEq for AggregationJobExtensionType {
+    fn eq(&self, other: &Self) -> bool {
+        u16::from(*self) == u16::from(*other)
+    }
+}
+
+impl Eq for AggregationJobExtensionType {}
+
+impl Hash for AggregationJobExtensionType {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        u16::from(*self).hash(state)
+    }
+}
+
+impl PartialOrd for AggregationJobExtensionType {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for AggregationJobExtensionType {
+    fn cmp(&self, other: &Self) -> Ordering {
+        u16::from(*self).cmp(&u16::from(*other))
+    }
+}
+
+impl Encode for AggregationJobExtensionType {
+    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
+        u16::from(*self).encode(bytes)
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(2)
+    }
+}
+
+impl Decode for AggregationJobExtensionType {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        Ok(Self::from(u16::decode(bytes)?))
+    }
+}
+
 /// DAP protocol message representing an aggregation job initialization request from leader to
 /// helper.
 #[derive(Clone, Educe, PartialEq, Eq)]
 #[educe(Debug)]
-pub struct AggregationJobInitializeReq<B: BatchMode> {
+pub struct AggregationJobInitializeReq {
     verification_key_id: u8,
     #[educe(Debug(ignore))]
     aggregation_parameter: Vec<u8>,
-    partial_batch_selector: PartialBatchSelector<B>,
+    extensions: Vec<AggregationJobExtension>,
     verify_inits: Vec<VerifyInit>,
 }
 
-impl<B: BatchMode> AggregationJobInitializeReq<B> {
+impl AggregationJobInitializeReq {
     /// Constructs an aggregate initialization request from its components.
     pub fn new(
         verification_key_id: u8,
         aggregation_parameter: Vec<u8>,
-        partial_batch_selector: PartialBatchSelector<B>,
+        extensions: Vec<AggregationJobExtension>,
         verify_inits: Vec<VerifyInit>,
     ) -> Self {
         Self {
             verification_key_id,
             aggregation_parameter,
-            partial_batch_selector,
+            extensions,
             verify_inits,
         }
     }
@@ -2636,9 +2689,9 @@ impl<B: BatchMode> AggregationJobInitializeReq<B> {
         &self.aggregation_parameter
     }
 
-    /// Gets the partial batch selector associated with this aggregate initialization request.
-    pub fn batch_selector(&self) -> &PartialBatchSelector<B> {
-        &self.partial_batch_selector
+    /// Gets the aggregation job extensions associated with this aggregate initialization request.
+    pub fn extensions(&self) -> &[AggregationJobExtension] {
+        &self.extensions
     }
 
     /// Gets the verification initialization messages associated with this aggregate initialization
@@ -2648,22 +2701,25 @@ impl<B: BatchMode> AggregationJobInitializeReq<B> {
     }
 }
 
-impl<B: BatchMode> MediaType for AggregationJobInitializeReq<B> {
+impl MediaType for AggregationJobInitializeReq {
     const MEDIA_TYPE: &'static str = "application/ppm-dap;message=aggregation-job-init-req";
 }
 
-impl<B: BatchMode> Encode for AggregationJobInitializeReq<B> {
+impl Encode for AggregationJobInitializeReq {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         self.verification_key_id.encode(bytes)?;
         encode_u32_items(bytes, &(), &self.aggregation_parameter)?;
-        self.partial_batch_selector.encode(bytes)?;
+        encode_u16_items(bytes, &(), &self.extensions)?;
         encode_u32_items(bytes, &(), &self.verify_inits)
     }
 
     fn encoded_len(&self) -> Option<usize> {
         let mut length = 1;
         length += 4 + self.aggregation_parameter.len();
-        length += self.partial_batch_selector.encoded_len()?;
+        length += 2;
+        for extension in &self.extensions {
+            length += extension.encoded_len()?;
+        }
         length += 4;
         for verify_init in &self.verify_inits {
             length += verify_init.encoded_len()?;
@@ -2672,17 +2728,20 @@ impl<B: BatchMode> Encode for AggregationJobInitializeReq<B> {
     }
 }
 
-impl<B: BatchMode> Decode for AggregationJobInitializeReq<B> {
+impl Decode for AggregationJobInitializeReq {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        // Extension ordering and support are semantic checks the helper performs while handling the
+        // request (producing the DAP `unsupportedExtension`/`invalidMessage` errors), so decoding
+        // here is purely structural.
         let verification_key_id = u8::decode(bytes)?;
         let aggregation_parameter = decode_u32_items(&(), bytes)?;
-        let partial_batch_selector = PartialBatchSelector::decode(bytes)?;
+        let extensions = decode_u16_items(&(), bytes)?;
         let verify_inits = decode_u32_items(&(), bytes)?;
 
         Ok(Self {
             verification_key_id,
             aggregation_parameter,
-            partial_batch_selector,
+            extensions,
             verify_inits,
         })
     }

@@ -761,7 +761,7 @@ async fn aggregation_jobs_put<C: Clock>(
     AxumState(aggregator): AxumState<Arc<Aggregator<C>>>,
     body: Bytes,
 ) -> Result<Response, Error> {
-    validate_content_type_headers::<AggregationJobInitializeReq<TimeInterval>>(&headers)?;
+    validate_content_type_headers::<AggregationJobInitializeReq>(&headers)?;
 
     let task_id = path.task_id;
     let aggregation_job_id = path.aggregation_job_id;

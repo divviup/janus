@@ -381,8 +381,8 @@ mod tests {
     };
     use janus_messages::{
         AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq,
-        AggregationJobResp, AggregationJobStep, Interval, PartialBatchSelector, Role,
-        VerifyContinue, VerifyResp, VerifyStepResult, batch_mode::TimeInterval,
+        AggregationJobResp, AggregationJobStep, Interval, Role, VerifyContinue, VerifyResp,
+        VerifyStepResult, batch_mode::TimeInterval,
     };
     use prio::{
         codec::Encode as _,
@@ -922,7 +922,7 @@ mod tests {
         let init_req = AggregationJobInitializeReq::new(
             0,
             test_case.aggregation_parameter.get_encoded().unwrap(),
-            PartialBatchSelector::new_time_interval(),
+            Vec::new(),
             Vec::from([verify_init_msg]),
         );
         let mut response = put_aggregation_job(
