@@ -93,14 +93,8 @@ fn decode_dap_message(message_file: &str, media_type: &MediaType) -> Result<Box<
             }
         }
         MediaType::CollectionJobResp => {
-            if let Ok(decoded) = CollectionJobResp::<TimeInterval>::get_decoded(&message_buf) {
-                let message: CollectionJobResp<TimeInterval> = decoded;
-                Box::new(message)
-            } else {
-                let message: CollectionJobResp<LeaderSelected> =
-                    CollectionJobResp::<LeaderSelected>::get_decoded(&message_buf)?;
-                Box::new(message)
-            }
+            let message: CollectionJobResp = CollectionJobResp::get_decoded(&message_buf)?;
+            Box::new(message)
         }
     };
 

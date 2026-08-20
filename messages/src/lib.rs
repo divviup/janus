@@ -11,7 +11,6 @@ use std::{
     fmt::{self, Debug, Display, Formatter},
     hash::{Hash, Hasher},
     io::{Cursor, Read},
-    marker::PhantomData,
     num::TryFromIntError,
     str::{self, FromStr},
 };
@@ -2033,19 +2032,18 @@ impl Distribution<CollectionJobId> for StandardUniform {
 /// DAP protocol message representing a leader's response to the collector's request to provide
 /// aggregate shares for a given query.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CollectionJobResp<B: BatchMode> {
+pub struct CollectionJobResp {
     pub report_count: u64,
     pub interval: Interval,
     pub leader_encrypted_agg_share: HpkeCiphertext,
     pub helper_encrypted_agg_share: HpkeCiphertext,
-    pub phantom: PhantomData<B>,
 }
 
-impl<B: BatchMode> MediaType for CollectionJobResp<B> {
+impl MediaType for CollectionJobResp {
     const MEDIA_TYPE: &'static str = "application/ppm-dap;message=collection-job-resp";
 }
 
-impl<B: BatchMode> Encode for CollectionJobResp<B> {
+impl Encode for CollectionJobResp {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         // The encoding includes an implicit discriminator byte called CollectionJobStatus in the
         // DAP specification.
@@ -2065,7 +2063,7 @@ impl<B: BatchMode> Encode for CollectionJobResp<B> {
     }
 }
 
-impl<B: BatchMode> Decode for CollectionJobResp<B> {
+impl Decode for CollectionJobResp {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         Ok({
             let report_count = u64::decode(bytes)?;
@@ -2078,7 +2076,6 @@ impl<B: BatchMode> Decode for CollectionJobResp<B> {
                 interval,
                 leader_encrypted_agg_share,
                 helper_encrypted_agg_share,
-                phantom: PhantomData,
             }
         })
     }

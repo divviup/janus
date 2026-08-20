@@ -565,7 +565,7 @@ where
         .collect()
         .await
         .map_err(|err| Error::Anyhow(err.into()))?;
-    print_collection::<V, B>(collection)?;
+    print_collection::<V>(collection)?;
     Ok(())
 }
 
@@ -609,7 +609,7 @@ where
     match poll_result {
         PollResult::CollectionResult(collection) => {
             println!("State: Ready");
-            print_collection::<V, B>(collection)?;
+            print_collection::<V>(collection)?;
             Ok(())
         }
         PollResult::NotReady(retry_after) => {
@@ -652,8 +652,8 @@ fn new_collector<V: vdaf::Collector>(
     Ok(collector)
 }
 
-fn print_collection<V: vdaf::Collector, B: BatchMode>(
-    collection: Collection<<V as Vdaf>::AggregateResult, B>,
+fn print_collection<V: vdaf::Collector>(
+    collection: Collection<<V as Vdaf>::AggregateResult>,
 ) -> Result<(), Error> {
     let (start, duration) = collection.interval();
 
