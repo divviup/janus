@@ -51,7 +51,10 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
     let conn = match error {
         Error::InvalidConfiguration(_) => conn.with_status(Status::InternalServerError),
         Error::MessageDecode(_) => {
-            conn.with_problem_document(&ProblemDocument::new_dap(DapProblemType::InvalidMessage))
+            conn.with_problem_document(
+                &ProblemDocument::new_dap(DapProblemType::InvalidMessage)
+                    .with_detail("Could not decode a message"),
+            )
         }
         Error::MessageEncode(_) => conn.with_status(Status::InternalServerError),
         Error::ReportRejected(rejection) => match rejection.reason() {
@@ -69,8 +72,9 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
                     .with_detail(rejection.reason().detail()),
             ),
         },
-        Error::InvalidMessage(task_id, _) => {
+        Error::InvalidMessage(task_id, detail) => {
             let mut doc = ProblemDocument::new_dap(DapProblemType::InvalidMessage);
+            doc = doc.with_detail(detail);
             if let Some(task_id) = task_id {
                 doc = doc.with_task_id(task_id);
             }
@@ -148,7 +152,9 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
         | Error::TaskParameters(_) => conn.with_status(Status::InternalServerError),
         Error::AggregateShareRequestRejected(_, _) => conn.with_status(Status::BadRequest),
         Error::EmptyAggregation(task_id) => conn.with_problem_document(
-            &ProblemDocument::new_dap(DapProblemType::InvalidMessage).with_task_id(task_id),
+            &ProblemDocument::new_dap(DapProblemType::InvalidMessage)
+                .with_task_id(task_id)
+                .with_detail("An empty aggregation with no report shares was attempted"),
         ),
         Error::ForbiddenMutation { .. } => conn.with_status(Status::Conflict),
         Error::BadRequest(_) => conn.with_status(Status::BadRequest),

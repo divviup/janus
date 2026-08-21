@@ -669,6 +669,7 @@ async fn aggregation_job_init_wrong_query() {
             "status": StatusCode::BAD_REQUEST.as_u16(),
             "type": "urn:ietf:params:ppm:dap:error:invalidMessage",
             "title": "The message type for a response was incorrect or the payload was malformed.",
+            "detail": "Could not decode a message"
         }),
     );
 }
