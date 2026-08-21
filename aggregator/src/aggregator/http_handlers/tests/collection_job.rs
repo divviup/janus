@@ -131,6 +131,7 @@ async fn collection_job_put_request_invalid_aggregation_parameter() {
             "status": Status::BadRequest as u16,
             "type": "urn:ietf:params:ppm:dap:error:invalidMessage",
             "title": "The message type for a response was incorrect or the payload was malformed.",
+            "detail": "Could not decode a message",
         })
     );
 }

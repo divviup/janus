@@ -391,58 +391,64 @@ impl<C: Clock> Aggregator<C> {
         task_id_base64: Option<&[u8]>,
     ) -> Result<(Vec<u8>, Option<Signature>), Error> {
         // Retrieve the appropriate HPKE config list.
-        let hpke_config_list =
-            if self.cfg.taskprov_config.enabled || self.cfg.require_global_hpke_keys {
-                // If we're running in taskprov mode or requiring global keys, unconditionally
-                // provide the global keys and ignore the task_id parameter.
-                let configs = self.global_hpke_keypairs.configs();
-                if configs.is_empty() {
-                    return Err(Error::Internal(
-                        "this server is missing its global HPKE config".into(),
-                    ));
-                } else {
-                    HpkeConfigList::new(configs.to_vec())
-                }
+        let hpke_config_list = if self.cfg.taskprov_config.enabled
+            || self.cfg.require_global_hpke_keys
+        {
+            // If we're running in taskprov mode or requiring global keys, unconditionally
+            // provide the global keys and ignore the task_id parameter.
+            let configs = self.global_hpke_keypairs.configs();
+            if configs.is_empty() {
+                return Err(Error::Internal(
+                    "this server is missing its global HPKE config".into(),
+                ));
             } else {
-                // Otherwise, try to get the task-specific key.
-                match task_id_base64 {
-                    Some(task_id_base64) => {
-                        let task_id_bytes = URL_SAFE_NO_PAD
-                            .decode(task_id_base64)
-                            .map_err(|_| Error::InvalidMessage(None, "task_id"))?;
-                        let task_id = TaskId::get_decoded(&task_id_bytes)
-                            .map_err(|_| Error::InvalidMessage(None, "task_id"))?;
-                        let task_aggregator = self
-                            .task_aggregators
-                            .get(&task_id)
-                            .await?
-                            .ok_or(Error::UnrecognizedTask(task_id))?;
+                HpkeConfigList::new(configs.to_vec())
+            }
+        } else {
+            // Otherwise, try to get the task-specific key.
+            match task_id_base64 {
+                Some(task_id_base64) => {
+                    let task_id_bytes = URL_SAFE_NO_PAD.decode(task_id_base64).map_err(|_| {
+                        Error::InvalidMessage(None, "task_id parameter is not valid base64url")
+                    })?;
+                    let task_id = TaskId::get_decoded(&task_id_bytes).map_err(|_| {
+                        Error::InvalidMessage(
+                            None,
+                            "task_id parameter is not of the correct length",
+                        )
+                    })?;
+                    let task_aggregator = self
+                        .task_aggregators
+                        .get(&task_id)
+                        .await?
+                        .ok_or(Error::UnrecognizedTask(task_id))?;
 
-                        match task_aggregator.handle_hpke_config() {
-                            Some(hpke_config_list) => hpke_config_list,
-                            // Assuming something hasn't gone horribly wrong with the database, this
-                            // should only happen in the case where the system has been moved from taskprov
-                            // mode to non-taskprov mode. Thus there's still taskprov tasks in the database.
-                            // This isn't a supported use case, so the operator needs to delete these tasks
-                            // or move the system back into taskprov mode.
-                            None => {
-                                return Err(Error::Internal("task has no HPKE configs".to_string()))
-                            }
-                        }
-                    }
-                    // No task ID present, try to fall back to a global config.
-                    None => {
-                        let configs = self.global_hpke_keypairs.configs();
-                        if configs.is_empty() {
-                            // This server isn't configured to provide global HPKE keys, the client
-                            // should have given us a task ID.
-                            return Err(Error::MissingTaskId);
-                        } else {
-                            HpkeConfigList::new(configs.to_vec())
+                    match task_aggregator.handle_hpke_config() {
+                        Some(hpke_config_list) => hpke_config_list,
+                        // Assuming something hasn't gone horribly wrong with the database, this
+                        // should only happen in the case where the system has been moved from
+                        // taskprov mode to non-taskprov mode. Thus there's still taskprov tasks
+                        // in the database. This isn't a supported use case, so the operator
+                        // needs to delete these tasks or move the system back into taskprov
+                        // mode.
+                        None => {
+                            return Err(Error::Internal("task has no HPKE configs".to_string()))
                         }
                     }
                 }
-            };
+                // No task ID present, try to fall back to a global config.
+                None => {
+                    let configs = self.global_hpke_keypairs.configs();
+                    if configs.is_empty() {
+                        // This server isn't configured to provide global HPKE keys, the client
+                        // should have given us a task ID.
+                        return Err(Error::MissingTaskId);
+                    } else {
+                        HpkeConfigList::new(configs.to_vec())
+                    }
+                }
+            }
+        };
 
         // Encode & (if configured to do so) sign the HPKE config list.
         let encoded_hpke_config_list = hpke_config_list

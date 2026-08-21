@@ -701,6 +701,7 @@ async fn taskprov_opt_out_mismatched_task_id() {
             "status": Status::BadRequest as u16,
             "type": "urn:ietf:params:ppm:dap:error:invalidMessage",
             "title": "The message type for a response was incorrect or the payload was malformed.",
+            "detail": "derived taskprov task ID does not match task config",
             "taskid": format!("{}", test.task_id),
         })
     );

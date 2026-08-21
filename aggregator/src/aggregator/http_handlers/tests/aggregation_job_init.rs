@@ -971,6 +971,7 @@ async fn aggregate_init_duplicated_report_id() {
             "status": want_status,
             "type": "urn:ietf:params:ppm:dap:error:invalidMessage",
             "title": "The message type for a response was incorrect or the payload was malformed.",
+            "detail": "aggregate request contains duplicate report IDs",
             "taskid": format!("{}", task.id()),
         })
     );
