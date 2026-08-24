@@ -1407,7 +1407,7 @@ async fn upload_client_http11_bulk() {
 
     // Check that metrics still work with Transfer-Encoding: chunked.
     let scrape = metrics.collect().await;
-    let request_size_samples = &scrape["http.server.request.body_size"]
+    let request_size_samples = &scrape["http.server.request.body.size"]
         .data
         .as_any()
         .downcast_ref::<Histogram<u64>>()
@@ -1415,7 +1415,7 @@ async fn upload_client_http11_bulk() {
         .data_points;
     assert_eq!(request_size_samples.len(), 1);
     assert_eq!(request_size_samples[0].sum, total_length as u64);
-    let response_size_data = &scrape["http.server.response.body_size"]
+    let response_size_data = &scrape["http.server.response.body.size"]
         .data
         .as_any()
         .downcast_ref::<Histogram<u64>>()

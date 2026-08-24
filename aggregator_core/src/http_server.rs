@@ -58,13 +58,13 @@ impl HttpMetrics {
                 .with_boundaries(TIME_HISTOGRAM_BOUNDARIES.to_vec())
                 .build(),
             request_body_size: meter
-                .u64_histogram("http.server.request.body_size")
+                .u64_histogram("http.server.request.body.size")
                 .with_description("Size of HTTP server request bodies.")
                 .with_unit("By")
                 .with_boundaries(BYTES_HISTOGRAM_BOUNDARIES.to_vec())
                 .build(),
             response_body_size: meter
-                .u64_histogram("http.server.response.body_size")
+                .u64_histogram("http.server.response.body.size")
                 .with_description("Size of HTTP server response bodies.")
                 .with_unit("By")
                 .with_boundaries(BYTES_HISTOGRAM_BOUNDARIES.to_vec())
