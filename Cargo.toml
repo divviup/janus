@@ -29,6 +29,7 @@ async-stream = "0.3"
 async-trait = "0.1"
 aws-lc-rs = "1.17.0"
 axum = "0.8"
+axum-core = "0.5"
 axum-extra = "0.10"
 backon = { version = "1.6.0", features = ["tokio-sleep"] }
 base64 = "0.23.0"
@@ -51,6 +52,7 @@ hex-literal = "1.1.0"
 hpke-dispatch = "0.8.0"
 http = "1.4"
 http-api-problem = "0.60.0"
+http-body = "1.0"
 itertools = "0.15"
 janus_aggregator = { version = "0.9.0-prerelease-1", path = "aggregator" }
 janus_aggregator_api = { version = "0.9.0-prerelease-1", path = "aggregator_api" }
