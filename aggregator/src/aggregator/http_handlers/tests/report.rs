@@ -28,6 +28,7 @@ use serde_json::json;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
+    sync::oneshot,
     time::{sleep, timeout},
 };
 use tower::ServiceExt;
@@ -1313,11 +1314,12 @@ async fn upload_client_http11_bulk() {
     let ephemeral_datastore = ephemeral_datastore().await;
     let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
     let hpke_keypair = datastore.put_hpke_key().await.unwrap();
+    let metrics = InMemoryMetricInfrastructure::new();
     let router = AggregatorHandlerBuilder::new(
         datastore.clone(),
         clock.clone(),
         TestRuntime::default(),
-        &noop_meter(),
+        &metrics.meter,
         default_aggregator_config(),
     )
     .await
@@ -1338,8 +1340,12 @@ async fn upload_client_http11_bulk() {
 
     let listener = TcpListener::bind((Ipv6Addr::LOCALHOST, 0)).await.unwrap();
     let local_addr = listener.local_addr().unwrap();
+    let (stop_send, stop_recv) = oneshot::channel();
     let handle = tokio::spawn(async move {
-        axum::serve(listener, router).await.unwrap();
+        axum::serve(listener, router)
+            .with_graceful_shutdown(async { stop_recv.await.unwrap() })
+            .await
+            .unwrap();
     });
 
     let mut client_socket = TcpStream::connect(local_addr).await.unwrap();
@@ -1355,6 +1361,7 @@ async fn upload_client_http11_bulk() {
 
     let report_count = 20;
 
+    let mut total_length = 0;
     for i in 0..report_count {
         info!(i, report_count, "Starting loop");
         let report = create_report(
@@ -1363,6 +1370,7 @@ async fn upload_client_http11_bulk() {
             clock.now().to_time(task.time_precision()),
         );
         let encoded = report.get_encoded().unwrap();
+        total_length += encoded.len();
         let chunk_length_line = format!("{:x}\r\n", encoded.len());
         client_socket
             .write_all(chunk_length_line.as_bytes())
@@ -1394,8 +1402,29 @@ async fn upload_client_http11_bulk() {
         "Expected the right number of valid reports in the datastore"
     );
 
-    handle.abort();
+    stop_send.send(()).unwrap();
     let _ = handle.await;
+
+    // Check that metrics still work with Transfer-Encoding: chunked.
+    let scrape = metrics.collect().await;
+    let request_size_samples = &scrape["http.server.request.body_size"]
+        .data
+        .as_any()
+        .downcast_ref::<Histogram<u64>>()
+        .unwrap()
+        .data_points;
+    assert_eq!(request_size_samples.len(), 1);
+    assert_eq!(request_size_samples[0].sum, total_length as u64);
+    let response_size_data = &scrape["http.server.response.body_size"]
+        .data
+        .as_any()
+        .downcast_ref::<Histogram<u64>>()
+        .unwrap()
+        .data_points;
+    assert_eq!(response_size_data.len(), 1);
+    assert_eq!(response_size_data[0].sum, 0);
+
+    metrics.shutdown().await;
 }
 
 /// These are all tests of the decode_reports_stream method in http_handlers.rs
