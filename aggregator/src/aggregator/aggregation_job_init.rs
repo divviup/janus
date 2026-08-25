@@ -1486,6 +1486,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn aggregation_job_init_unexpected_batch_id_extension() {
+        let test_case = setup_aggregate_init_test().await;
+
+        // A time-interval task has no use for a `leader_selected_batch_id` extension and rejects
+        // it as an `invalidMessage`.
+        let request = AggregationJobInitializeReq::new(
+            0,
+            test_case.aggregation_param.get_encoded().unwrap(),
+            Vec::from([AggregationJobExtension::leader_selected_batch_id(&random())]),
+            test_case.aggregation_job_init_req.verify_inits().to_vec(),
+        );
+
+        let mut response =
+            put_aggregation_job(&test_case.task, &random(), &request, &test_case.router).await;
+        assert_eq!(
+            take_problem_details(&mut response).await,
+            json!({
+                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "type": "urn:ietf:params:ppm:dap:error:invalidMessage",
+                "title": "The message type for a response was incorrect or the payload was malformed.",
+                "taskid": format!("{}", test_case.task.id()),
+                "detail": "unexpected leader_selected_batch_id extension for time-interval batch mode",
+            }),
+        );
+    }
+
+    #[tokio::test]
     async fn aggregation_job_init_out_of_order_extensions() {
         let test_case = setup_aggregate_init_test().await;
 

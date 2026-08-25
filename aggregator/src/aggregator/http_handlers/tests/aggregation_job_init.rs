@@ -1129,7 +1129,7 @@ async fn aggregate_init_leader_selected_missing_batch_id() {
             "type": "urn:ietf:params:ppm:dap:error:invalidMessage",
             "title": "The message type for a response was incorrect or the payload was malformed.",
             "taskid": format!("{}", task.id()),
-            "detail": "aggregation job is missing a required batch identifier extension",
+            "detail": "missing leader_selected_batch_id extension",
         }),
     );
 }
@@ -1202,7 +1202,7 @@ async fn aggregate_init_leader_selected_malformed_batch_id() {
             "type": "urn:ietf:params:ppm:dap:error:invalidMessage",
             "title": "The message type for a response was incorrect or the payload was malformed.",
             "taskid": format!("{}", task.id()),
-            "detail": "aggregation job is missing a required batch identifier extension",
+            "detail": "malformed leader_selected_batch_id extension",
         }),
     );
 }

@@ -2318,15 +2318,11 @@ impl VdafOps {
             }
         }
 
-        // Recover the partial batch identifier from the extensions. In leader-selected batch mode
-        // this requires the `leader_selected_batch_id` extension; its absence is `invalidMessage`.
+        // Recover the partial batch identifier from the extensions. Leader-selected batch mode
+        // requires the `leader_selected_batch_id` extension; time-interval mode forbids it.
         let partial_batch_identifier =
-            B::partial_batch_identifier_from_extensions(req.extensions()).ok_or_else(|| {
-                Error::InvalidMessage(
-                    Some(*task.id()),
-                    "aggregation job is missing a required batch identifier extension",
-                )
-            })?;
+            B::partial_batch_identifier_from_extensions(req.extensions())
+                .map_err(|detail| Error::InvalidMessage(Some(*task.id()), detail))?;
 
         // Build initial aggregation job & report aggregations.
         let client_timestamp_interval = req

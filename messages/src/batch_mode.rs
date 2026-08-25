@@ -66,12 +66,12 @@ pub trait BatchMode: Clone + Debug + PartialEq + Eq + Send + Sync + 'static {
         partial_batch_identifier: &Self::PartialBatchIdentifier,
     ) -> Vec<AggregationJobExtension>;
 
-    /// Recovers the partial batch identifier from an aggregation job's extensions. Returns `None`
-    /// if a required extension is absent or malformed; the helper reports this as the DAP
-    /// `invalidMessage` error.
+    /// Recovers the partial batch identifier from an aggregation job's extensions. Returns `Err`
+    /// with a reason if a required extension is absent or malformed, or an extension inapplicable
+    /// to this batch mode is present; the helper reports this as the DAP `invalidMessage` error.
     fn partial_batch_identifier_from_extensions(
         extensions: &[AggregationJobExtension],
-    ) -> Option<Self::PartialBatchIdentifier>;
+    ) -> Result<Self::PartialBatchIdentifier, &'static str>;
 }
 
 /// Represents the `time-interval` DAP batch mode.
@@ -100,8 +100,17 @@ impl BatchMode for TimeInterval {
         Vec::new()
     }
 
-    fn partial_batch_identifier_from_extensions(_: &[AggregationJobExtension]) -> Option<()> {
-        Some(())
+    fn partial_batch_identifier_from_extensions(
+        extensions: &[AggregationJobExtension],
+    ) -> Result<(), &'static str> {
+        if extensions.iter().any(|extension| {
+            extension.extension_type() == AggregationJobExtensionType::LeaderSelectedBatchId
+        }) {
+            return Err(
+                "unexpected leader_selected_batch_id extension for time-interval batch mode",
+            );
+        }
+        Ok(())
     }
 }
 
@@ -135,13 +144,15 @@ impl BatchMode for LeaderSelected {
 
     fn partial_batch_identifier_from_extensions(
         extensions: &[AggregationJobExtension],
-    ) -> Option<BatchId> {
-        extensions
+    ) -> Result<BatchId, &'static str> {
+        let extension = extensions
             .iter()
             .find(|extension| {
                 extension.extension_type() == AggregationJobExtensionType::LeaderSelectedBatchId
             })
-            .and_then(|extension| BatchId::get_decoded(extension.extension_data()).ok())
+            .ok_or("missing leader_selected_batch_id extension")?;
+        BatchId::get_decoded(extension.extension_data())
+            .map_err(|_| "malformed leader_selected_batch_id extension")
     }
 }
 
