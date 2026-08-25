@@ -1,7 +1,15 @@
-use std::{sync::Arc, time::Instant};
+use std::{
+    pin::Pin,
+    slice,
+    sync::Arc,
+    task::{Context, Poll},
+    time::Instant,
+};
 
 use axum::{body::Body, extract::MatchedPath, middleware::Next, response::Response};
+use bytes::Bytes;
 use http::Request;
+use http_body::Frame;
 use opentelemetry::{
     KeyValue,
     metrics::{Counter, Histogram, Meter},
@@ -29,8 +37,8 @@ pub struct ErrorCode(pub &'static str);
 pub struct HttpMetrics {
     response_counter: Counter<u64>,
     request_duration: Histogram<f64>,
-    request_body_size: Histogram<f64>,
-    response_body_size: Histogram<f64>,
+    request_body_size: Histogram<u64>,
+    response_body_size: Histogram<u64>,
 }
 
 impl HttpMetrics {
@@ -50,13 +58,13 @@ impl HttpMetrics {
                 .with_boundaries(TIME_HISTOGRAM_BOUNDARIES.to_vec())
                 .build(),
             request_body_size: meter
-                .f64_histogram("http.server.request.body_size")
+                .u64_histogram("http.server.request.body.size")
                 .with_description("Size of HTTP server request bodies.")
                 .with_unit("By")
                 .with_boundaries(BYTES_HISTOGRAM_BOUNDARIES.to_vec())
                 .build(),
             response_body_size: meter
-                .f64_histogram("http.server.response.body_size")
+                .u64_histogram("http.server.response.body.size")
                 .with_description("Size of HTTP server response bodies.")
                 .with_unit("By")
                 .with_boundaries(BYTES_HISTOGRAM_BOUNDARIES.to_vec())
@@ -82,8 +90,6 @@ fn normalize_axum_route(request: &Request<Body>) -> String {
 
 /// Axum middleware that records HTTP server metrics (response counter, request duration,
 /// body sizes).
-// TODO: Replace with `opentelemetry-instrumentation-tower` once OpenTelemetry is upgraded
-// to 0.31 or later.
 pub async fn http_metrics_middleware(
     axum::Extension(metrics): axum::Extension<Arc<HttpMetrics>>,
     request: Request<Body>,
@@ -91,16 +97,32 @@ pub async fn http_metrics_middleware(
 ) -> Response {
     let method = request.method().to_string();
     let route = normalize_axum_route(&request);
-    let request_body_size = request
-        .headers()
-        .get(http::header::CONTENT_LENGTH)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.parse::<f64>().ok())
-        .unwrap_or(0.0);
+    let route_kv = KeyValue::new("http.route", route.clone());
+
+    let (request_parts, request_body) = request.into_parts();
+    let request = Request::from_parts(
+        request_parts,
+        Body::new(MeteredBody::new(
+            request_body,
+            metrics.request_body_size.clone(),
+            route_kv.clone(),
+        )),
+    );
 
     let start = Instant::now();
     let response = next.run(request).await;
     let duration = start.elapsed().as_secs_f64();
+
+    let (response_parts, response_body) = response.into_parts();
+    let response = Response::from_parts(
+        response_parts,
+        Body::new(MeteredBody::new(
+            response_body,
+            metrics.response_body_size.clone(),
+            route_kv,
+        )),
+    );
+
     let status_code = response.status().as_u16().to_string();
 
     let error_code = response
@@ -115,13 +137,6 @@ pub async fn http_metrics_middleware(
             }
         });
 
-    let response_body_size = response
-        .headers()
-        .get(http::header::CONTENT_LENGTH)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.parse::<f64>().ok())
-        .unwrap_or(0.0);
-
     metrics.response_counter.add(
         1,
         &[
@@ -132,7 +147,7 @@ pub async fn http_metrics_middleware(
     );
 
     let mut duration_attrs = vec![
-        KeyValue::new("http.route", route.clone()),
+        KeyValue::new("http.route", route),
         KeyValue::new("http.request.method", method),
         KeyValue::new("http.response.status_code", status_code),
     ];
@@ -141,16 +156,90 @@ pub async fn http_metrics_middleware(
     }
     metrics.request_duration.record(duration, &duration_attrs);
 
-    metrics.request_body_size.record(
-        request_body_size,
-        &[KeyValue::new("http.route", route.clone())],
-    );
-
-    metrics
-        .response_body_size
-        .record(response_body_size, &[KeyValue::new("http.route", route)]);
-
     response
+}
+
+/// Wrapper around [axum_core::body::Body] that keeps track of body sizes.
+struct MeteredBody {
+    /// The HTTP body we are wrapping.
+    inner: Body,
+    /// The number of bytes processed so far.
+    total: usize,
+    /// Whether we have recorded an observation of the body size to a metric.
+    flushed: bool,
+    /// The histogram metric to which we record an observation.
+    histogram: Histogram<u64>,
+    /// The `http.route` label and its value.
+    route: KeyValue,
+}
+
+impl MeteredBody {
+    /// Wrap an HTTP body and record its size when it is finished.
+    fn new(body: Body, histogram: Histogram<u64>, route: KeyValue) -> Self {
+        Self {
+            inner: body,
+            total: 0,
+            flushed: false,
+            histogram,
+            route,
+        }
+    }
+
+    /// Record an observation of the body size to a histogram metric.
+    ///
+    /// This method keeps track of whether an observation has been recorded, so it is safe to call
+    /// multiple times.
+    fn record_metric(&mut self) {
+        // Ensure we record an observation only once.
+        if self.flushed {
+            return;
+        }
+        self.flushed = true;
+
+        self.histogram.record(
+            u64::try_from(self.total).unwrap_or(u64::MAX),
+            slice::from_ref(&self.route),
+        );
+    }
+}
+
+impl http_body::Body for MeteredBody {
+    type Data = Bytes;
+    type Error = axum_core::Error;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        let outcome = Pin::new(&mut self.inner).poll_frame(cx);
+        match &outcome {
+            Poll::Ready(Some(Ok(frame))) => {
+                if let Some(bytes) = frame.data_ref() {
+                    self.total += bytes.len();
+                }
+            }
+            Poll::Ready(None) => {
+                // At the end of the stream.
+                self.record_metric();
+            }
+            _ => {}
+        }
+        outcome
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.inner.is_end_stream()
+    }
+
+    fn size_hint(&self) -> http_body::SizeHint {
+        self.inner.size_hint()
+    }
+}
+
+impl Drop for MeteredBody {
+    fn drop(&mut self) {
+        self.record_metric();
+    }
 }
 
 /// Returns a [`TraceLayer`] that instruments axum request handlers with tracing spans.

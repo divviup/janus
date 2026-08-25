@@ -196,14 +196,14 @@ async fn http_metrics() {
         "200"
     );
 
-    // http.server.request.body_size from OpenTelemetry Semantic Conventions.
+    // http.server.request.body.size from OpenTelemetry Semantic Conventions.
     assert_eq!(
         metric_families["http_server_request_body_size_bytes"].get_field_type(),
         MetricType::HISTOGRAM
     );
     assert!(metric_families["http_server_request_body_size_bytes"].has_help());
 
-    // http.server.response.body_size from OpenTelemetry Semantic Conventions.
+    // http.server.response.body.size from OpenTelemetry Semantic Conventions.
     assert_eq!(
         metric_families["http_server_response_body_size_bytes"].get_field_type(),
         MetricType::HISTOGRAM
