@@ -3,8 +3,8 @@ use http::StatusCode;
 use janus_aggregator_core::task::{AggregationMode, BatchMode, test_util::TaskBuilder};
 use janus_core::{report_id::ReportIdChecksumExt, vdaf::VdafInstance};
 use janus_messages::{
-    AggregateShareId, AggregateShareReq, AggregationJobInitializeReq, AggregationJobResp,
-    BatchSelector, CollectionJobReq, PartialBatchSelector, Query, ReportError, ReportIdChecksum,
+    AggregateShareId, AggregateShareReq, AggregationJobExtension, AggregationJobInitializeReq,
+    AggregationJobResp, BatchSelector, CollectionJobReq, Query, ReportError, ReportIdChecksum,
     VerifyStepResult, batch_mode::LeaderSelected,
 };
 use prio::{
@@ -68,13 +68,17 @@ async fn helper_aggregation_report_share_replay() {
     let agg_init_req_1 = AggregationJobInitializeReq::new(
         0,
         agg_param.get_encoded().unwrap(),
-        PartialBatchSelector::new_leader_selected(batch_id_1),
+        Vec::from([AggregationJobExtension::leader_selected_batch_id(
+            &batch_id_1,
+        )]),
         Vec::from([replayed_report.clone(), other_report_1.clone()]),
     );
     let agg_init_req_2 = AggregationJobInitializeReq::new(
         0,
         agg_param.get_encoded().unwrap(),
-        PartialBatchSelector::new_leader_selected(batch_id_2),
+        Vec::from([AggregationJobExtension::leader_selected_batch_id(
+            &batch_id_2,
+        )]),
         Vec::from([replayed_report.clone(), other_report_2.clone()]),
     );
 

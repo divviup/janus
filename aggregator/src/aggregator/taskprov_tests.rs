@@ -36,12 +36,12 @@ use janus_core::{
 };
 use janus_messages::{
     AggregateShare as AggregateShareMessage, AggregateShareAad, AggregateShareId,
-    AggregateShareReq, AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq,
-    AggregationJobResp, AggregationJobStep, BatchConfig, BatchSelector, CollectionJobReq, Duration,
-    Extension, ExtensionType, Interval, MediaType, PartialBatchSelector, Query, ReportError,
-    ReportIdChecksum, ReportShare, Role, TaskConfiguration, TaskConfigurationBuilder,
-    TaskExtension, TaskExtensionType, TaskId, Time, TimePrecision, VdafConfig, VerifyContinue,
-    VerifyInit, VerifyResp, VerifyStepResult,
+    AggregateShareReq, AggregationJobContinueReq, AggregationJobExtension, AggregationJobId,
+    AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep, BatchConfig,
+    BatchSelector, CollectionJobReq, Duration, Extension, ExtensionType, Interval, MediaType,
+    Query, ReportError, ReportIdChecksum, ReportShare, Role, TaskConfiguration,
+    TaskConfigurationBuilder, TaskExtension, TaskExtensionType, TaskId, Time, TimePrecision,
+    VdafConfig, VerifyContinue, VerifyInit, VerifyResp, VerifyStepResult,
     batch_mode::LeaderSelected,
     codec::{Decode, Encode},
 };
@@ -286,7 +286,9 @@ async fn taskprov_aggregate_init() {
     let request_1 = AggregationJobInitializeReq::new(
         0,
         aggregation_param_1.get_encoded().unwrap(),
-        PartialBatchSelector::new_leader_selected(batch_id_1),
+        Vec::from([AggregationJobExtension::leader_selected_batch_id(
+            &batch_id_1,
+        )]),
         Vec::from([VerifyInit::new(
             report_share_1.clone(),
             transcript_1.leader_verify_transitions[0]
@@ -302,7 +304,9 @@ async fn taskprov_aggregate_init() {
     let request_2 = AggregationJobInitializeReq::new(
         0,
         aggregation_param_2.get_encoded().unwrap(),
-        PartialBatchSelector::new_leader_selected(batch_id_2),
+        Vec::from([AggregationJobExtension::leader_selected_batch_id(
+            &batch_id_2,
+        )]),
         Vec::from([VerifyInit::new(
             report_share_2.clone(),
             transcript_2.leader_verify_transitions[0]
@@ -330,10 +334,7 @@ async fn taskprov_aggregate_init() {
                             .path(),
                     )
                     .header(AUTHORIZATION, "Bearer invalid_token")
-                    .header(
-                        CONTENT_TYPE,
-                        AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
-                    )
+                    .header(CONTENT_TYPE, AggregationJobInitializeReq::MEDIA_TYPE)
                     .header(
                         TASKPROV_HEADER,
                         URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
@@ -358,10 +359,7 @@ async fn taskprov_aggregate_init() {
                             .path(),
                     )
                     .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
-                    .header(
-                        CONTENT_TYPE,
-                        AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
-                    )
+                    .header(CONTENT_TYPE, AggregationJobInitializeReq::MEDIA_TYPE)
                     .header(
                         TASKPROV_HEADER,
                         URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
@@ -460,7 +458,7 @@ async fn taskprov_aggregate_init_without_task_interval() {
     let request = AggregationJobInitializeReq::new(
         0,
         aggregation_param.get_encoded().unwrap(),
-        PartialBatchSelector::new_leader_selected(batch_id),
+        Vec::from([AggregationJobExtension::leader_selected_batch_id(&batch_id)]),
         Vec::from([VerifyInit::new(
             report_share.clone(),
             transcript.leader_verify_transitions[0]
@@ -484,10 +482,7 @@ async fn taskprov_aggregate_init_without_task_interval() {
                         .path(),
                 )
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
-                .header(
-                    CONTENT_TYPE,
-                    AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
-                )
+                .header(CONTENT_TYPE, AggregationJobInitializeReq::MEDIA_TYPE)
                 .header(
                     TASKPROV_HEADER,
                     URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
@@ -523,7 +518,7 @@ async fn taskprov_aggregate_init_missing_extension() {
     let request = AggregationJobInitializeReq::new(
         0,
         aggregation_param.get_encoded().unwrap(),
-        PartialBatchSelector::new_leader_selected(batch_id),
+        Vec::from([AggregationJobExtension::leader_selected_batch_id(&batch_id)]),
         Vec::from([VerifyInit::new(
             report_share.clone(),
             transcript.leader_verify_transitions[0]
@@ -547,10 +542,7 @@ async fn taskprov_aggregate_init_missing_extension() {
                         .path(),
                 )
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
-                .header(
-                    CONTENT_TYPE,
-                    AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
-                )
+                .header(CONTENT_TYPE, AggregationJobInitializeReq::MEDIA_TYPE)
                 .header(
                     TASKPROV_HEADER,
                     URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
@@ -623,7 +615,7 @@ async fn taskprov_aggregate_init_malformed_extension() {
     let request = AggregationJobInitializeReq::new(
         0,
         aggregation_param.get_encoded().unwrap(),
-        PartialBatchSelector::new_leader_selected(batch_id),
+        Vec::from([AggregationJobExtension::leader_selected_batch_id(&batch_id)]),
         Vec::from([VerifyInit::new(
             report_share.clone(),
             transcript.leader_verify_transitions[0]
@@ -647,10 +639,7 @@ async fn taskprov_aggregate_init_malformed_extension() {
                         .path(),
                 )
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
-                .header(
-                    CONTENT_TYPE,
-                    AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
-                )
+                .header(CONTENT_TYPE, AggregationJobInitializeReq::MEDIA_TYPE)
                 .header(
                     TASKPROV_HEADER,
                     URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
@@ -724,7 +713,7 @@ async fn taskprov_opt_out_task_ended_regression() {
     let request = AggregationJobInitializeReq::new(
         0,
         aggregation_param.get_encoded().unwrap(),
-        PartialBatchSelector::new_leader_selected(batch_id),
+        Vec::from([AggregationJobExtension::leader_selected_batch_id(&batch_id)]),
         Vec::from([VerifyInit::new(
             report_share.clone(),
             transcript.leader_verify_transitions[0]
@@ -752,10 +741,7 @@ async fn taskprov_opt_out_task_ended_regression() {
                         .path(),
                 )
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
-                .header(
-                    CONTENT_TYPE,
-                    AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
-                )
+                .header(CONTENT_TYPE, AggregationJobInitializeReq::MEDIA_TYPE)
                 .header(
                     TASKPROV_HEADER,
                     URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
@@ -777,7 +763,7 @@ async fn taskprov_opt_out_mismatched_task_id() {
     let request = AggregationJobInitializeReq::new(
         0,
         ().get_encoded().unwrap(),
-        PartialBatchSelector::new_leader_selected(batch_id),
+        Vec::from([AggregationJobExtension::leader_selected_batch_id(&batch_id)]),
         Vec::from([VerifyInit::new(
             report_share.clone(),
             transcript.leader_verify_transitions[0]
@@ -820,10 +806,7 @@ async fn taskprov_opt_out_mismatched_task_id() {
                         .path(),
                 )
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
-                .header(
-                    CONTENT_TYPE,
-                    AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
-                )
+                .header(CONTENT_TYPE, AggregationJobInitializeReq::MEDIA_TYPE)
                 .header(
                     TASKPROV_HEADER,
                     // Use a different task than the URL's.
@@ -856,7 +839,7 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
     let request = AggregationJobInitializeReq::new(
         0,
         ().get_encoded().unwrap(),
-        PartialBatchSelector::new_leader_selected(batch_id),
+        Vec::from([AggregationJobExtension::leader_selected_batch_id(&batch_id)]),
         Vec::from([VerifyInit::new(
             report_share.clone(),
             transcript.leader_verify_transitions[0]
@@ -898,10 +881,7 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
                     "/tasks/{another_task_id}/aggregation_jobs/{aggregation_job_id}"
                 ))
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
-                .header(
-                    CONTENT_TYPE,
-                    AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
-                )
+                .header(CONTENT_TYPE, AggregationJobInitializeReq::MEDIA_TYPE)
                 .header(
                     TASKPROV_HEADER,
                     URL_SAFE_NO_PAD.encode(another_task_config_encoded),
@@ -933,7 +913,7 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
     let request = AggregationJobInitializeReq::new(
         0,
         ().get_encoded().unwrap(),
-        PartialBatchSelector::new_leader_selected(batch_id),
+        Vec::from([AggregationJobExtension::leader_selected_batch_id(&batch_id)]),
         Vec::from([VerifyInit::new(
             report_share.clone(),
             transcript.leader_verify_transitions[0]
@@ -975,10 +955,7 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
                     "/tasks/{another_task_id}/aggregation_jobs/{aggregation_job_id}"
                 ))
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
-                .header(
-                    CONTENT_TYPE,
-                    AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
-                )
+                .header(CONTENT_TYPE, AggregationJobInitializeReq::MEDIA_TYPE)
                 .header(
                     TASKPROV_HEADER,
                     URL_SAFE_NO_PAD.encode(another_task_config_encoded),
@@ -1010,7 +987,7 @@ async fn taskprov_opt_out_unsupported_extension() {
     let request = AggregationJobInitializeReq::new(
         0,
         ().get_encoded().unwrap(),
-        PartialBatchSelector::new_leader_selected(batch_id),
+        Vec::from([AggregationJobExtension::leader_selected_batch_id(&batch_id)]),
         Vec::from([VerifyInit::new(
             report_share.clone(),
             transcript.leader_verify_transitions[0]
@@ -1055,10 +1032,7 @@ async fn taskprov_opt_out_unsupported_extension() {
                     "/tasks/{another_task_id}/aggregation_jobs/{aggregation_job_id}"
                 ))
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
-                .header(
-                    CONTENT_TYPE,
-                    AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
-                )
+                .header(CONTENT_TYPE, AggregationJobInitializeReq::MEDIA_TYPE)
                 .header(
                     TASKPROV_HEADER,
                     URL_SAFE_NO_PAD.encode(another_task_config_encoded),
@@ -1398,7 +1372,7 @@ async fn end_to_end() {
     let aggregation_job_init_request = AggregationJobInitializeReq::new(
         0,
         aggregation_param.get_encoded().unwrap(),
-        PartialBatchSelector::new_leader_selected(batch_id),
+        Vec::from([AggregationJobExtension::leader_selected_batch_id(&batch_id)]),
         Vec::from([VerifyInit::new(
             report_share.clone(),
             transcript.leader_verify_transitions[0]
@@ -1421,10 +1395,7 @@ async fn end_to_end() {
                         .path(),
                 )
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
-                .header(
-                    CONTENT_TYPE,
-                    AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
-                )
+                .header(CONTENT_TYPE, AggregationJobInitializeReq::MEDIA_TYPE)
                 .header(
                     TASKPROV_HEADER,
                     URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
@@ -1598,7 +1569,7 @@ async fn end_to_end_sumvec_hmac() {
     let aggregation_job_init_request = AggregationJobInitializeReq::new(
         0,
         aggregation_param.get_encoded().unwrap(),
-        PartialBatchSelector::new_leader_selected(batch_id),
+        Vec::from([AggregationJobExtension::leader_selected_batch_id(&batch_id)]),
         Vec::from([VerifyInit::new(
             report_share.clone(),
             transcript.leader_verify_transitions[0]
@@ -1621,10 +1592,7 @@ async fn end_to_end_sumvec_hmac() {
                         .path(),
                 )
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
-                .header(
-                    CONTENT_TYPE,
-                    AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
-                )
+                .header(CONTENT_TYPE, AggregationJobInitializeReq::MEDIA_TYPE)
                 .header(
                     TASKPROV_HEADER,
                     URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),

@@ -2,9 +2,9 @@ use prio::topology::ping_pong::PingPongMessage;
 
 use crate::{
     AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
-    BatchId, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, LeaderSelected,
-    PartialBatchSelector, ReportError, ReportId, ReportMetadata, ReportShare, Time, TimePrecision,
-    VerifyContinue, VerifyInit, VerifyResp, VerifyStepResult, roundtrip_encoding,
+    BatchId, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, LeaderSelected, ReportError,
+    ReportId, ReportMetadata, ReportShare, Time, TimePrecision, VerifyContinue, VerifyInit,
+    VerifyResp, VerifyStepResult, batch_mode::BatchMode, roundtrip_encoding,
 };
 
 const TEST_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(1);
@@ -327,11 +327,11 @@ fn roundtrip_report_share_error() {
 fn roundtrip_aggregation_job_initialize_req() {
     // TimeInterval.
     roundtrip_encoding(&[(
-        AggregationJobInitializeReq {
-            verification_key_id: 7,
-            aggregation_parameter: Vec::from("012345"),
-            partial_batch_selector: PartialBatchSelector::new_time_interval(),
-            verify_inits: Vec::from([
+        AggregationJobInitializeReq::new(
+            7,
+            Vec::from("012345"),
+            Vec::new(),
+            Vec::from([
                 VerifyInit {
                     report_share: ReportShare {
                         metadata: ReportMetadata::new(
@@ -369,7 +369,7 @@ fn roundtrip_aggregation_job_initialize_req() {
                     },
                 },
             ]),
-        },
+        ),
         concat!(
             "07", // verification_key_id
             concat!(
@@ -378,10 +378,8 @@ fn roundtrip_aggregation_job_initialize_req() {
                 "303132333435", // opaque data
             ),
             concat!(
-                // partial_batch_selector
-                "01",   // batch_mode
+                // extensions
                 "0000", // length
-                "",     // opaque data
             ),
             concat!(
                 // verify_inits
@@ -483,13 +481,11 @@ fn roundtrip_aggregation_job_initialize_req() {
 
     // LeaderSelected.
     roundtrip_encoding(&[(
-        AggregationJobInitializeReq::<LeaderSelected> {
-            verification_key_id: 255,
-            aggregation_parameter: Vec::from("012345"),
-            partial_batch_selector: PartialBatchSelector::new_leader_selected(BatchId::from(
-                [2u8; 32],
-            )),
-            verify_inits: Vec::from([
+        AggregationJobInitializeReq::new(
+            255,
+            Vec::from("012345"),
+            LeaderSelected::aggregation_job_extensions(&BatchId::from([2u8; 32])),
+            Vec::from([
                 VerifyInit {
                     report_share: ReportShare {
                         metadata: ReportMetadata::new(
@@ -527,7 +523,7 @@ fn roundtrip_aggregation_job_initialize_req() {
                     },
                 },
             ]),
-        },
+        ),
         concat!(
             "ff", // verification_key_id
             concat!(
@@ -536,10 +532,11 @@ fn roundtrip_aggregation_job_initialize_req() {
                 "303132333435", // opaque data
             ),
             concat!(
-                // partial_batch_selector
-                "02",                                                               // batch_mode
-                "0020",                                                             // length
-                "0202020202020202020202020202020202020202020202020202020202020202", // opaque data
+                // extensions
+                "0024",                                                             // length
+                "0001", // extension_type
+                "0020", // extension_data length
+                "0202020202020202020202020202020202020202020202020202020202020202", /* extension_data (BatchID) */
             ),
             concat!(
                 // verify_inits

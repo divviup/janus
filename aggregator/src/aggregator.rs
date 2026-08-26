@@ -52,11 +52,12 @@ use janus_core::{
 };
 use janus_messages::{
     AggregateShare, AggregateShareAad, AggregateShareId, AggregateShareReq,
-    AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq, AggregationJobResp,
-    AggregationJobStep, CollectionJobExtension, CollectionJobId, CollectionJobReq,
-    CollectionJobResp, Duration, ExtensionType, HpkeConfig, HpkeConfigList, InputShareAad,
-    Interval, PlaintextInputShare, Report, ReportError, ReportUploadStatus, Role,
-    TaskConfiguration, TaskExtension, TaskId, UploadErrors, Url as DapUrl, VerifyResp,
+    AggregationJobContinueReq, AggregationJobExtensionType, AggregationJobId,
+    AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep, CollectionJobExtension,
+    CollectionJobId, CollectionJobReq, CollectionJobResp, Duration, ExtensionType, HpkeConfig,
+    HpkeConfigList, InputShareAad, Interval, PlaintextInputShare, Report, ReportError,
+    ReportUploadStatus, Role, TaskConfiguration, TaskExtension, TaskId, UploadErrors,
+    Url as DapUrl, VerifyResp,
     batch_mode::{LeaderSelected, TimeInterval},
     extensions_are_strictly_increasing,
 };
@@ -2241,10 +2242,10 @@ impl VdafOps {
     {
         // Unwrap safety: SHA-256 computed by ring should always be 32 bytes.
         let request_hash = digest(&SHA256, req_bytes).as_ref().try_into().unwrap();
-        let req = AggregationJobInitializeReq::<B>::get_decoded(req_bytes)
-            .map_err(Error::MessageDecode)?;
+        let req =
+            AggregationJobInitializeReq::get_decoded(req_bytes).map_err(Error::MessageDecode)?;
 
-        Self::handle_aggregate_init_inner(
+        Self::handle_aggregate_init_inner::<SEED_SIZE, B, A, C>(
             datastore,
             hpke_keypairs,
             vdaf,
@@ -2263,10 +2264,7 @@ impl VdafOps {
 
     #[tracing::instrument(
         skip_all,
-        fields(
-            verification_key_id = req.verification_key_id(),
-            partial_batch_identifier = ?req.batch_selector().batch_identifier()
-        ),
+        fields(verification_key_id = req.verification_key_id()),
         err(level = Level::DEBUG)
     )]
     async fn handle_aggregate_init_inner<const SEED_SIZE: usize, B, A, C>(
@@ -2280,7 +2278,7 @@ impl VdafOps {
         aggregation_job_id: &AggregationJobId,
         require_taskbind_extension: bool,
         log_forbidden_mutations: Option<PathBuf>,
-        req: AggregationJobInitializeReq<B>,
+        req: AggregationJobInitializeReq,
         request_hash: [u8; 32],
     ) -> Result<Option<AggregationJobResp>, Error>
     where
@@ -2300,6 +2298,32 @@ impl VdafOps {
             }
         }
 
+        // Extensions are mandatory to support and strictly ordered; the helper aborts with
+        // `invalidMessage` (out of order) or `unsupportedExtension` (unrecognized) per §4.5.2.
+        if !req
+            .extensions()
+            .is_sorted_by(|a, b| a.extension_type() < b.extension_type())
+        {
+            return Err(Error::InvalidMessage(
+                Some(*task.id()),
+                "aggregation job extensions are not in strictly increasing order",
+            ));
+        }
+        for extension in req.extensions() {
+            if !extension.extension_type().is_supported() {
+                return Err(Error::UnsupportedExtension(
+                    Some(*task.id()),
+                    "unrecognized aggregation job extension type",
+                ));
+            }
+        }
+
+        // Recover the partial batch identifier from the extensions. Leader-selected batch mode
+        // requires the `leader_selected_batch_id` extension; time-interval mode forbids it.
+        let partial_batch_identifier =
+            B::partial_batch_identifier_from_extensions(req.extensions())
+                .map_err(|detail| Error::InvalidMessage(Some(*task.id()), detail))?;
+
         // Build initial aggregation job & report aggregations.
         let client_timestamp_interval = req
             .verify_inits()
@@ -2313,7 +2337,7 @@ impl VdafOps {
             *aggregation_job_id,
             A::AggregationParam::get_decoded(req.aggregation_parameter())
                 .map_err(Error::MessageDecode)?,
-            req.batch_selector().batch_identifier().clone(),
+            partial_batch_identifier,
             client_timestamp_interval,
             AggregationJobState::AwaitingRequest,
             AggregationJobStep::from(0),
@@ -4276,6 +4300,17 @@ trait ExtensionTypeExt {
 impl ExtensionTypeExt for ExtensionType {
     fn is_supported(&self) -> bool {
         matches!(self, ExtensionType::Taskbind)
+    }
+}
+
+trait AggregationJobExtensionTypeExt {
+    /// Determines whether an aggregation job extension type is supported by this implementation.
+    fn is_supported(&self) -> bool;
+}
+
+impl AggregationJobExtensionTypeExt for AggregationJobExtensionType {
+    fn is_supported(&self) -> bool {
+        matches!(self, AggregationJobExtensionType::LeaderSelectedBatchId)
     }
 }
 

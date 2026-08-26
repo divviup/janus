@@ -4,8 +4,8 @@ use super::{task_configuration_hex, test_task_configuration};
 use crate::{
     AggregateShare, AggregateShareAad, AggregateShareReq, BatchId, BatchSelector,
     CollectionJobExtension, CollectionJobExtensionType, CollectionJobReq, CollectionJobResp,
-    Duration, HpkeCiphertext, HpkeConfigId, Interval, LeaderSelected, PartialBatchSelector, Query,
-    ReportIdChecksum, TaskId, Time, TimeInterval, TimePrecision, roundtrip_encoding,
+    Duration, HpkeCiphertext, HpkeConfigId, Interval, LeaderSelected, Query, ReportIdChecksum,
+    TaskId, Time, TimeInterval, TimePrecision, roundtrip_encoding,
 };
 
 const TEST_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(1);
@@ -189,39 +189,6 @@ fn collection_job_req_decode_is_lenient_about_extension_order() {
     // The Helper re-encodes the decoded request to rebuild the aggregate-share AAD, so even an
     // unsorted extensions list must survive decode->encode byte-identically.
     assert_eq!(req.get_encoded().unwrap(), encoded);
-}
-
-#[test]
-fn roundtrip_partial_batch_selector() {
-    // TimeInterval.
-    roundtrip_encoding(&[(
-        PartialBatchSelector::new_time_interval(),
-        concat!(
-            "01",   // batch_mode
-            "0000", // length
-            "",     // opaque data
-        ),
-    )]);
-
-    // LeaderSelected.
-    roundtrip_encoding(&[
-        (
-            PartialBatchSelector::new_leader_selected(BatchId::from([3u8; 32])),
-            concat!(
-                "02",                                                               // batch_mode
-                "0020",                                                             // length
-                "0303030303030303030303030303030303030303030303030303030303030303", // opaque data
-            ),
-        ),
-        (
-            PartialBatchSelector::new_leader_selected(BatchId::from([4u8; 32])),
-            concat!(
-                "02",                                                               // batch_mode
-                "0020",                                                             // length
-                "0404040404040404040404040404040404040404040404040404040404040404", // opaque data
-            ),
-        ),
-    ])
 }
 
 #[test]
