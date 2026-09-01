@@ -548,8 +548,8 @@ where
             .map(|q| q.map(Arc::new))
     }
 
-    /// Build just the Axum router (without the Trillium wrapper and proxy). This is useful for
-    /// tests that need to serve the axum router directly.
+    /// Build just the Axum router. This is useful for tests that need to serve the axum router
+    /// directly.
     pub fn build_axum_router(&self, helper_queue: Option<Arc<LIFORequestQueue>>) -> axum::Router {
         let http_metrics = HttpMetrics::new(self.meter, "janus_aggregator_responses");
 
