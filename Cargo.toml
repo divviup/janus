@@ -46,7 +46,7 @@ fixed = "1.30"
 futures = "0.3.32"
 hex = "0.4.3"
 hex-literal = "1.1.0"
-hpke-dispatch = "0.8.0"
+hpke-dispatch = { version = "0.9.0", git = "https://github.com/divviup/hpke-dispatch.git", rev = "5ac0857dc4fcebb1c51d242c09797ccd7de6d2d4" }
 http = "1.4"
 http-api-problem = "0.60.0"
 itertools = "0.15"
