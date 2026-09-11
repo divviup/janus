@@ -243,6 +243,7 @@ impl HpkeKeypair {
         } = match kem_id {
             HpkeKemId::X25519HkdfSha256 => Kem::X25519HkdfSha256.gen_keypair(),
             HpkeKemId::P256HkdfSha256 => Kem::DhP256HkdfSha256.gen_keypair(),
+            HpkeKemId::XWing => Kem::XWing.gen_keypair(),
             _ => return Err(Error::UnsupportedKem),
         };
         Ok(Self::new(
@@ -316,10 +317,18 @@ impl Arbitrary for HpkeCiphersuite {
         // keep the cardinality low, and since Janus doesn't support all KEMs.
         Self {
             kem_id: *g
-                .choose(&[HpkeKemId::P256HkdfSha256, HpkeKemId::X25519HkdfSha256])
+                .choose(&[
+                    HpkeKemId::P256HkdfSha256,
+                    HpkeKemId::X25519HkdfSha256,
+                    HpkeKemId::XWing,
+                ])
                 .unwrap(),
             kdf_id: *g
-                .choose(&[HpkeKdfId::HkdfSha256, HpkeKdfId::HkdfSha512])
+                .choose(&[
+                    HpkeKdfId::HkdfSha256,
+                    HpkeKdfId::HkdfSha512,
+                    HpkeKdfId::Shake256,
+                ])
                 .unwrap(),
             aead_id: *g
                 .choose(&[HpkeAeadId::Aes128Gcm, HpkeAeadId::ChaCha20Poly1305])
@@ -522,11 +531,16 @@ mod tests {
 
     #[test]
     fn round_trip_all_algorithms() {
-        for kem_id in [HpkeKemId::P256HkdfSha256, HpkeKemId::X25519HkdfSha256] {
+        for kem_id in [
+            HpkeKemId::P256HkdfSha256,
+            HpkeKemId::X25519HkdfSha256,
+            HpkeKemId::XWing,
+        ] {
             for kdf_id in [
                 HpkeKdfId::HkdfSha256,
                 HpkeKdfId::HkdfSha384,
                 HpkeKdfId::HkdfSha512,
+                HpkeKdfId::Shake256,
             ] {
                 for aead_id in [HpkeAeadId::Aes128Gcm, HpkeAeadId::Aes256Gcm] {
                     round_trip_check(kem_id, kdf_id, aead_id)

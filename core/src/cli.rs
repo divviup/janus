@@ -5,7 +5,6 @@ use clap::ValueEnum;
 use janus_messages::{HpkeAeadId, HpkeKdfId, HpkeKemId};
 
 #[derive(Debug, Copy, Clone, ValueEnum)]
-#[value()]
 pub enum KemAlgorithm {
     /// DHKEM(P-256, HKDF-SHA256)
     #[value(name = "p-256")]
@@ -14,6 +13,10 @@ pub enum KemAlgorithm {
     /// DHKEM(X25519, HKDF-SHA256)
     #[value(name = "x25519")]
     X25519HkdfSha256,
+
+    /// X-Wing, also known as MKLEM768-X25519
+    #[value(name = "xwing", alias("mlkem768-x25519"))]
+    XWing,
 }
 
 impl From<KemAlgorithm> for HpkeKemId {
@@ -21,6 +24,7 @@ impl From<KemAlgorithm> for HpkeKemId {
         match value {
             KemAlgorithm::P256HkdfSha256 => HpkeKemId::P256HkdfSha256,
             KemAlgorithm::X25519HkdfSha256 => HpkeKemId::X25519HkdfSha256,
+            KemAlgorithm::XWing => HpkeKemId::XWing,
         }
     }
 }
@@ -34,7 +38,6 @@ impl Display for KemAlgorithm {
 }
 
 #[derive(Debug, Copy, Clone, ValueEnum)]
-#[value()]
 pub enum KdfAlgorithm {
     /// HKDF-SHA256
     #[value(name = "hkdf-sha256")]
@@ -47,6 +50,22 @@ pub enum KdfAlgorithm {
     /// HKDF-SHA512
     #[value(name = "hkdf-sha512")]
     HkdfSha512,
+
+    /// SHAKE128
+    #[value(name = "shake128")]
+    Shake128,
+
+    /// SHAKE256
+    #[value(name = "shake256")]
+    Shake256,
+
+    /// TurboSHAKE128
+    #[value(name = "turboshake128")]
+    TurboShake128,
+
+    /// TurboSHAKE256
+    #[value(name = "turboshake256")]
+    TurboShake256,
 }
 
 impl From<KdfAlgorithm> for HpkeKdfId {
@@ -55,6 +74,10 @@ impl From<KdfAlgorithm> for HpkeKdfId {
             KdfAlgorithm::HkdfSha256 => HpkeKdfId::HkdfSha256,
             KdfAlgorithm::HkdfSha384 => HpkeKdfId::HkdfSha384,
             KdfAlgorithm::HkdfSha512 => HpkeKdfId::HkdfSha512,
+            KdfAlgorithm::Shake128 => HpkeKdfId::Shake128,
+            KdfAlgorithm::Shake256 => HpkeKdfId::Shake256,
+            KdfAlgorithm::TurboShake128 => HpkeKdfId::TurboShake128,
+            KdfAlgorithm::TurboShake256 => HpkeKdfId::TurboShake256,
         }
     }
 }
