@@ -19,6 +19,7 @@ fn roundtrip_hpke_kem_id() {
     roundtrip_encoding(&[
         (HpkeKemId::P256HkdfSha256, "0010"),
         (HpkeKemId::X25519HkdfSha256, "0020"),
+        (HpkeKemId::XWing, "647a"),
     ])
 }
 
@@ -28,6 +29,10 @@ fn roundtrip_hpke_kdf_id() {
         (HpkeKdfId::HkdfSha256, "0001"),
         (HpkeKdfId::HkdfSha384, "0002"),
         (HpkeKdfId::HkdfSha512, "0003"),
+        (HpkeKdfId::Shake128, "0010"),
+        (HpkeKdfId::Shake256, "0011"),
+        (HpkeKdfId::TurboShake128, "0012"),
+        (HpkeKdfId::TurboShake256, "0013"),
     ])
 }
 

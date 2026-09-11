@@ -774,6 +774,16 @@ pub enum HpkeKemId {
     X25519HkdfSha256 = 0x0020,
     /// X448 keys and HKDF-SHA512.
     X448HkdfSha512 = 0x0021,
+    /// MLKEM-768.
+    MlKem768 = 0x0041,
+    /// MLKEM-1024.
+    MlKem1024 = 0x0042,
+    /// The X-Wing hybrid KEM, also known as MLKEM768-X25519.
+    XWing = 0x647a,
+    /// The MLKEM768-P256 hybrid KEM.
+    MlKem768P256 = 0x0050,
+    /// The MLKEM1024-P384 hybrid KEM.
+    MlKem1024P384 = 0x0051,
     /// Unrecognized algorithm identifiers.
     #[num_enum(catch_all)]
     Other(u16),
@@ -809,6 +819,14 @@ pub enum HpkeKdfId {
     HkdfSha384 = 0x0002,
     /// HMAC Key Derivation Function SHA512.
     HkdfSha512 = 0x0003,
+    /// SHAKE128.
+    Shake128 = 0x0010,
+    /// SHAKE256.
+    Shake256 = 0x0011,
+    /// TurboSHAKE128.
+    TurboShake128 = 0x0012,
+    /// TurboSHAKE256.
+    TurboShake256 = 0x0013,
     /// Unrecognized algorithm identifiers.
     #[num_enum(catch_all)]
     Other(u16),
