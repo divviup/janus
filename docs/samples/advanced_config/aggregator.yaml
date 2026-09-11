@@ -197,8 +197,11 @@ key_rotator:
     # The set of keys to manage, identified by ciphersuite. At least one is
     # required. Each entry represents a key with a particular ciphersuite.
     ciphersuites:
-      # Defaults to a key with these algorithms.
+      # Defaults to keys with these algorithms.
       - kem_id: X25519HkdfSha256
+        kdf_id: HkdfSha256
+        aead_id: Aes128Gcm
+      - kem_id: XWing
         kdf_id: HkdfSha256
         aead_id: Aes128Gcm
 
