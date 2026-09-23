@@ -382,9 +382,8 @@ pub async fn submit_measurements_and_verify_aggregate(
             let num_true_measurements = total_measurements / 2;
             let num_false_measurements = total_measurements - num_true_measurements;
             assert!(num_true_measurements > 0 && num_false_measurements > 0);
-            let measurements = iter::repeat(true)
-                .take(num_true_measurements)
-                .interleave(iter::repeat(false).take(num_false_measurements))
+            let measurements = iter::repeat_n(true, num_true_measurements)
+                .interleave(iter::repeat_n(false, num_false_measurements))
                 .collect::<Vec<_>>();
             let test_case = AggregationTestCase {
                 measurements,

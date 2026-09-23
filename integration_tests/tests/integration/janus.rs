@@ -488,7 +488,7 @@ async fn janus_in_process_histogram_dp_noise() {
         .min_batch_size
         .try_into()
         .unwrap();
-    let measurements = iter::repeat(0).take(total_measurements).collect::<Vec<_>>();
+    let measurements = iter::repeat_n(0, total_measurements).collect::<Vec<_>>();
     let client_implementation = ClientBackend::InProcess
         .build(
             TEST_NAME,
@@ -551,9 +551,8 @@ async fn janus_in_process_sumvec_dp_noise() {
         .min_batch_size
         .try_into()
         .unwrap();
-    let measurements = iter::repeat(vec![0; VECTOR_LENGTH])
-        .take(total_measurements)
-        .collect::<Vec<_>>();
+    let measurements =
+        iter::repeat_n(vec![0; VECTOR_LENGTH], total_measurements).collect::<Vec<_>>();
     let client_implementation = ClientBackend::InProcess
         .build(
             TEST_NAME,

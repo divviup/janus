@@ -32,7 +32,6 @@ url = { workspace = true }
 
 [dev-dependencies]
 assert_matches.workspace = true
-cfg-if = { workspace = true }
 janus_core = { workspace = true, features = ["test-util"] }
 tempfile = { workspace = true }
 trycmd = { workspace = true }
