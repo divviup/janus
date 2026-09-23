@@ -1,4 +1,3 @@
-use cfg_if::cfg_if;
 use trycmd::TestCases;
 
 #[test]
@@ -8,10 +7,11 @@ fn cli_tests() {
     test_cases.case("tests/cmd/dap_decode.trycmd");
     test_cases.case("tests/cmd/hpke_keygen.trycmd");
 
-    cfg_if! {
-        if #[cfg(feature = "fpvec_bounded_l2")] {
+    cfg_select! {
+        feature = "fpvec_bounded_l2" => {
             test_cases.case("tests/cmd/collect_fpvec_bounded_l2.trycmd");
-        } else {
+        }
+        _ => {
             test_cases.case("tests/cmd/collect.trycmd");
         }
     }
