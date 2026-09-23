@@ -694,7 +694,7 @@ impl<V: vdaf::Collector> Collector<V> {
                 if let Some(deadline) = deadline {
                     let recommendation_is_past_deadline = Instant::now()
                         .checked_add(retry_after_duration)
-                        .map_or(true, |recommendation| recommendation > deadline);
+                        .is_none_or(|recommendation| recommendation > deadline);
 
                     if recommendation_is_past_deadline {
                         return Err(Error::CollectPollTimeout);

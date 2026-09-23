@@ -1232,27 +1232,29 @@ mod tests {
         let first_report_time = clock.now();
         let second_report_time = clock.now().add(task.time_precision()).unwrap();
         let reports: Arc<Vec<_>> = Arc::new(
-            iter::repeat(first_report_time)
-                .take(2 * MAX_AGGREGATION_JOB_SIZE + MIN_AGGREGATION_JOB_SIZE + 1)
-                .chain(iter::repeat(second_report_time).take(MIN_AGGREGATION_JOB_SIZE))
-                .map(|report_time| {
-                    let report_metadata = ReportMetadata::new(random(), report_time);
-                    let transcript = run_vdaf(
-                        vdaf.as_ref(),
-                        task.vdaf_verify_key().unwrap().as_bytes(),
-                        &(),
-                        report_metadata.id(),
-                        &false,
-                    );
-                    LeaderStoredReport::generate(
-                        *task.id(),
-                        report_metadata,
-                        helper_hpke_keypair.config(),
-                        Vec::new(),
-                        &transcript,
-                    )
-                })
-                .collect(),
+            iter::repeat_n(
+                first_report_time,
+                2 * MAX_AGGREGATION_JOB_SIZE + MIN_AGGREGATION_JOB_SIZE + 1,
+            )
+            .chain(iter::repeat_n(second_report_time, MIN_AGGREGATION_JOB_SIZE))
+            .map(|report_time| {
+                let report_metadata = ReportMetadata::new(random(), report_time);
+                let transcript = run_vdaf(
+                    vdaf.as_ref(),
+                    task.vdaf_verify_key().unwrap().as_bytes(),
+                    &(),
+                    report_metadata.id(),
+                    &false,
+                );
+                LeaderStoredReport::generate(
+                    *task.id(),
+                    report_metadata,
+                    helper_hpke_keypair.config(),
+                    Vec::new(),
+                    &transcript,
+                )
+            })
+            .collect(),
         );
         let all_report_ids: HashSet<ReportId> = reports
             .iter()
