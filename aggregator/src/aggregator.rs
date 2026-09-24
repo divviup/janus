@@ -41,7 +41,7 @@ use janus_aggregator_core::{
 use janus_core::{
     Runtime,
     auth_tokens::AuthenticationToken,
-    hpke::{self, HpkeApplicationInfo, Label},
+    hpke::{self, HpkeApplicationInfo, HpkeCiphersuite, Label},
     http::ReqwestAuthenticationToken,
     retries::{HttpResponse, retry_http_request_notify},
     time::{Clock, DateTimeExt, IntervalExt, TimeExt},
@@ -231,6 +231,12 @@ pub struct Config {
     /// becomes aware of key state changes.
     pub hpke_configs_refresh_interval: StdDuration,
 
+    /// Determines the order in which HPKE configurations with different ciphersuites will be
+    /// advertised to clients. Configurations with ciphersuites that are listed first in this list
+    /// will be listed first in the HpkeConfigList, indicating they are of the highest preference.
+    /// Configurations with ciphersuites that are not listed here will be listed last.
+    pub hpke_config_ciphersuite_priority: Vec<HpkeCiphersuite>,
+
     /// Defines how long tasks should be cached for. This affects how often an aggregator
     /// becomes aware of task parameter changes.
     pub task_cache_ttl: StdDuration,
@@ -261,6 +267,8 @@ impl Default for Config {
             task_counter_shard_count: 32,
             max_future_concurrency: 10000,
             hpke_configs_refresh_interval: HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
+            hpke_config_ciphersuite_priority:
+                HpkeKeypairCache::HPKE_ALGORITHM_PRIORITY_NO_PREFERENCE,
             hpke_config_signing_key: None,
             taskprov_config: TaskprovConfig::default(),
             task_cache_ttl: TASK_AGGREGATOR_CACHE_DEFAULT_TTL,
@@ -337,6 +345,7 @@ impl<C: Clock> Aggregator<C> {
             HpkeKeypairCache::new(
                 Arc::clone(&datastore),
                 cfg.hpke_configs_refresh_interval,
+                cfg.hpke_config_ciphersuite_priority.clone(),
                 keypair_use_counter.clone(),
             )
             .await?,

@@ -5300,6 +5300,35 @@ INSERT INTO hpke_keys
         )
     }
 
+    /// Overwrite the time at which an HPKE keypair's state was last modified.
+    #[cfg(feature = "test-util")]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
+    pub async fn set_hpke_keypair_last_state_change_at(
+        &self,
+        config_id: &HpkeConfigId,
+        last_state_change_at: DateTime<Utc>,
+    ) -> Result<(), Error> {
+        let stmt = self
+            .prepare_cached(
+                "-- set_hpke_keypair_last_state_change_at()
+UPDATE hpke_keys
+SET last_state_change_at = $1
+WHERE config_id = $2",
+            )
+            .await
+            .unwrap();
+        check_single_row_mutation(
+            self.execute(
+                &stmt,
+                &[
+                    /* last_state_change_at */ &last_state_change_at,
+                    /* config_id */ &(u8::from(*config_id) as i16),
+                ],
+            )
+            .await?,
+        )
+    }
+
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_taskprov_peer_aggregators(&self) -> Result<Vec<PeerAggregator>, Error> {
         let stmt = self

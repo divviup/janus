@@ -1933,6 +1933,10 @@ where
                                 HpkeKeypairCache::new(
                                     Arc::clone(&datastore),
                                     this.hpke_configs_refresh_interval,
+                                    // We can omit configuration for ciphersuite priority here,
+                                    // because the aggregation job driver only needs to perform
+                                    // decryption, and is not involved in advertising public keys.
+                                    HpkeKeypairCache::HPKE_ALGORITHM_PRIORITY_NO_PREFERENCE,
                                     this.keypair_use_counter.clone(),
                                 )
                                 .await?,
@@ -2014,6 +2018,7 @@ where
             HpkeKeypairCache::new(
                 Arc::clone(datastore),
                 self.hpke_configs_refresh_interval,
+                HpkeKeypairCache::HPKE_ALGORITHM_PRIORITY_NO_PREFERENCE,
                 self.keypair_use_counter.clone(),
             )
             .await
