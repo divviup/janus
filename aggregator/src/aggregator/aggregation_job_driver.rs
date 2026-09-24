@@ -2002,6 +2002,24 @@ where
             _ => false,
         }
     }
+
+    /// Convenience method to construct an [`HpkeKeypairCache`] in tests, to be passed to other
+    /// methods.
+    #[cfg(test)]
+    async fn make_keypair_cache(
+        &self,
+        datastore: &Arc<Datastore<impl Clock>>,
+    ) -> Arc<HpkeKeypairCache> {
+        Arc::new(
+            HpkeKeypairCache::new(
+                Arc::clone(datastore),
+                self.hpke_configs_refresh_interval,
+                self.keypair_use_counter.clone(),
+            )
+            .await
+            .unwrap(),
+        )
+    }
 }
 
 /// SteppedAggregation represents a report aggregation along with the associated verification-state.

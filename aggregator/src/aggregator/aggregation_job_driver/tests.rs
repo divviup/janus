@@ -750,15 +750,7 @@ async fn leader_sync_time_interval_aggregation_job_init_single_step() {
     aggregation_job_driver
         .step_aggregation_job(
             ds.clone(),
-            Arc::new(
-                HpkeKeypairCache::new(
-                    Arc::clone(&ds),
-                    HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
-                    aggregation_job_driver.keypair_use_counter.clone(),
-                )
-                .await
-                .unwrap(),
-            ),
+            aggregation_job_driver.make_keypair_cache(&ds).await,
             Arc::new(lease),
         )
         .await
@@ -1133,15 +1125,7 @@ async fn leader_sync_time_interval_aggregation_job_init_two_steps() {
     aggregation_job_driver
         .step_aggregation_job(
             ds.clone(),
-            Arc::new(
-                HpkeKeypairCache::new(
-                    Arc::clone(&ds),
-                    HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
-                    aggregation_job_driver.keypair_use_counter.clone(),
-                )
-                .await
-                .unwrap(),
-            ),
+            aggregation_job_driver.make_keypair_cache(&ds).await,
             Arc::new(lease),
         )
         .await
@@ -1532,15 +1516,7 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
     aggregation_job_driver
         .step_aggregation_job(
             ds.clone(),
-            Arc::new(
-                HpkeKeypairCache::new(
-                    Arc::clone(&ds),
-                    HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
-                    aggregation_job_driver.keypair_use_counter.clone(),
-                )
-                .await
-                .unwrap(),
-            ),
+            aggregation_job_driver.make_keypair_cache(&ds).await,
             Arc::new(lease),
         )
         .await
@@ -1855,15 +1831,7 @@ async fn leader_sync_leader_selected_aggregation_job_init_single_step() {
     let error = aggregation_job_driver
         .step_aggregation_job(
             ds.clone(),
-            Arc::new(
-                HpkeKeypairCache::new(
-                    Arc::clone(&ds),
-                    HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
-                    aggregation_job_driver.keypair_use_counter.clone(),
-                )
-                .await
-                .unwrap(),
-            ),
+            aggregation_job_driver.make_keypair_cache(&ds).await,
             Arc::new(lease.clone()),
         )
         .await
@@ -1878,15 +1846,7 @@ async fn leader_sync_leader_selected_aggregation_job_init_single_step() {
     aggregation_job_driver
         .step_aggregation_job(
             ds.clone(),
-            Arc::new(
-                HpkeKeypairCache::new(
-                    Arc::clone(&ds),
-                    HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
-                    aggregation_job_driver.keypair_use_counter.clone(),
-                )
-                .await
-                .unwrap(),
-            ),
+            aggregation_job_driver.make_keypair_cache(&ds).await,
             Arc::new(lease),
         )
         .await
@@ -2167,15 +2127,7 @@ async fn leader_sync_leader_selected_aggregation_job_init_two_steps() {
     aggregation_job_driver
         .step_aggregation_job(
             ds.clone(),
-            Arc::new(
-                HpkeKeypairCache::new(
-                    Arc::clone(&ds),
-                    HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
-                    aggregation_job_driver.keypair_use_counter.clone(),
-                )
-                .await
-                .unwrap(),
-            ),
+            aggregation_job_driver.make_keypair_cache(&ds).await,
             Arc::new(lease),
         )
         .await
@@ -2478,15 +2430,7 @@ async fn leader_sync_time_interval_aggregation_job_continue() {
     let error = aggregation_job_driver
         .step_aggregation_job(
             ds.clone(),
-            Arc::new(
-                HpkeKeypairCache::new(
-                    Arc::clone(&ds),
-                    HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
-                    aggregation_job_driver.keypair_use_counter.clone(),
-                )
-                .await
-                .unwrap(),
-            ),
+            aggregation_job_driver.make_keypair_cache(&ds).await,
             Arc::new(lease.clone()),
         )
         .await
@@ -2504,15 +2448,7 @@ async fn leader_sync_time_interval_aggregation_job_continue() {
     aggregation_job_driver
         .step_aggregation_job(
             ds.clone(),
-            Arc::new(
-                HpkeKeypairCache::new(
-                    Arc::clone(&ds),
-                    HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
-                    aggregation_job_driver.keypair_use_counter.clone(),
-                )
-                .await
-                .unwrap(),
-            ),
+            aggregation_job_driver.make_keypair_cache(&ds).await,
             Arc::new(lease),
         )
         .await
@@ -2818,15 +2754,7 @@ async fn leader_sync_leader_selected_aggregation_job_continue() {
     aggregation_job_driver
         .step_aggregation_job(
             ds.clone(),
-            Arc::new(
-                HpkeKeypairCache::new(
-                    Arc::clone(&ds),
-                    HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
-                    aggregation_job_driver.keypair_use_counter.clone(),
-                )
-                .await
-                .unwrap(),
-            ),
+            aggregation_job_driver.make_keypair_cache(&ds).await,
             Arc::new(lease),
         )
         .await
@@ -3080,15 +3008,7 @@ async fn leader_async_aggregation_job_init_to_pending() {
     aggregation_job_driver
         .step_aggregation_job(
             ds.clone(),
-            Arc::new(
-                HpkeKeypairCache::new(
-                    Arc::clone(&ds),
-                    HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
-                    aggregation_job_driver.keypair_use_counter.clone(),
-                )
-                .await
-                .unwrap(),
-            ),
+            aggregation_job_driver.make_keypair_cache(&ds).await,
             Arc::new(lease),
         )
         .await
@@ -3338,15 +3258,7 @@ async fn leader_async_aggregation_job_init_to_pending_two_step() {
     aggregation_job_driver
         .step_aggregation_job(
             ds.clone(),
-            Arc::new(
-                HpkeKeypairCache::new(
-                    Arc::clone(&ds),
-                    HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
-                    aggregation_job_driver.keypair_use_counter.clone(),
-                )
-                .await
-                .unwrap(),
-            ),
+            aggregation_job_driver.make_keypair_cache(&ds).await,
             Arc::new(lease),
         )
         .await
@@ -3598,15 +3510,7 @@ async fn leader_async_aggregation_job_continue_to_pending() {
     aggregation_job_driver
         .step_aggregation_job(
             ds.clone(),
-            Arc::new(
-                HpkeKeypairCache::new(
-                    Arc::clone(&ds),
-                    HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
-                    aggregation_job_driver.keypair_use_counter.clone(),
-                )
-                .await
-                .unwrap(),
-            ),
+            aggregation_job_driver.make_keypair_cache(&ds).await,
             Arc::new(lease),
         )
         .await
@@ -3846,15 +3750,7 @@ async fn leader_async_aggregation_job_init_poll_to_pending() {
     aggregation_job_driver
         .step_aggregation_job(
             ds.clone(),
-            Arc::new(
-                HpkeKeypairCache::new(
-                    Arc::clone(&ds),
-                    HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
-                    aggregation_job_driver.keypair_use_counter.clone(),
-                )
-                .await
-                .unwrap(),
-            ),
+            aggregation_job_driver.make_keypair_cache(&ds).await,
             Arc::new(lease),
         )
         .await
@@ -4091,15 +3987,7 @@ async fn leader_async_aggregation_job_init_poll_to_pending_two_step() {
     aggregation_job_driver
         .step_aggregation_job(
             ds.clone(),
-            Arc::new(
-                HpkeKeypairCache::new(
-                    Arc::clone(&ds),
-                    HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
-                    aggregation_job_driver.keypair_use_counter.clone(),
-                )
-                .await
-                .unwrap(),
-            ),
+            aggregation_job_driver.make_keypair_cache(&ds).await,
             Arc::new(lease),
         )
         .await
@@ -4350,15 +4238,7 @@ async fn leader_async_aggregation_job_init_poll_to_finished() {
     aggregation_job_driver
         .step_aggregation_job(
             ds.clone(),
-            Arc::new(
-                HpkeKeypairCache::new(
-                    Arc::clone(&ds),
-                    HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
-                    aggregation_job_driver.keypair_use_counter.clone(),
-                )
-                .await
-                .unwrap(),
-            ),
+            aggregation_job_driver.make_keypair_cache(&ds).await,
             Arc::new(lease),
         )
         .await
@@ -4612,15 +4492,7 @@ async fn leader_async_aggregation_job_init_poll_to_continue() {
     aggregation_job_driver
         .step_aggregation_job(
             ds.clone(),
-            Arc::new(
-                HpkeKeypairCache::new(
-                    Arc::clone(&ds),
-                    HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
-                    aggregation_job_driver.keypair_use_counter.clone(),
-                )
-                .await
-                .unwrap(),
-            ),
+            aggregation_job_driver.make_keypair_cache(&ds).await,
             Arc::new(lease),
         )
         .await
@@ -4867,15 +4739,7 @@ async fn leader_async_aggregation_job_continue_poll_to_pending() {
     aggregation_job_driver
         .step_aggregation_job(
             ds.clone(),
-            Arc::new(
-                HpkeKeypairCache::new(
-                    Arc::clone(&ds),
-                    HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
-                    aggregation_job_driver.keypair_use_counter.clone(),
-                )
-                .await
-                .unwrap(),
-            ),
+            aggregation_job_driver.make_keypair_cache(&ds).await,
             Arc::new(lease),
         )
         .await
@@ -5129,15 +4993,7 @@ async fn leader_async_aggregation_job_continue_poll_to_finished() {
     aggregation_job_driver
         .step_aggregation_job(
             ds.clone(),
-            Arc::new(
-                HpkeKeypairCache::new(
-                    Arc::clone(&ds),
-                    HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
-                    aggregation_job_driver.keypair_use_counter.clone(),
-                )
-                .await
-                .unwrap(),
-            ),
+            aggregation_job_driver.make_keypair_cache(&ds).await,
             Arc::new(lease),
         )
         .await
@@ -5367,15 +5223,7 @@ async fn helper_async_init_processing_to_finished() {
     aggregation_job_driver
         .step_aggregation_job(
             ds.clone(),
-            Arc::new(
-                HpkeKeypairCache::new(
-                    Arc::clone(&ds),
-                    HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
-                    aggregation_job_driver.keypair_use_counter.clone(),
-                )
-                .await
-                .unwrap(),
-            ),
+            aggregation_job_driver.make_keypair_cache(&ds).await,
             Arc::new(lease),
         )
         .await
@@ -5611,15 +5459,7 @@ async fn helper_async_init_processing_to_continue() {
     aggregation_job_driver
         .step_aggregation_job(
             ds.clone(),
-            Arc::new(
-                HpkeKeypairCache::new(
-                    Arc::clone(&ds),
-                    HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
-                    aggregation_job_driver.keypair_use_counter.clone(),
-                )
-                .await
-                .unwrap(),
-            ),
+            aggregation_job_driver.make_keypair_cache(&ds).await,
             Arc::new(lease),
         )
         .await
@@ -5853,15 +5693,7 @@ async fn helper_async_continue_processing_to_finished() {
     aggregation_job_driver
         .step_aggregation_job(
             ds.clone(),
-            Arc::new(
-                HpkeKeypairCache::new(
-                    Arc::clone(&ds),
-                    HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
-                    aggregation_job_driver.keypair_use_counter.clone(),
-                )
-                .await
-                .unwrap(),
-            ),
+            aggregation_job_driver.make_keypair_cache(&ds).await,
             Arc::new(lease),
         )
         .await
