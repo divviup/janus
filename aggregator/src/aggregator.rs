@@ -61,7 +61,7 @@ use janus_aggregator_core::{
 use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
 use janus_core::{
     auth_tokens::AuthenticationToken,
-    hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
+    hpke::{self, HpkeApplicationInfo, HpkeCiphersuite, HpkeKeypair, Label},
     retries::retry_http_request_notify,
     time::{Clock, DurationExt, IntervalExt, TimeExt},
     vdaf::{
@@ -231,6 +231,12 @@ pub struct Config {
     /// becomes aware of key state changes.
     pub global_hpke_configs_refresh_interval: StdDuration,
 
+    /// Determines the order in which HPKE configurations with different ciphersuites will be
+    /// advertised to clients. Configurations with ciphersuites that are listed first in this list
+    /// will be listed first in the HpkeConfigList, indicating they are of the highest preference.
+    /// Configurations with ciphersuites that are not listed here will be listed last.
+    pub hpke_config_ciphersuite_priority: Vec<HpkeCiphersuite>,
+
     /// Defines how long tasks should be cached for. This affects how often an aggregator becomes aware
     /// of task parameter changes.
     pub task_cache_ttl: StdDuration,
@@ -267,6 +273,8 @@ impl Default for Config {
             task_counter_shard_count: 32,
             max_future_concurrency: 10000,
             global_hpke_configs_refresh_interval: GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
+            hpke_config_ciphersuite_priority:
+                GlobalHpkeKeypairCache::HPKE_ALGORITHM_PRIORITY_NO_PREFERENCE,
             hpke_config_signing_key: None,
             taskprov_config: TaskprovConfig::default(),
             task_cache_ttl: TASK_AGGREGATOR_CACHE_DEFAULT_TTL,
@@ -356,6 +364,7 @@ impl<C: Clock> Aggregator<C> {
             datastore.clone(),
             cfg.global_hpke_configs_refresh_interval,
             cfg.require_global_hpke_keys || cfg.taskprov_config.enabled,
+            cfg.hpke_config_ciphersuite_priority.clone(),
             keypair_use_counter.clone(),
         )
         .await?;

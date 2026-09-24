@@ -15,6 +15,7 @@ use janus_aggregator::{
         collection_job_driver::Config as CollectionJobDriverConfig,
         garbage_collector::Config as GarbageCollectorBinaryConfig,
     },
+    cache::GlobalHpkeKeypairCache,
     config::{
         default_max_transaction_retries, BinaryConfig, CommonConfig, DbConfig, JobDriverConfig,
         TaskprovConfig,
@@ -314,6 +315,8 @@ async fn aggregator_shutdown() {
         max_future_concurrency: 10000,
         task_counter_shard_count: 64,
         global_hpke_configs_refresh_interval: None,
+        hpke_config_ciphersuite_priority:
+            GlobalHpkeKeypairCache::HPKE_ALGORITHM_PRIORITY_NO_PREFERENCE,
         task_cache_ttl_s: None,
         task_cache_capacity: None,
         log_forbidden_mutations: None,

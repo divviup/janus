@@ -3,13 +3,13 @@
 use crate::aggregator::{report_writer::ReportWriteBatcher, Error, TaskAggregator};
 use educe::Educe;
 use janus_aggregator_core::{
-    datastore::{
-        models::{GlobalHpkeKeypair, HpkeKeyState},
-        Datastore,
-    },
+    datastore::{models::GlobalHpkeKeypair, Datastore},
     taskprov::PeerAggregator,
 };
-use janus_core::{hpke::HpkeKeypair, time::Clock};
+use janus_core::{
+    hpke::{HpkeCiphersuite, HpkeKeypair},
+    time::Clock,
+};
 use janus_messages::{HpkeConfig, HpkeConfigId, Role, TaskId};
 use moka::{
     future::{Cache, CacheBuilder},
@@ -18,6 +18,7 @@ use moka::{
 };
 use opentelemetry::{metrics::Counter, KeyValue};
 use std::{
+    cmp::Reverse,
     collections::HashMap,
     fmt::Debug,
     sync::{Arc, Mutex as StdMutex},
@@ -44,6 +45,10 @@ pub struct GlobalHpkeKeypairCache {
     /// Handle for task responsible for periodically refreshing the cache.
     refresh_handle: JoinHandle<()>,
 
+    /// Order in which to advertise HPKE configurations with different ciphersuites.
+    #[cfg(feature = "test-util")]
+    algorithm_priority: Vec<HpkeCiphersuite>,
+
     #[cfg(feature = "test-util")]
     #[educe(Debug(ignore))]
     keypair_use_counter: Counter<u64>,
@@ -53,6 +58,9 @@ impl GlobalHpkeKeypairCache {
     pub const DEFAULT_REFRESH_INTERVAL: Duration =
         Duration::from_secs(60 * 30 /* 30 minutes */);
 
+    /// Specifies no preference between different HPKE ciphersuites.
+    pub const HPKE_ALGORITHM_PRIORITY_NO_PREFERENCE: Vec<HpkeCiphersuite> = Vec::new();
+
     const WAIT_RETRY_INTERVAL: Duration = Duration::from_secs(1);
     const WAIT_MAX_RETRIES: u32 = 10;
 
@@ -60,6 +68,7 @@ impl GlobalHpkeKeypairCache {
         datastore: Arc<Datastore<C>>,
         refresh_interval: Duration,
         required: bool,
+        algorithm_priority: Vec<HpkeCiphersuite>,
         keypair_use_counter: Counter<u64>,
     ) -> Result<Self, Error> {
         let keypairs = Arc::new(StdMutex::new(HashMap::new()));
@@ -71,6 +80,7 @@ impl GlobalHpkeKeypairCache {
             &configs,
             &keypairs,
             required,
+            &algorithm_priority,
             &keypair_use_counter,
         )
         .await?;
@@ -79,6 +89,7 @@ impl GlobalHpkeKeypairCache {
         let refresh_configs = configs.clone();
         let refresh_keypairs = keypairs.clone();
         let refresh_datastore = datastore.clone();
+        let refresh_algorithm_priority = algorithm_priority.clone();
         let refresh_keypair_use_counter = keypair_use_counter.clone();
         let refresh_handle = spawn(async move {
             loop {
@@ -90,6 +101,7 @@ impl GlobalHpkeKeypairCache {
                     &refresh_configs,
                     &refresh_keypairs,
                     required,
+                    &refresh_algorithm_priority,
                     &refresh_keypair_use_counter,
                 )
                 .await;
@@ -106,6 +118,8 @@ impl GlobalHpkeKeypairCache {
             configs,
             keypairs,
             refresh_handle,
+            #[cfg(feature = "test-util")]
+            algorithm_priority,
             #[cfg(feature = "test-util")]
             keypair_use_counter,
         })
@@ -144,20 +158,33 @@ impl GlobalHpkeKeypairCache {
         configs: &StdMutex<HpkeConfigs>,
         keypairs: &StdMutex<HpkeKeypairs>,
         required: bool,
+        algorithm_priority: &[HpkeCiphersuite],
         keypair_use_counter: &Counter<u64>,
     ) -> Result<(), Error> {
-        let global_keypairs = Self::get_global_hpke_keypairs(datastore, required).await?;
+        let mut global_keypairs = Self::get_global_hpke_keypairs(datastore, required).await?;
 
+        // Sort by algorithm priority order, then by the time when the keypair was made active,
+        // newest first. If a ciphersuite is not in the priority list, it goes after those that are.
+        global_keypairs.sort_by_key(|keypair| {
+            (
+                algorithm_priority
+                    .iter()
+                    .position(|ciphersuite| *ciphersuite == keypair.ciphersuite())
+                    .unwrap_or(usize::MAX),
+                Reverse(*keypair.last_state_change_at()),
+            )
+        });
+
+        // Filter active keypairs and collect their public parts. This is advertised to clients.
         let new_configs = Arc::new(
             global_keypairs
                 .iter()
-                .filter_map(|keypair| match keypair.state() {
-                    HpkeKeyState::Active => Some(keypair.hpke_keypair().config().clone()),
-                    _ => None,
-                })
-                .collect(),
+                .filter(|keypair| keypair.is_active())
+                .map(|keypair| keypair.hpke_keypair().config().clone())
+                .collect::<Vec<HpkeConfig>>(),
         );
 
+        // Build a mapping of keypairs indexed by HpkeConfigId for use by the aggregator.
         let new_keypairs = global_keypairs
             .iter()
             .map(|keypair| {
@@ -194,6 +221,7 @@ impl GlobalHpkeKeypairCache {
             &self.configs,
             &self.keypairs,
             false,
+            &self.algorithm_priority,
             &self.keypair_use_counter,
         )
         .await
@@ -393,6 +421,7 @@ mod tests {
                     datastore,
                     GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
                     true,
+                    GlobalHpkeKeypairCache::HPKE_ALGORITHM_PRIORITY_NO_PREFERENCE,
                     keypair_use_counter,
                 )
                 .await

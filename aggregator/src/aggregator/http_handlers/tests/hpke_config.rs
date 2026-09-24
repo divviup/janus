@@ -12,18 +12,25 @@ use crate::{
     config::TaskprovConfig,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use hpke_dispatch::Kem;
 use janus_aggregator_core::{
-    datastore::{models::HpkeKeyState, test_util::ephemeral_datastore},
+    datastore::{
+        models::{GlobalHpkeKeypair, HpkeKeyState},
+        test_util::ephemeral_datastore,
+    },
     task::{test_util::TaskBuilder, QueryType},
     test_util::noop_meter,
 };
 use janus_core::{
-    hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
+    hpke::{self, HpkeApplicationInfo, HpkeCiphersuite, HpkeKeypair, HpkePrivateKey, Label},
     test_util::{install_test_trace_subscriber, runtime::TestRuntime},
     time::MockClock,
     vdaf::VdafInstance,
 };
-use janus_messages::{HpkeConfigList, Role, TaskId};
+use janus_messages::{
+    HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeConfigList, HpkeKdfId, HpkeKemId, HpkePublicKey,
+    Role, TaskId, Time,
+};
 use prio::codec::Decode as _;
 use rand::random;
 use serde_json::json;
@@ -369,6 +376,205 @@ async fn hpke_config_cors_headers() {
         &test_conn,
         "access-control-allow-origin" => "https://example.com/",
     );
+}
+
+#[tokio::test]
+async fn hpke_config_list_order() {
+    let HttpHandlerTest {
+        clock,
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        ..
+    } = HttpHandlerTest::new().await;
+
+    let hpke_config_ciphersuite_priority = Vec::from([
+        HpkeCiphersuite::new(
+            HpkeKemId::X25519HkdfSha256,
+            HpkeKdfId::HkdfSha256,
+            HpkeAeadId::Aes128Gcm,
+        ),
+        HpkeCiphersuite::new(
+            HpkeKemId::P256HkdfSha256,
+            HpkeKdfId::HkdfSha256,
+            HpkeAeadId::Aes128Gcm,
+        ),
+    ]);
+
+    // Set up old and new keypairs with ciphersuites that are high priority, low priority, and not
+    // in the list.
+    let p521_keypair = Kem::DhP521HkdfSha512.gen_keypair();
+    let hpke_keypair_35 = GlobalHpkeKeypair::new(
+        HpkeKeypair::new(
+            HpkeConfig::new(
+                HpkeConfigId::from(35),
+                HpkeKemId::P521HkdfSha512,
+                HpkeKdfId::HkdfSha512,
+                HpkeAeadId::Aes256Gcm,
+                HpkePublicKey::from(p521_keypair.public_key),
+            ),
+            HpkePrivateKey::new(p521_keypair.private_key),
+        ),
+        HpkeKeyState::Active,
+        Time::from_seconds_since_epoch(1_600_000_100),
+    );
+    let hpke_keypair_86 = GlobalHpkeKeypair::new(
+        HpkeKeypair::generate(
+            HpkeConfigId::from(86),
+            HpkeKemId::X25519HkdfSha256,
+            HpkeKdfId::HkdfSha256,
+            HpkeAeadId::Aes128Gcm,
+        )
+        .unwrap(),
+        HpkeKeyState::Active,
+        Time::from_seconds_since_epoch(1_700_000_200),
+    );
+    let hpke_keypair_95 = GlobalHpkeKeypair::new(
+        HpkeKeypair::generate(
+            HpkeConfigId::from(95),
+            HpkeKemId::P256HkdfSha256,
+            HpkeKdfId::HkdfSha256,
+            HpkeAeadId::Aes128Gcm,
+        )
+        .unwrap(),
+        HpkeKeyState::Active,
+        Time::from_seconds_since_epoch(1_600_000_400),
+    );
+    let p384_keypair = Kem::DhP384HkdfSha384.gen_keypair();
+    let hpke_keypair_140 = GlobalHpkeKeypair::new(
+        HpkeKeypair::new(
+            HpkeConfig::new(
+                HpkeConfigId::from(140),
+                HpkeKemId::P384HkdfSha384,
+                HpkeKdfId::HkdfSha384,
+                HpkeAeadId::Aes256Gcm,
+                HpkePublicKey::from(p384_keypair.public_key),
+            ),
+            HpkePrivateKey::new(p384_keypair.private_key),
+        ),
+        HpkeKeyState::Active,
+        Time::from_seconds_since_epoch(1_700_000_300),
+    );
+    let hpke_keypair_157 = GlobalHpkeKeypair::new(
+        HpkeKeypair::generate(
+            HpkeConfigId::from(157),
+            HpkeKemId::X25519HkdfSha256,
+            HpkeKdfId::HkdfSha256,
+            HpkeAeadId::Aes128Gcm,
+        )
+        .unwrap(),
+        HpkeKeyState::Active,
+        Time::from_seconds_since_epoch(1_600_000_200),
+    );
+    let p384_keypair = Kem::DhP384HkdfSha384.gen_keypair();
+    let hpke_keypair_158 = GlobalHpkeKeypair::new(
+        HpkeKeypair::new(
+            HpkeConfig::new(
+                HpkeConfigId::from(158),
+                HpkeKemId::P384HkdfSha384,
+                HpkeKdfId::HkdfSha384,
+                HpkeAeadId::Aes256Gcm,
+                HpkePublicKey::from(p384_keypair.public_key),
+            ),
+            HpkePrivateKey::new(p384_keypair.private_key),
+        ),
+        HpkeKeyState::Active,
+        Time::from_seconds_since_epoch(1_600_000_300),
+    );
+    let hpke_keypair_232 = GlobalHpkeKeypair::new(
+        HpkeKeypair::generate(
+            HpkeConfigId::from(232),
+            HpkeKemId::P256HkdfSha256,
+            HpkeKdfId::HkdfSha256,
+            HpkeAeadId::Aes128Gcm,
+        )
+        .unwrap(),
+        HpkeKeyState::Active,
+        Time::from_seconds_since_epoch(1_700_000_100),
+    );
+
+    let expected_order = [
+        // X25519 keypairs
+        hpke_keypair_86.hpke_keypair().config().clone(),
+        hpke_keypair_157.hpke_keypair().config().clone(),
+        // P256 keypairs
+        hpke_keypair_232.hpke_keypair().config().clone(),
+        hpke_keypair_95.hpke_keypair().config().clone(),
+        // Other algorithms
+        hpke_keypair_140.hpke_keypair().config().clone(),
+        hpke_keypair_158.hpke_keypair().config().clone(),
+        hpke_keypair_35.hpke_keypair().config().clone(),
+    ];
+
+    let hpke_keypairs = [
+        hpke_keypair_35,
+        hpke_keypair_86,
+        hpke_keypair_95,
+        hpke_keypair_140,
+        hpke_keypair_157,
+        hpke_keypair_158,
+        hpke_keypair_232,
+    ];
+
+    datastore
+        .run_unnamed_tx(|tx| {
+            let hpke_keypairs = hpke_keypairs.clone();
+            Box::pin(async move {
+                // Delete the keypair added by `HttpHandlerTest::new()`.
+                let keypairs = tx.get_global_hpke_keypairs().await.unwrap();
+                for keypair in keypairs {
+                    tx.delete_global_hpke_keypair(keypair.id()).await.unwrap();
+                }
+
+                // Add keypairs and set their metadata.
+                for keypair in hpke_keypairs {
+                    tx.put_global_hpke_keypair(keypair.hpke_keypair())
+                        .await
+                        .unwrap();
+                    tx.set_global_hpke_keypair_state(keypair.id(), keypair.state())
+                        .await
+                        .unwrap();
+                    tx.set_global_hpke_keypair_last_state_change_at(
+                        keypair.id(),
+                        *keypair.last_state_change_at(),
+                    )
+                    .await
+                    .unwrap();
+                }
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+
+    let aggregator = Arc::new(
+        crate::aggregator::Aggregator::new(
+            datastore.clone(),
+            clock.clone(),
+            TestRuntime::default(),
+            &noop_meter(),
+            Config {
+                hpke_config_ciphersuite_priority,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap(),
+    );
+    let handler = AggregatorHandlerBuilder::from_aggregator(aggregator.clone(), &noop_meter())
+        .build()
+        .unwrap();
+
+    // Check that the HpkeConfigList is sorted correctly.
+    let mut test_conn = get("/hpke_config").run_async(&handler).await;
+    assert_eq!(test_conn.status(), Some(Status::Ok));
+    assert_headers!(
+        &test_conn,
+        "content-type" => (HpkeConfigList::MEDIA_TYPE),
+    );
+    let response_body = take_response_body(&mut test_conn).await;
+    let hpke_config_list = HpkeConfigList::get_decoded(&response_body).unwrap();
+    assert_eq!(hpke_config_list.hpke_configs(), expected_order);
 }
 
 async fn verify_and_decode_hpke_config_list(test_conn: &mut TestConn) -> HpkeConfigList {
