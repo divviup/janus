@@ -15,6 +15,7 @@ Options:
           Possible values:
           - p-256:  DHKEM(P-256, HKDF-SHA256)
           - x25519: DHKEM(X25519, HKDF-SHA256)
+          - xwing:  X-Wing, also known as MKLEM768-X25519
           
           [default: x25519]
 
@@ -22,9 +23,13 @@ Options:
           HPKE Key Derivation Function algorithm
 
           Possible values:
-          - hkdf-sha256: HKDF-SHA256
-          - hkdf-sha384: HKDF-SHA384
-          - hkdf-sha512: HKDF-SHA512
+          - hkdf-sha256:   HKDF-SHA256
+          - hkdf-sha384:   HKDF-SHA384
+          - hkdf-sha512:   HKDF-SHA512
+          - shake128:      SHAKE128
+          - shake256:      SHAKE256
+          - turboshake128: TurboSHAKE128
+          - turboshake256: TurboSHAKE256
           
           [default: hkdf-sha256]
 

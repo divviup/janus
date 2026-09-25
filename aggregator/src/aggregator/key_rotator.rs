@@ -509,11 +509,18 @@ fn default_expired_duration() -> u64 {
 }
 
 pub fn default_hpke_ciphersuites() -> HashSet<HpkeCiphersuite> {
-    HashSet::from([HpkeCiphersuite::new(
-        HpkeKemId::X25519HkdfSha256,
-        HpkeKdfId::HkdfSha256,
-        HpkeAeadId::Aes128Gcm,
-    )])
+    HashSet::from([
+        HpkeCiphersuite::new(
+            HpkeKemId::X25519HkdfSha256,
+            HpkeKdfId::HkdfSha256,
+            HpkeAeadId::Aes128Gcm,
+        ),
+        HpkeCiphersuite::new(
+            HpkeKemId::XWing,
+            HpkeKdfId::HkdfSha256,
+            HpkeAeadId::Aes128Gcm,
+        ),
+    ])
 }
 
 #[cfg(test)]
