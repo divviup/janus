@@ -2501,6 +2501,7 @@ dependencies = [
  "educe 0.8.1",
  "futures",
  "hex",
+ "hpke-dispatch",
  "http",
  "http-api-problem",
  "itertools 0.15.0",
