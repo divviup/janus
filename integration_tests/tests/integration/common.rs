@@ -1,4 +1,4 @@
-use std::{iter, time::Duration as StdDuration};
+use std::{fmt::Debug, iter, time::Duration as StdDuration};
 
 use backon::{BackoffBuilder, ConstantBuilder, Retryable};
 use itertools::Itertools;
@@ -180,7 +180,7 @@ pub async fn submit_measurements_and_verify_aggregate_generic<V>(
     client_implementation: &ClientImplementation<V>,
 ) where
     V: vdaf::Client<16> + vdaf::Collector + InteropClientEncoding,
-    V::AggregateResult: PartialEq,
+    V::AggregateResult: Debug + PartialEq,
 {
     let before_timestamp = submit_measurements_generic(
         &test_case.measurements,
@@ -206,7 +206,7 @@ pub async fn submit_measurements_generic<V>(
 ) -> Time
 where
     V: vdaf::Client<16> + vdaf::Collector + InteropClientEncoding,
-    V::AggregateResult: PartialEq,
+    V::AggregateResult: Debug + PartialEq,
 {
     // Submit some measurements, recording a timestamp before measurement upload to allow us to
     // determine the correct collect interval. (for time interval tasks)
@@ -229,7 +229,7 @@ pub async fn verify_aggregate_generic<V>(
     before_timestamp: Time,
 ) where
     V: vdaf::Client<16> + vdaf::Collector + InteropClientEncoding,
-    V::AggregateResult: PartialEq,
+    V::AggregateResult: Debug + PartialEq,
 {
     let (report_count, aggregate_result) = collect_aggregate_result_generic(
         task_parameters,
@@ -256,7 +256,7 @@ pub async fn collect_aggregate_result_generic<V>(
 ) -> (u64, V::AggregateResult)
 where
     V: vdaf::Client<16> + vdaf::Collector + InteropClientEncoding,
-    V::AggregateResult: PartialEq,
+    V::AggregateResult: Debug + PartialEq,
 {
     let (leader_endpoint, helper_endpoint, http_client) = task_parameters
         .endpoint_fragments
