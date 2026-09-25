@@ -652,9 +652,11 @@ fn new_collector<V: vdaf::Collector>(
     Ok(collector)
 }
 
-fn print_collection<V: vdaf::Collector>(
-    collection: Collection<<V as Vdaf>::AggregateResult>,
-) -> Result<(), Error> {
+fn print_collection<V>(collection: Collection<<V as Vdaf>::AggregateResult>) -> Result<(), Error>
+where
+    V: vdaf::Collector,
+    <V as Vdaf>::AggregateResult: Debug,
+{
     let (start, duration) = collection.interval();
 
     println!("Number of reports: {}", collection.report_count());
