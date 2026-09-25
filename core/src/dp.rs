@@ -1,10 +1,7 @@
 #[cfg(feature = "test-util")]
 use prio::vdaf::{AggregatorWithNoise, dummy};
 use prio::{
-    dp::{
-        DifferentialPrivacyBudget, DifferentialPrivacyDistribution, DifferentialPrivacyStrategy,
-        DpError,
-    },
+    dp::{DifferentialPrivacyBudget, DifferentialPrivacyDistribution, DifferentialPrivacyStrategy},
     field::{Field64, Field128},
     flp::{
         TypeWithNoise,
@@ -29,13 +26,9 @@ impl DifferentialPrivacyDistribution for NoDistribution {}
 pub struct NoDifferentialPrivacy;
 impl DifferentialPrivacyStrategy for NoDifferentialPrivacy {
     type Budget = NoBudget;
-    type Distribution = NoDistribution;
-    type Sensitivity = ();
+
     fn from_budget(_b: NoBudget) -> Self {
         NoDifferentialPrivacy
-    }
-    fn create_distribution(&self, _s: Self::Sensitivity) -> Result<Self::Distribution, DpError> {
-        Ok(NoDistribution)
     }
 }
 

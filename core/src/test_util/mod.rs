@@ -1,6 +1,6 @@
-use std::{fmt::Debug, sync::Once};
+use std::{fmt::Debug, mem, sync::Once};
 
-use assert_matches::assert_matches;
+use educe::Educe;
 use janus_messages::{ReportId, Role, TaskId};
 use prio::{
     topology::ping_pong::{
@@ -32,9 +32,13 @@ where
     V: vdaf::Aggregator<VERIFY_KEY_LENGTH, 16>,
 {
     pub fn verify_state(&self) -> &V::VerifyState {
-        assert_matches!(self.state, PingPongState::Continued(Continued{
-            ref verifier_state, ..
-        }) => verifier_state)
+        let PingPongState::Continued(Continued { verifier_state, .. }) = &self.state else {
+            panic!(
+                "wrong ping pong state, expected Continued, got {:?}",
+                mem::discriminant(&self.state)
+            )
+        };
+        verifier_state
     }
 
     pub fn message(&self) -> Option<&PingPongMessage> {
@@ -47,7 +51,8 @@ where
 }
 
 /// A transcript of a VDAF run using the ping-pong VDAF topology.
-#[derive(Clone, Debug)]
+#[derive(Clone, Educe)]
+#[educe(Debug)]
 pub struct VdafTranscript<const VERIFY_KEY_LENGTH: usize, V>
 where
     V: vdaf::Aggregator<VERIFY_KEY_LENGTH, 16>,
