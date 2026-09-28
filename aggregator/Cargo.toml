@@ -99,6 +99,7 @@ yaml_serde.workspace = true
 rustc_version = { workspace = true }
 
 [dev-dependencies]
+hpke-dispatch = { workspace = true }
 janus_aggregator = { workspace = true, features = ["test-util"] }
 janus_aggregator_core = { workspace = true, features = ["test-util"] }
 mockito = { workspace = true }

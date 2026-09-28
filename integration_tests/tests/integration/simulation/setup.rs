@@ -91,6 +91,8 @@ impl SimulationAggregator {
                 task_counter_shard_count: TASK_COUNTER_SHARD_COUNT,
                 max_future_concurrency: 10000,
                 hpke_configs_refresh_interval: HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
+                hpke_config_ciphersuite_priority:
+                    HpkeKeypairCache::HPKE_ALGORITHM_PRIORITY_NO_PREFERENCE,
                 hpke_config_signing_key: None,
                 // We only support Taskprov on the helper side, so leave it disabled.
                 taskprov_config: Default::default(),

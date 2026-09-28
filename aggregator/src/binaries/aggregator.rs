@@ -14,7 +14,9 @@ use clap::Parser;
 use educe::Educe;
 use janus_aggregator_api::{self, aggregator_api_handler};
 use janus_aggregator_core::datastore::Datastore;
-use janus_core::{TokioRuntime, auth_tokens::AuthenticationToken, time::RealClock};
+use janus_core::{
+    TokioRuntime, auth_tokens::AuthenticationToken, hpke::HpkeCiphersuite, time::RealClock,
+};
 use janus_messages::Url as DapUrl;
 use opentelemetry::metrics::Meter;
 use sec1::EcPrivateKey;
@@ -385,6 +387,13 @@ pub struct Config {
     #[serde(default)]
     pub hpke_configs_refresh_interval: Option<u64>,
 
+    /// Determines the order in which HPKE configurations with different ciphersuites will be
+    /// advertised to clients. Configurations with ciphersuites that are listed first in this list
+    /// will be listed first in the HpkeConfigList, indicating they are of the highest preference.
+    /// Configurations with ciphersuites that are not listed here will be listed last.
+    #[serde(default)]
+    pub hpke_config_ciphersuite_priority: Vec<HpkeCiphersuite>,
+
     /// Defines how long to cache tasks for, in seconds. This affects how often the aggregator
     /// becomes aware of task parameter changes. If unspecified, default is defined by
     /// [`TASK_AGGREGATOR_CACHE_DEFAULT_TTL`]. You shouldn't normally have to specify this.
@@ -467,6 +476,7 @@ impl Config {
                 Some(duration) => Duration::from_millis(duration),
                 None => HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
             },
+            hpke_config_ciphersuite_priority: self.hpke_config_ciphersuite_priority.clone(),
             hpke_config_signing_key: options
                 .hpke_config_signing_key
                 .as_deref()
@@ -610,6 +620,18 @@ mod tests {
             task_counter_shard_count: 64,
             taskprov_config: TaskprovConfig::default(),
             hpke_configs_refresh_interval: Some(42),
+            hpke_config_ciphersuite_priority: Vec::from([
+                HpkeCiphersuite::new(
+                    HpkeKemId::P256HkdfSha256,
+                    HpkeKdfId::HkdfSha256,
+                    HpkeAeadId::Aes128Gcm,
+                ),
+                HpkeCiphersuite::new(
+                    HpkeKemId::P521HkdfSha512,
+                    HpkeKdfId::HkdfSha512,
+                    HpkeAeadId::Aes256Gcm,
+                ),
+            ]),
             task_cache_ttl_s: None,
             task_cache_capacity: None,
             log_forbidden_mutations: Some(PathBuf::from("/tmp/events")),

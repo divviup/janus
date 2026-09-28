@@ -18,6 +18,7 @@ use janus_aggregator::{
         key_rotator::{self, Config as KeyRotatorConfig, Options as KeyRotatorOptions},
     },
     binary_utils::{BinaryContext, CommonBinaryOptions, Stopper},
+    cache::HpkeKeypairCache,
     config::{
         CommonConfig, DbConfig, JobDriverConfig, TaskprovConfig, default_max_transaction_retries,
     },
@@ -185,6 +186,8 @@ impl JanusInProcess {
             max_future_concurrency: 1000,
             task_counter_shard_count: 64,
             hpke_configs_refresh_interval: None,
+            hpke_config_ciphersuite_priority:
+                HpkeKeypairCache::HPKE_ALGORITHM_PRIORITY_NO_PREFERENCE,
             task_cache_ttl_s: None,
             task_cache_capacity: None,
             log_forbidden_mutations: None,
