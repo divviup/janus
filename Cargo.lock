@@ -2646,6 +2646,7 @@ dependencies = [
  "fixed",
  "futures",
  "hex",
+ "hpke-dispatch",
  "http",
  "http-api-problem",
  "itertools 0.15.0",
