@@ -806,7 +806,8 @@ mod tests {
         flp::gadgets::{Mul, ParallelSum},
         vdaf::{dummy, prio3::Prio3},
     };
-    use serde_test::{Token, assert_tokens};
+    use serde_json::Value;
+    use serde_test::{Token, assert_de_tokens, assert_ser_tokens, assert_tokens};
 
     use crate::vdaf::{
         ConfiguredVdaf, VdafInstance, new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128,
@@ -1051,7 +1052,47 @@ mod tests {
                 Token::StructVariantEnd,
             ],
         );
-        assert_tokens(
+
+        // Serialization and deserialization of the epsilon value is complicated, because
+        // deserialization skips one newtype layer. Thus, we check that JSON serialization and
+        // deserialization match what we expect first, for practical backwards compatibility. Then,
+        // we do asymmetric checks at the `serde_test` layer, which is particular about newtypes,
+        // unlike most other serialization formats.
+        let sumvec_dp_vdaf_instance = VdafInstance::Prio3SumVec {
+            max_measurement: 1,
+            length: 8,
+            chunk_length: 3,
+            dp_strategy: vdaf_dp_strategies::Prio3SumVec::PureDpDiscreteLaplace(
+                PureDpDiscreteLaplace::from_budget(
+                    PureDpBudget::new(Rational::from_unsigned(2u128, 1u128).unwrap()).unwrap(),
+                ),
+            ),
+        };
+        let sumvec_dp_vdaf_instance_json = r#"
+{
+    "Prio3SumVec": {
+        "max_measurement": 1,
+        "length": 8,
+        "chunk_length": 3,
+        "dp_strategy": {
+            "dp_strategy": "PureDpDiscreteLaplace",
+            "budget": {
+                "epsilon": [[2], [1]]
+            }
+        }
+    }
+}"#;
+        let sumvec_dp_vdaf_instance_value =
+            serde_json::from_str::<Value>(sumvec_dp_vdaf_instance_json).unwrap();
+        assert_eq!(
+            serde_json::from_str::<VdafInstance>(sumvec_dp_vdaf_instance_json).unwrap(),
+            sumvec_dp_vdaf_instance
+        );
+        assert_eq!(
+            serde_json::to_value(&sumvec_dp_vdaf_instance).unwrap(),
+            sumvec_dp_vdaf_instance_value
+        );
+        assert_ser_tokens(
             &VdafInstance::Prio3SumVec {
                 max_measurement: 1,
                 length: 8,
@@ -1087,6 +1128,57 @@ mod tests {
                     len: 1,
                 },
                 Token::Str("epsilon"),
+                Token::NewtypeStruct { name: "Rational" },
+                Token::Tuple { len: 2 },
+                Token::Seq { len: Some(1) },
+                Token::U32(2),
+                Token::SeqEnd,
+                Token::Seq { len: Some(1) },
+                Token::U32(1),
+                Token::SeqEnd,
+                Token::TupleEnd,
+                Token::StructEnd,
+                Token::StructEnd,
+                Token::StructVariantEnd,
+            ],
+        );
+        assert_de_tokens(
+            &VdafInstance::Prio3SumVec {
+                max_measurement: 1,
+                length: 8,
+                chunk_length: 3,
+                dp_strategy: vdaf_dp_strategies::Prio3SumVec::PureDpDiscreteLaplace(
+                    PureDpDiscreteLaplace::from_budget(
+                        PureDpBudget::new(Rational::from_unsigned(2u128, 1u128).unwrap()).unwrap(),
+                    ),
+                ),
+            },
+            &[
+                Token::StructVariant {
+                    name: "VdafInstance",
+                    variant: "Prio3SumVec",
+                    len: 4,
+                },
+                Token::Str("max_measurement"),
+                Token::U64(1),
+                Token::Str("length"),
+                Token::U64(8),
+                Token::Str("chunk_length"),
+                Token::U64(3),
+                Token::Str("dp_strategy"),
+                Token::Struct {
+                    name: "DiscreteLaplaceDpStrategy",
+                    len: 2,
+                },
+                Token::Str("dp_strategy"),
+                Token::Str("PureDpDiscreteLaplace"),
+                Token::Str("budget"),
+                Token::Struct {
+                    name: "PureDpBudget",
+                    len: 1,
+                },
+                Token::Str("epsilon"),
+                // Skip the `Token::NewtypeStruct` for `Rational`.
                 Token::Tuple { len: 2 },
                 Token::Seq { len: Some(1) },
                 Token::U32(2),

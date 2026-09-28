@@ -5,7 +5,7 @@
 // https://github.com/rust-lang/rust-clippy/pull/9879
 #![allow(clippy::single_component_path_imports)]
 
-use std::hash::Hash;
+use std::{fmt::Debug, hash::Hash};
 
 use educe::Educe;
 use prio::{
@@ -50,8 +50,9 @@ pub trait AsyncAggregator<const VERIFY_KEY_SIZE: usize>:
         VerifierMessage: Send + Sync + PartialEq,
         VerifierShare: Send + Sync + PartialEq,
         PublicShare: Send + Sync + PartialEq,
-        OutputShare: Send + Sync + PartialEq + Eq,
-        VerifyState: Send
+        OutputShare: Debug + Send + Sync + PartialEq + Eq,
+        VerifyState: Debug
+                         + Send
                          + Sync
                          + Encode
                          + PartialEq
@@ -75,8 +76,9 @@ impl<
             VerifierMessage: Send + Sync + PartialEq,
             VerifierShare: Send + Sync + PartialEq,
             PublicShare: Send + Sync + PartialEq,
-            OutputShare: Send + Sync + PartialEq + Eq,
-            VerifyState: Send
+            OutputShare: Debug + Send + Sync + PartialEq + Eq,
+            VerifyState: Debug
+                             + Send
                              + Sync
                              + Encode
                              + PartialEq
