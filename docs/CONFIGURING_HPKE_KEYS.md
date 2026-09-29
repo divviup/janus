@@ -32,9 +32,10 @@ key_rotator:
   hpke: {}
 ```
 
-This will create a single key and rotate it through a reasonable lifecycle. See
-the [advanced sample](./samples/advanced_config/key_rotator.yaml) to see the
-full set of configuration options and their default values.
+This will create two keys (one using ECDH and one using a PQ/T hybrid) and
+rotate them through a reasonable lifecycle. See the [advanced
+sample](./samples/advanced_config/key_rotator.yaml) to see the full set of
+configuration options and their default values.
 
 Run this command on a cronjob, using your cron scheduling daemon of choice (e.g.
 normal `cron`, systemd timers, Kubernetes CronJobs) on some reasonable cadence.
