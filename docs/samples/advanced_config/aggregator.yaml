@@ -216,10 +216,10 @@ hpke_configs_refresh_interval: 1800000
 # indicating they are of the highest preference. Configurations with
 # ciphersuites that are not listed here will be listed last.
 hpke_config_ciphersuite_priority:
-  - kem_id: X25519HkdfSha256
+  - kem_id: XWing
     kdf_id: HkdfSha256
     aead_id: Aes128Gcm
-  - kem_id: P256HkdfSha256
+  - kem_id: X25519HkdfSha256
     kdf_id: HkdfSha256
     aead_id: Aes128Gcm
 
