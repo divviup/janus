@@ -312,9 +312,10 @@ async fn unsupported_hpke_algorithms() {
         .create_async()
         .await;
 
-    let mut hpke_config = HpkeConfiguration::new(&client_parameters, &Role::Leader, http_client)
-        .await
-        .unwrap();
+    let mut hpke_config =
+        HpkeConfiguration::new(&client_parameters, &Role::Leader, None, http_client)
+            .await
+            .unwrap();
     assert_eq!(hpke_config.get().await.unwrap(), &good_hpke_config);
 
     mock.assert_async().await;
@@ -524,4 +525,52 @@ async fn upload_session_error_propagation() {
     // The error won't arrive until we close, which is expected.
     assert_matches!(session.close().await, Err(Error::Http(_)));
     mocked_upload.assert_async().await;
+}
+
+#[tokio::test]
+async fn alternate_leader_hpke_config_endpoint() {
+    install_test_trace_subscriber();
+
+    let mut server = mockito::Server::new_async().await;
+    let server_url = DapUrl::try_from(server.url().as_str()).unwrap();
+    let task_id = random();
+    let hpke_config = HpkeKeypair::test().config().clone();
+    let encoded_config_list = HpkeConfigList::new(vec![hpke_config.clone()])
+        .get_encoded()
+        .unwrap();
+
+    let mock = server
+        .mock("GET", "/hpke_config")
+        .with_status(200)
+        .with_header(CONTENT_TYPE.as_str(), HpkeConfigList::MEDIA_TYPE)
+        .with_body(encoded_config_list)
+        .expect(1)
+        .create_async()
+        .await;
+
+    let client = Client::builder(
+        task_id,
+        // make the aggregators unreachables to ensure HPKE config requests go to alternate URL
+        DapUrl::try_from("http://leader.unreachable").unwrap(),
+        DapUrl::try_from("http://helper.unreachable").unwrap(),
+        TimePrecision::from_seconds(100),
+        ConfiguredVdaf::prio3_count().unwrap(),
+    )
+    .with_task_info(b"test task".to_vec())
+    .with_min_batch_size(1)
+    .with_batch_config(BatchConfig::TimeInterval)
+    .with_backoff(test_http_request_exponential_backoff())
+    .with_leader_hpke_config_endpoint(server_url)
+    // provide helper HPKE config so builder won't try to fetch
+    .with_helper_hpke_config(HpkeKeypair::test().config().clone())
+    .build()
+    .await
+    .unwrap();
+
+    assert_eq!(
+        client.leader_hpke_config.lock().await.get().await.unwrap(),
+        &hpke_config
+    );
+
+    mock.assert_async().await;
 }
