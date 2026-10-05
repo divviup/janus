@@ -272,7 +272,12 @@ where
         (leader_port, helper_port): (u16, u16),
         vdaf: V,
     ) -> Result<ClientImplementation<V>, janus_client::Error> {
-        let (leader_aggregator_endpoint, helper_aggregator_endpoint, http_client) = task_parameters
+        let (
+            leader_aggregator_endpoint,
+            leader_hpke_config_endpoint,
+            helper_aggregator_endpoint,
+            http_client,
+        ) = task_parameters
             .endpoint_fragments
             .in_process_config(leader_port, helper_port);
         let mut builder = Client::builder_with_custom_vdaf(
@@ -295,7 +300,11 @@ where
             builder = builder.with_http_client(http_client);
         }
         if let Some(ohttp_config) = &task_parameters.endpoint_fragments.ohttp_config {
-            builder = builder.with_ohttp_config(ohttp_config.clone());
+            builder = builder
+                .with_ohttp_config(ohttp_config.clone())
+                .with_leader_hpke_config_endpoint(
+                    leader_hpke_config_endpoint.as_str().try_into().unwrap(),
+                );
         }
 
         let client = builder.build().await?;

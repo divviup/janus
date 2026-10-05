@@ -110,6 +110,11 @@ pub struct EndpointFragments {
     pub leader: AggregatorEndpointFragments,
     pub helper: AggregatorEndpointFragments,
     pub ohttp_config: Option<OhttpConfig>,
+    /// Endpoint to use in encapsulated upload requests.
+    ///
+    /// Useful if the aggregator is not reached at the same address by clients and the OHTTP
+    /// gateway.
+    pub encapsulated_upload_endpoint: Option<Url>,
     /// HTTP client an in-process client or collector should use to reach the aggregators, when
     /// they are not directly reachable at their endpoint URLs (e.g. virtual-network aggregators
     /// reached through a forwarding proxy). `None` means connect directly.
@@ -117,6 +122,16 @@ pub struct EndpointFragments {
 }
 
 impl EndpointFragments {
+    pub fn new(leader: AggregatorEndpointFragments, helper: AggregatorEndpointFragments) -> Self {
+        Self {
+            leader,
+            helper,
+            ohttp_config: None,
+            encapsulated_upload_endpoint: None,
+            in_process_http_client: None,
+        }
+    }
+
     /// Provides the DAP endpoint URL for the leader aggregator to be used from the host. This
     /// requires an ephemeral port number, from either the aggregator itself or a port forward for
     /// the aggregator.
@@ -128,7 +143,7 @@ impl EndpointFragments {
     /// ephemeral port numbers for each.
     pub fn endpoints_for_host_client(&self, leader_port: u16, helper_port: u16) -> (Url, Url) {
         (
-            self.leader.endpoint_for_host(leader_port),
+            self.leader_endpoint_for_host(leader_port),
             self.helper.endpoint_for_host(helper_port),
         )
     }
@@ -143,17 +158,33 @@ impl EndpointFragments {
         )
     }
 
-    /// Leader and helper endpoints, and the optional HTTP client, for an in-process client or
-    /// collector on the host. Virtual-network aggregators use their service URLs via the
+    /// Configuration to be used for in process tests.
+    ///
+    /// In order, this returns:
+    ///
+    /// - Leader DAP API URL
+    /// - Leader HPKE configuration fetch URL
+    /// - Helper DAP API URL
+    /// - Optional HTTP client, for an in-process client or collector on the host.
+    ///
+    /// The leader HPKE configuration fetch URL is not always the same as the URL for the rest of
+    /// the DAP API! This is useful when OHTTP and Kubernetes port-forwards are in use, as the
+    /// address of the aggregator over port-forwards may not match the address of the aggregator
+    /// within the cluster.
+    ///
+    /// Virtual-network aggregators use their service URLs via the
     /// proxy in [`Self::in_process_http_client`] -- localhost aggregators use the given
     /// ephemeral ports.
     pub fn in_process_config(
         &self,
         leader_port: u16,
         helper_port: u16,
-    ) -> (Url, Url, Option<reqwest::Client>) {
+    ) -> (Url, Url, Url, Option<reqwest::Client>) {
         (
             self.leader.endpoint_for_host(leader_port),
+            self.encapsulated_upload_endpoint
+                .clone()
+                .unwrap_or_else(|| self.leader_endpoint_for_host(leader_port)),
             self.helper.endpoint_for_host(helper_port),
             self.in_process_http_client.clone(),
         )
