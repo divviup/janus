@@ -96,13 +96,28 @@ impl AggregatorEndpointFragments {
 }
 
 /// Components of DAP endpoints for a leader and helper aggregator.
+#[derive(Debug)]
 pub struct EndpointFragments {
     pub leader: AggregatorEndpointFragments,
     pub helper: AggregatorEndpointFragments,
     pub ohttp_config: Option<OhttpConfig>,
+    /// Endpoint to use in encapsulated upload requests.
+    ///
+    /// Useful if the aggregator is not reached at the same address by clients and the OHTTP
+    /// gateway.
+    pub encapsulated_upload_endpoint: Option<Url>,
 }
 
 impl EndpointFragments {
+    pub fn new(leader: AggregatorEndpointFragments, helper: AggregatorEndpointFragments) -> Self {
+        Self {
+            leader,
+            helper,
+            ohttp_config: None,
+            encapsulated_upload_endpoint: None,
+        }
+    }
+
     /// Provides the DAP endpoint URL for the leader aggregator to be used from the host. This
     /// requires an ephemeral port number, from either the aggregator itself or a port forward for
     /// the aggregator.
@@ -110,10 +125,25 @@ impl EndpointFragments {
         self.leader.endpoint_for_host(leader_port)
     }
 
-    /// Provides the DAP endpoint URL for both aggregators to be used from the host. This requires
-    /// ephemeral port numbers for each.
-    pub fn endpoints_for_host_client(&self, leader_port: u16, helper_port: u16) -> (Url, Url) {
+    /// Provides the DAP API URLs to be used from the host.
+    ///
+    /// In order, this returns:
+    ///
+    /// - Leader DAP API URL
+    /// - Leader HPKE configuration fetch URL
+    /// - Helper DAP API URL
+    ///
+    /// The leader HPKE configuration fetch URL is not always the same as the URL for the rest of
+    /// the DAP API! This is useful when OHTTP and Kubernetes port-forwards are in use, as the
+    /// address of the aggregator over port-forwards may not match the address of the aggregator
+    /// within the cluster.
+    ///
+    /// This requires ephemeral port numbers for each.
+    pub fn endpoints_for_host_client(&self, leader_port: u16, helper_port: u16) -> (Url, Url, Url) {
         (
+            self.encapsulated_upload_endpoint
+                .clone()
+                .unwrap_or_else(|| self.leader.endpoint_for_host(leader_port)),
             self.leader.endpoint_for_host(leader_port),
             self.helper.endpoint_for_host(helper_port),
         )

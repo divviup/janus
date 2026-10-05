@@ -51,45 +51,42 @@ pub fn build_test_task(
             (
                 Url::parse(&format!("http://leader-{endpoint_random_value}:8080/")).unwrap(),
                 Url::parse(&format!("http://helper-{endpoint_random_value}:8080/")).unwrap(),
-                EndpointFragments {
-                    leader: AggregatorEndpointFragments::VirtualNetwork {
+                EndpointFragments::new(
+                    AggregatorEndpointFragments::VirtualNetwork {
                         host: format!("leader-{endpoint_random_value}"),
                         path: "/".to_string(),
                     },
-                    helper: AggregatorEndpointFragments::VirtualNetwork {
+                    AggregatorEndpointFragments::VirtualNetwork {
                         host: format!("helper-{endpoint_random_value}"),
                         path: "/".to_string(),
                     },
-                    ohttp_config: None,
-                },
+                ),
             )
         }
         TestContext::Host => (
             Url::parse("http://invalid/").unwrap(),
             Url::parse("http://invalid/").unwrap(),
-            EndpointFragments {
-                leader: AggregatorEndpointFragments::Localhost {
+            EndpointFragments::new(
+                AggregatorEndpointFragments::Localhost {
                     path: "/".to_string(),
                 },
-                helper: AggregatorEndpointFragments::Localhost {
+                AggregatorEndpointFragments::Localhost {
                     path: "/".to_string(),
                 },
-                ohttp_config: None,
-            },
+            ),
         ),
         #[cfg(feature = "in-cluster")]
         TestContext::Remote => (
             task_builder.leader_aggregator_endpoint().clone(),
             task_builder.helper_aggregator_endpoint().clone(),
-            EndpointFragments {
-                leader: AggregatorEndpointFragments::Remote {
+            EndpointFragments::new(
+                AggregatorEndpointFragments::Remote {
                     url: task_builder.leader_aggregator_endpoint().clone(),
                 },
-                helper: AggregatorEndpointFragments::Remote {
+                AggregatorEndpointFragments::Remote {
                     url: task_builder.helper_aggregator_endpoint().clone(),
                 },
-                ohttp_config: None,
-            },
+            ),
         ),
     };
 
