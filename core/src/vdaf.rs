@@ -395,7 +395,7 @@ macro_rules! vdaf_dispatch_impl_fpvec_bounded_l2 {
                 >;
                 $body
             },
-        };
+        }
     }
 }
 
