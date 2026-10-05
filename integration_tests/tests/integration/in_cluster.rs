@@ -216,12 +216,8 @@ impl InClusterJanusPair {
             collector_credential_id,
             collector_credential.authentication_token(),
             collector_credential.hpke_keypair(),
-            InClusterJanus {
-                aggregator_port_forward: None,
-            },
-            InClusterJanus {
-                aggregator_port_forward: None,
-            },
+            InClusterJanus::default(),
+            InClusterJanus::default(),
         )
         .await
     }
@@ -355,6 +351,22 @@ impl InClusterJanusPair {
             .await
             .unwrap();
 
+        let mut leader_janus = InClusterJanus::new(&cluster, &leader_namespace).await;
+
+        // If the test uses OHTTP it will need:
+        // - a port-forward on localhost so it can reach the OHTTP gateway
+        // - an in-cluster address where the aggregator can be reached so that it can construct
+        //   encapsulated requests that the gateway will forward
+        if cfg!(feature = "ohttp") {
+            leader_janus.ohttp_gateway_port_forward = Some(
+                cluster
+                    .forward_port(&leader_namespace, "aggregator-ohttp-gateway", 81)
+                    .await,
+            );
+            leader_janus.encapsulated_upload_endpoint =
+                Some(Self::in_cluster_aggregator_url(&leader_namespace));
+        }
+
         Self::new_common(
             divviup_api,
             account.id,
@@ -368,15 +380,21 @@ impl InClusterJanusPair {
                 .map(|t| AuthenticationToken::new_bearer_token_from_string(t).unwrap())
                 .unwrap(),
             hpke_keypair.clone(),
-            InClusterJanus::new(&cluster, &leader_namespace).await,
+            leader_janus,
             InClusterJanus::new(&cluster, &helper_namespace).await,
         )
         .await
     }
 
     fn in_cluster_aggregator_api_url(namespace: &str) -> Url {
+        let mut url = Self::in_cluster_aggregator_url(namespace);
+        url.set_path("aggregator-api/");
+        url
+    }
+
+    fn in_cluster_aggregator_url(namespace: &str) -> Url {
         Url::parse(&format!(
-            "http://aggregator.{namespace}.svc.cluster.local:80/aggregator-api/"
+            "http://aggregator.{namespace}.svc.cluster.local:80"
         ))
         .unwrap()
     }
@@ -472,8 +490,11 @@ impl InClusterJanusPair {
     }
 }
 
+#[derive(Default)]
 struct InClusterJanus {
     aggregator_port_forward: Option<PortForward>,
+    ohttp_gateway_port_forward: Option<PortForward>,
+    encapsulated_upload_endpoint: Option<Url>,
 }
 
 impl InClusterJanus {
@@ -483,8 +504,11 @@ impl InClusterJanus {
         let aggregator_port_forward = cluster
             .forward_port(aggregator_namespace, "aggregator", 80)
             .await;
+
         Self {
             aggregator_port_forward: Some(aggregator_port_forward),
+            ohttp_gateway_port_forward: None,
+            encapsulated_upload_endpoint: None,
         }
     }
 
@@ -493,6 +517,13 @@ impl InClusterJanus {
             .as_ref()
             .map(PortForward::local_port)
             .unwrap_or(0)
+    }
+
+    #[cfg(feature = "ohttp")]
+    fn ohttp_gateway_port(&self) -> Option<u16> {
+        self.ohttp_gateway_port_forward
+            .as_ref()
+            .map(PortForward::local_port)
     }
 }
 
@@ -525,22 +556,35 @@ async fn in_cluster_count_ohttp() {
     let mut janus_pair =
         InClusterJanusPair::new(VdafInstance::Prio3Count, QueryType::TimeInterval).await;
 
-    // Set up the client to use OHTTP. The keys and relay are assumed to be deployed adjacent to the
-    // leader.
+    // Set up the client to use OHTTP.
+    // Use the port forward if it's available, which will be the case for Kind clusters. For cloud
+    // clusters, we assume the OHTTP gateway is deployed adjacent to the aggregator, and the port
+    // value will be ignored by EndpointFragments::leader_endpoint_for_host.
+    let ohttp_relay_port = janus_pair.leader.ohttp_gateway_port().unwrap_or(0);
     janus_pair.task_parameters.endpoint_fragments.ohttp_config = Some(OhttpConfig {
         key_configs: janus_pair
             .task_parameters
             .endpoint_fragments
-            .leader_endpoint_for_host(0)
+            .leader_endpoint_for_host(ohttp_relay_port)
             .join("ohttp-keys")
             .unwrap(),
         relay: janus_pair
             .task_parameters
             .endpoint_fragments
-            .leader_endpoint_for_host(0)
+            .leader_endpoint_for_host(ohttp_relay_port)
             .join("gateway")
             .unwrap(),
     });
+    janus_pair
+        .task_parameters
+        .endpoint_fragments
+        .encapsulated_upload_endpoint = Some(
+        janus_pair
+            .leader
+            .encapsulated_upload_endpoint
+            .clone()
+            .unwrap(),
+    );
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
@@ -713,10 +757,11 @@ mod rate_limits {
         let janus_pair =
             InClusterJanusPair::new(VdafInstance::Prio3Count, QueryType::TimeInterval).await;
 
-        let (leader_url, helper_url) = janus_pair
+        let (leader_url, leader_hpke_config_url, helper_url) = janus_pair
             .task_parameters
             .endpoint_fragments
             .endpoints_for_host_client(janus_pair.leader.port(), janus_pair.helper.port());
+        assert_eq!(leader_url, leader_hpke_config_url);
         let other_task_id = random();
 
         // Send requests to two different tasks, to prove that rate limits are per-task ID. It
