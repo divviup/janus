@@ -276,10 +276,56 @@ async fn unsupported_hpke_algorithms() {
         .create_async()
         .await;
 
-    let mut hpke_config = HpkeConfiguration::new(&client_parameters, &Role::Leader, http_client)
-        .await
-        .unwrap();
+    let mut hpke_config =
+        HpkeConfiguration::new(&client_parameters, &Role::Leader, None, http_client)
+            .await
+            .unwrap();
     assert_eq!(hpke_config.get().await.unwrap(), &good_hpke_config);
+
+    mock.assert_async().await;
+}
+
+#[tokio::test]
+async fn alternate_leader_hpke_config_endpoint() {
+    install_test_trace_subscriber();
+
+    let mut server = mockito::Server::new_async().await;
+    let server_url = Url::parse(&server.url()).unwrap();
+    let task_id = random();
+    let hpke_config = HpkeKeypair::test().config().clone();
+    let encoded_config_list = HpkeConfigList::new(vec![hpke_config.clone()])
+        .get_encoded()
+        .unwrap();
+
+    let mock = server
+        .mock("GET", format!("/hpke_config?task_id={}", task_id).as_str())
+        .with_status(200)
+        .with_header(CONTENT_TYPE.as_str(), HpkeConfigList::MEDIA_TYPE)
+        .with_body(encoded_config_list)
+        .expect(1)
+        .create_async()
+        .await;
+
+    let client = Client::builder(
+        task_id,
+        // make the aggregators unreachables to ensure HPKE config requests go to alternate URL
+        Url::parse("http://leader.unreachable").unwrap(),
+        Url::parse("http://helper.unreachable").unwrap(),
+        Duration::from_seconds(1),
+        Prio3::new_count(2).unwrap(),
+    )
+    .with_backoff(test_http_request_exponential_backoff())
+    .with_leader_hpke_config_url(server_url.join("hpke_config").unwrap())
+    // provide helper HPKE config so builder won't try to fetch
+    .with_helper_hpke_config(HpkeKeypair::test().config().clone())
+    .build()
+    .await
+    .unwrap();
+
+    assert_eq!(
+        client.leader_hpke_config.lock().await.get().await.unwrap(),
+        &hpke_config
+    );
 
     mock.assert_async().await;
 }
