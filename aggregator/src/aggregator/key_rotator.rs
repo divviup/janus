@@ -187,8 +187,8 @@ impl<C: Clock> KeyRotator<C> {
 /// In-memory representation of the `hpke_keys` table.
 #[derive(Educe)]
 #[educe(Debug)]
-struct HpkeKeyRotator<'a, C: Clock> {
-    clock: &'a C,
+struct HpkeKeyRotator<'a> {
+    clock: &'a dyn Clock,
     config: &'a HpkeKeyRotatorConfig,
 
     // Data structures for intermediate state.
@@ -198,9 +198,9 @@ struct HpkeKeyRotator<'a, C: Clock> {
     initially_empty: bool,
 }
 
-impl<'a, C: Clock> HpkeKeyRotator<'a, C> {
+impl<'a> HpkeKeyRotator<'a> {
     fn new(
-        clock: &'a C,
+        clock: &'a dyn Clock,
         keypairs: HashMap<HpkeConfigId, HpkeKeypair>,
         config: &'a HpkeKeyRotatorConfig,
     ) -> Result<Self, DatastoreError> {
@@ -401,7 +401,7 @@ impl<'a, C: Clock> HpkeKeyRotator<'a, C> {
         Ok(self)
     }
 
-    async fn write(&self, tx: &Transaction<'_, C>) -> Result<(), DatastoreError> {
+    async fn write(&self, tx: &Transaction<'_, impl Clock>) -> Result<(), DatastoreError> {
         let current_keypairs_ids: HashSet<_> = tx
             .get_hpke_keypairs()
             .await?
