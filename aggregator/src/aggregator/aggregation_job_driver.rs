@@ -2057,10 +2057,7 @@ fn parse_retry_after(header_value: &HeaderValue) -> Result<RetryAfter, Error> {
         .map_err(|err| Error::BadRequest(err.into()))
 }
 
-fn retry_after_to_duration<C: Clock>(
-    clock: &C,
-    retry_after: &RetryAfter,
-) -> Result<Duration, Error> {
+fn retry_after_to_duration(clock: &dyn Clock, retry_after: &RetryAfter) -> Result<Duration, Error> {
     match retry_after {
         RetryAfter::Delay(duration) => Ok(*duration),
         RetryAfter::DateTime(next_retry_time) => {

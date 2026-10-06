@@ -1112,7 +1112,7 @@ impl<C: Clock> TaskAggregator<C> {
 
     async fn handle_upload(
         &self,
-        clock: &C,
+        clock: &dyn Clock,
         hpke_keypairs: &HpkeKeypairCache,
         metrics: &AggregatorMetrics,
         reports: impl Stream<Item = Result<Report, Error>>,
@@ -1241,7 +1241,7 @@ impl<C: Clock> TaskAggregator<C> {
     async fn handle_aggregate_share(
         &self,
         datastore: &Datastore<C>,
-        clock: &C,
+        clock: &dyn Clock,
         batch_aggregation_shard_count: u64,
         max_future_concurrency: usize,
         req_bytes: &[u8],
@@ -1500,7 +1500,7 @@ impl VdafOps {
     #[tracing::instrument(skip_all, fields(task_id = ?task.id()), err(level = Level::DEBUG))]
     async fn handle_upload<C: Clock>(
         &self,
-        clock: &C,
+        clock: &dyn Clock,
         hpke_keypairs: &HpkeKeypairCache,
         metrics: &AggregatorMetrics,
         task: &AggregatorTask,
@@ -1766,7 +1766,7 @@ impl VdafOps {
 
     async fn handle_upload_generic<const SEED_SIZE: usize, B, A, C>(
         vdaf: Arc<A>,
-        clock: &C,
+        clock: &dyn Clock,
         hpke_keypairs: &HpkeKeypairCache,
         metrics: &AggregatorMetrics,
         task: &AggregatorTask,
@@ -1849,7 +1849,7 @@ impl VdafOps {
 
     async fn handle_uploaded_report<const SEED_SIZE: usize, B, A, C>(
         vdaf: Arc<A>,
-        clock: &C,
+        clock: &dyn Clock,
         hpke_keypairs: &HpkeKeypairCache,
         metrics: &AggregatorMetrics,
         task: &AggregatorTask,
@@ -3696,7 +3696,7 @@ impl VdafOps {
     async fn handle_aggregate_share<C: Clock>(
         &self,
         datastore: &Datastore<C>,
-        clock: &C,
+        clock: &dyn Clock,
         task: Arc<AggregatorTask>,
         batch_aggregation_shard_count: u64,
         max_future_concurrency: usize,
@@ -3778,7 +3778,7 @@ impl VdafOps {
         C: Clock,
     >(
         datastore: &Datastore<C>,
-        clock: &C,
+        clock: &dyn Clock,
         task: Arc<AggregatorTask>,
         vdaf: Arc<A>,
         req_bytes: &[u8],
@@ -3823,7 +3823,7 @@ impl VdafOps {
         C: Clock,
     >(
         datastore: &Datastore<C>,
-        clock: &C,
+        clock: &dyn Clock,
         task: Arc<AggregatorTask>,
         vdaf: Arc<A>,
         aggregate_share_req: Arc<AggregateShareReq<B>>,

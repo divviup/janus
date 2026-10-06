@@ -96,8 +96,8 @@ impl From<AggregatorMetrics> for AggregateInitMetrics {
 /// ### Panics
 ///
 /// Panics if a provided report aggregation is in a state other than `HelperInitProcessing`.
-pub async fn compute_helper_aggregate_init<const SEED_SIZE: usize, B, A, C>(
-    clock: &C,
+pub async fn compute_helper_aggregate_init<const SEED_SIZE: usize, B, A>(
+    clock: &dyn Clock,
     hpke_keypairs: Arc<HpkeKeypairCache>,
     vdaf: Arc<A>,
     metrics: AggregateInitMetrics,
@@ -108,7 +108,6 @@ pub async fn compute_helper_aggregate_init<const SEED_SIZE: usize, B, A, C>(
 where
     B: AccumulableBatchMode,
     A: AsyncAggregator<SEED_SIZE>,
-    C: Clock,
 {
     let verify_key = task.vdaf_verify_key()?;
     let task_configuration = task.task_configuration();

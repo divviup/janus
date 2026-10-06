@@ -101,7 +101,7 @@ impl CollectionJobDriver {
     pub async fn step_collection_job<C: Clock>(
         &self,
         datastore: Arc<Datastore<C>>,
-        clock: &C,
+        clock: &dyn Clock,
         lease: Arc<Lease<AcquiredCollectionJob>>,
     ) -> Result<(), Error> {
         match lease.leased().batch_mode() {
@@ -159,7 +159,7 @@ impl CollectionJobDriver {
     >(
         &self,
         datastore: Arc<Datastore<C>>,
-        clock: &C,
+        clock: &dyn Clock,
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredCollectionJob>>,
         dp_strategy: S,
@@ -729,7 +729,7 @@ impl CollectionJobDriver {
                 }
 
                 match this
-                    .step_collection_job(Arc::clone(&datastore), &clock, Arc::clone(&lease))
+                    .step_collection_job(Arc::clone(&datastore), &*clock, Arc::clone(&lease))
                     .await
                 {
                     Ok(_) => Ok(()),
