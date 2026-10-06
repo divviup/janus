@@ -101,7 +101,7 @@ impl CollectionJobDriver {
     pub async fn step_collection_job<C: Clock>(
         &self,
         datastore: Arc<Datastore<C>>,
-        clock: C,
+        clock: &C,
         lease: Arc<Lease<AcquiredCollectionJob>>,
     ) -> Result<(), Error> {
         match lease.leased().batch_mode() {
@@ -159,7 +159,7 @@ impl CollectionJobDriver {
     >(
         &self,
         datastore: Arc<Datastore<C>>,
-        clock: C,
+        clock: &C,
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredCollectionJob>>,
         dp_strategy: S,
@@ -728,7 +728,7 @@ impl CollectionJobDriver {
                 }
 
                 match this
-                    .step_collection_job(Arc::clone(&datastore), clock, Arc::clone(&lease))
+                    .step_collection_job(Arc::clone(&datastore), &clock, Arc::clone(&lease))
                     .await
                 {
                     Ok(_) => Ok(()),
@@ -1285,7 +1285,7 @@ mod tests {
         // Batch aggregations indicate not all aggregation jobs are complete, and there is an
         // unaggregated report in the interval.
         collection_job_driver
-            .step_collection_job(Arc::clone(&ds), clock.clone(), Arc::clone(&lease))
+            .step_collection_job(Arc::clone(&ds), &clock, Arc::clone(&lease))
             .await
             .unwrap();
 
@@ -1431,7 +1431,7 @@ mod tests {
             .await;
 
         let error = collection_job_driver
-            .step_collection_job(Arc::clone(&ds), clock.clone(), Arc::clone(&lease))
+            .step_collection_job(Arc::clone(&ds), &clock, Arc::clone(&lease))
             .await
             .unwrap_err();
         assert_matches!(
@@ -1506,7 +1506,7 @@ mod tests {
             .await;
 
         collection_job_driver
-            .step_collection_job(Arc::clone(&ds), clock.clone(), Arc::clone(&lease))
+            .step_collection_job(Arc::clone(&ds), &clock, Arc::clone(&lease))
             .await
             .unwrap();
 
@@ -1607,7 +1607,7 @@ mod tests {
             .unwrap();
 
         collection_job_driver
-            .step_collection_job(Arc::clone(&ds), clock.clone(), lease)
+            .step_collection_job(Arc::clone(&ds), &clock, lease)
             .await
             .unwrap();
 
@@ -1989,7 +1989,7 @@ mod tests {
         // Step the collection job. The driver should successfully run the job, but then notify
         // the helper that the job has been deleted, and discard the result.
         collection_job_driver
-            .step_collection_job(ds.clone(), clock.clone(), Arc::new(lease.unwrap()))
+            .step_collection_job(ds.clone(), &clock, Arc::new(lease.unwrap()))
             .await
             .unwrap();
 
@@ -2149,7 +2149,7 @@ mod tests {
 
         // This should complete, and increment the step counter.
         collection_job_driver
-            .step_collection_job(Arc::clone(&ds), clock.clone(), Arc::new(lease.unwrap()))
+            .step_collection_job(Arc::clone(&ds), &clock, Arc::new(lease.unwrap()))
             .await
             .unwrap();
 
@@ -2261,11 +2261,7 @@ mod tests {
 
         // This should be successful, but the job won't be finished.
         collection_job_driver
-            .step_collection_job(
-                Arc::clone(&ds),
-                clock.clone(),
-                Arc::new(lease.clone().unwrap()),
-            )
+            .step_collection_job(Arc::clone(&ds), &clock, Arc::new(lease.clone().unwrap()))
             .await
             .unwrap();
         mocked_async_aggregate_share_unavailable
@@ -2311,7 +2307,7 @@ mod tests {
             .await;
 
         collection_job_driver
-            .step_collection_job(Arc::clone(&ds), clock.clone(), incomplete_lease)
+            .step_collection_job(Arc::clone(&ds), &clock, incomplete_lease)
             .await
             .unwrap();
         mocked_async_aggregate_share_ready.assert_async().await;
