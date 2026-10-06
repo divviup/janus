@@ -298,6 +298,7 @@ pub struct ClientBuilder<V: vdaf::Client<16>> {
     #[cfg(feature = "ohttp")]
     ohttp_config: Option<OhttpConfig>,
     http_client: Option<reqwest::Client>,
+    leader_hpke_config_endpoint: Option<Url>,
 }
 
 impl<V: vdaf::Client<16>> ClientBuilder<V> {
@@ -326,6 +327,7 @@ impl<V: vdaf::Client<16>> ClientBuilder<V> {
             #[cfg(feature = "ohttp")]
             ohttp_config: None,
             http_client: None,
+            leader_hpke_config_endpoint: None,
         }
     }
 
@@ -344,7 +346,15 @@ impl<V: vdaf::Client<16>> ClientBuilder<V> {
 
         let fetch_hpke_config = async |hpke_config, role| match hpke_config {
             Some(hpke_config) => Ok(HpkeConfiguration::new_static(hpke_config)),
-            None => HpkeConfiguration::new(&self.parameters, role, http_client.clone()).await,
+            None => {
+                HpkeConfiguration::new(
+                    &self.parameters,
+                    role,
+                    self.leader_hpke_config_endpoint.as_ref(),
+                    http_client.clone(),
+                )
+                .await
+            }
         };
 
         let (leader_hpke_config, helper_hpke_config) = tokio::try_join!(
@@ -463,6 +473,16 @@ impl<V: vdaf::Client<16>> ClientBuilder<V> {
     /// the aggregator over HTTPS.
     pub fn with_helper_hpke_config(mut self, hpke_config: HpkeConfig) -> Self {
         self.helper_hpke_config = Some(hpke_config);
+        self
+    }
+
+    /// Set the URL relative to which the leader's HPKE config is found.
+    ///
+    /// Useful if the upload and HPKE configuration endpoints are exposed on different networks with
+    /// different addresses.
+    pub fn with_leader_hpke_config_endpoint(mut self, url: DapUrl) -> Self {
+        self.leader_hpke_config_endpoint =
+            Some(url_for_join(&url).unwrap().join("hpke_config").unwrap());
         self
     }
 
@@ -1021,9 +1041,13 @@ impl HpkeConfiguration {
     pub(crate) async fn new(
         client_parameters: &ClientParameters,
         aggregator_role: &Role,
+        leader_hpke_config_endpoint: Option<&Url>,
         http_client: reqwest::Client,
     ) -> Result<Self, Error> {
-        let hpke_config_url = client_parameters.hpke_config_endpoint(aggregator_role)?;
+        let hpke_config_url = match (aggregator_role, leader_hpke_config_endpoint) {
+            (Role::Leader, Some(url)) => url.clone(),
+            _ => client_parameters.hpke_config_endpoint(aggregator_role)?,
+        };
 
         Ok(Self {
             hpke_config_list: CachedResource::new(

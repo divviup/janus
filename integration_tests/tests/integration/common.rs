@@ -55,50 +55,44 @@ pub fn build_test_task(
             (
                 Url::parse(&format!("http://leader-{endpoint_random_value}:8080/")).unwrap(),
                 Url::parse(&format!("http://helper-{endpoint_random_value}:8080/")).unwrap(),
-                EndpointFragments {
-                    leader: AggregatorEndpointFragments::VirtualNetwork {
+                // HTTP client will be filled in with `Some` later, once the aggregators' host
+                // ports are known (e.g. by `JanusContainerPair::new`).
+                EndpointFragments::new(
+                    AggregatorEndpointFragments::VirtualNetwork {
                         host: format!("leader-{endpoint_random_value}"),
                         path: "/".to_string(),
                     },
-                    helper: AggregatorEndpointFragments::VirtualNetwork {
+                    AggregatorEndpointFragments::VirtualNetwork {
                         host: format!("helper-{endpoint_random_value}"),
                         path: "/".to_string(),
                     },
-                    ohttp_config: None,
-                    // Filled in with `Some` later, once the aggregators' host ports are known
-                    // (e.g. by `JanusContainerPair::new`).
-                    in_process_http_client: None,
-                },
+                ),
             )
         }
         TestContext::Host => (
             Url::parse("http://invalid/").unwrap(),
             Url::parse("http://invalid/").unwrap(),
-            EndpointFragments {
-                leader: AggregatorEndpointFragments::Localhost {
+            EndpointFragments::new(
+                AggregatorEndpointFragments::Localhost {
                     path: "/".to_string(),
                 },
-                helper: AggregatorEndpointFragments::Localhost {
+                AggregatorEndpointFragments::Localhost {
                     path: "/".to_string(),
                 },
-                ohttp_config: None,
-                in_process_http_client: None,
-            },
+            ),
         ),
         #[cfg(feature = "in-cluster")]
         TestContext::Remote => (
             task_builder.leader_aggregator_endpoint().clone(),
             task_builder.helper_aggregator_endpoint().clone(),
-            EndpointFragments {
-                leader: AggregatorEndpointFragments::Remote {
+            EndpointFragments::new(
+                AggregatorEndpointFragments::Remote {
                     url: task_builder.leader_aggregator_endpoint().clone(),
                 },
-                helper: AggregatorEndpointFragments::Remote {
+                AggregatorEndpointFragments::Remote {
                     url: task_builder.helper_aggregator_endpoint().clone(),
                 },
-                ohttp_config: None,
-                in_process_http_client: None,
-            },
+            ),
         ),
     };
 
@@ -258,7 +252,7 @@ where
     V: vdaf::Client<16> + vdaf::Collector + InteropClientEncoding,
     V::AggregateResult: Debug + PartialEq,
 {
-    let (leader_endpoint, helper_endpoint, http_client) = task_parameters
+    let (leader_endpoint, _, helper_endpoint, http_client) = task_parameters
         .endpoint_fragments
         .in_process_config(leader_port, helper_port);
     let mut builder = Collector::builder_with_custom_vdaf(
