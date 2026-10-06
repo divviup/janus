@@ -18,7 +18,7 @@ use janus_aggregator_core::{
         },
     },
 };
-use janus_core::time::{Clock, IntervalExt, TimeExt};
+use janus_core::time::{IntervalExt, TimeExt};
 use janus_messages::{
     AggregationJobStep, BatchId, Duration, Interval, ReportId, TaskId, Time,
     batch_mode::LeaderSelected,
@@ -103,14 +103,11 @@ where
         }
     }
 
-    pub async fn add_report<C>(
+    pub async fn add_report(
         &mut self,
-        tx: &Transaction<'_, C>,
+        tx: &Transaction<'_>,
         report: UnaggregatedReport,
-    ) -> Result<(), Error>
-    where
-        C: Clock,
-    {
+    ) -> Result<(), Error> {
         let time_bucket_start_opt =
             self.properties
                 .task_batch_time_window_size
@@ -384,10 +381,7 @@ where
 
     /// Finish creating aggregation jobs with the remaining reports where possible. Marks remaining
     /// unused reports as unaggregated.
-    pub async fn finish<C>(mut self, tx: &Transaction<'_, C>, vdaf: Arc<A>) -> Result<(), Error>
-    where
-        C: Clock,
-    {
+    pub async fn finish(mut self, tx: &Transaction<'_>, vdaf: Arc<A>) -> Result<(), Error> {
         let mut unaggregated_report_ids = Vec::new();
 
         // Create additional aggregation jobs with the remaining reports where possible. These will

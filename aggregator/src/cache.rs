@@ -269,14 +269,14 @@ impl PeerAggregatorCache {
 #[derive(Debug)]
 pub struct TaskAggregatorCache<C: Clock> {
     datastore: Arc<Datastore<C>>,
-    report_writer: Arc<ReportWriteBatcher<C>>,
-    cache: Cache<TaskId, TaskAggregatorRef<C>>,
+    report_writer: Arc<ReportWriteBatcher>,
+    cache: Cache<TaskId, TaskAggregatorRef>,
     cache_none: bool,
 }
 
 /// An Arc reference to a TaskAggregator. None indicates that there is no such task aggregator in
 /// the database.
-type TaskAggregatorRef<C> = Option<Arc<TaskAggregator<C>>>;
+type TaskAggregatorRef = Option<Arc<TaskAggregator>>;
 
 pub const TASK_AGGREGATOR_CACHE_DEFAULT_TTL: Duration = Duration::from_secs(600);
 pub const TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY: u64 = 10_000;
@@ -284,7 +284,7 @@ pub const TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY: u64 = 10_000;
 impl<C: Clock> TaskAggregatorCache<C> {
     pub fn new(
         datastore: Arc<Datastore<C>>,
-        report_writer: ReportWriteBatcher<C>,
+        report_writer: ReportWriteBatcher,
         cache_none: bool,
         capacity: u64,
         ttl: Duration,
@@ -297,7 +297,7 @@ impl<C: Clock> TaskAggregatorCache<C> {
         }
     }
 
-    pub async fn get(&self, task_id: &TaskId) -> Result<TaskAggregatorRef<C>, Error> {
+    pub async fn get(&self, task_id: &TaskId) -> Result<TaskAggregatorRef, Error> {
         Ok(self
             .cache
             .entry(*task_id)

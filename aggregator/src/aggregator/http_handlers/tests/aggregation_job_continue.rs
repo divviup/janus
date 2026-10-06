@@ -911,31 +911,31 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     assert!(resp.is_some());
 
     // Map the batch aggregation ordinal value to 0, as it may vary due to sharding.
-    let first_batch_got_batch_aggregations = datastore
-        .run_unnamed_tx(|tx| {
-            let task = helper_task.clone();
-            let vdaf = vdaf.clone();
+    let first_batch_got_batch_aggregations =
+        datastore
+            .run_unnamed_tx(|tx| {
+                let task = helper_task.clone();
+                let vdaf = vdaf.clone();
 
-            Box::pin(async move {
-                Ok(merge_batch_aggregations_by_batch(
-                    TimeInterval::get_batch_aggregations_for_collection_identifier::<
-                        0,
-                        dummy::Vdaf,
-                        _,
-                    >(
-                        tx,
-                        task.id(),
-                        &vdaf,
-                        &first_batch_identifier,
-                        &aggregation_param,
-                    )
-                    .await
-                    .unwrap(),
-                ))
+                Box::pin(async move {
+                    Ok(merge_batch_aggregations_by_batch(
+                        TimeInterval::get_batch_aggregations_for_collection_identifier::<
+                            0,
+                            dummy::Vdaf,
+                        >(
+                            tx,
+                            task.id(),
+                            &vdaf,
+                            &first_batch_identifier,
+                            &aggregation_param,
+                        )
+                        .await
+                        .unwrap(),
+                    ))
+                })
             })
-        })
-        .await
-        .unwrap();
+            .await
+            .unwrap();
 
     let aggregate_share = vdaf
         .aggregate(
@@ -977,7 +977,6 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
                     TimeInterval::get_batch_aggregations_for_collection_identifier::<
                         0,
                         dummy::Vdaf,
-                        _,
                     >(
                         tx,
                         task.id(),
@@ -1200,31 +1199,31 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     // Map the batch aggregation ordinal value to 0, as it may vary due to sharding, and merge
     // batch aggregations over the same interval. (the task & aggregation parameter will always
     // be the same)
-    let first_batch_got_batch_aggregations = datastore
-        .run_unnamed_tx(|tx| {
-            let task = helper_task.clone();
-            let vdaf = vdaf.clone();
+    let first_batch_got_batch_aggregations =
+        datastore
+            .run_unnamed_tx(|tx| {
+                let task = helper_task.clone();
+                let vdaf = vdaf.clone();
 
-            Box::pin(async move {
-                Ok(merge_batch_aggregations_by_batch(
-                    TimeInterval::get_batch_aggregations_for_collection_identifier::<
-                        0,
-                        dummy::Vdaf,
-                        _,
-                    >(
-                        tx,
-                        task.id(),
-                        &vdaf,
-                        &first_batch_identifier,
-                        &aggregation_param,
-                    )
-                    .await
-                    .unwrap(),
-                ))
+                Box::pin(async move {
+                    Ok(merge_batch_aggregations_by_batch(
+                        TimeInterval::get_batch_aggregations_for_collection_identifier::<
+                            0,
+                            dummy::Vdaf,
+                        >(
+                            tx,
+                            task.id(),
+                            &vdaf,
+                            &first_batch_identifier,
+                            &aggregation_param,
+                        )
+                        .await
+                        .unwrap(),
+                    ))
+                })
             })
-        })
-        .await
-        .unwrap();
+            .await
+            .unwrap();
 
     let first_batch_interval = first_batch_interval.merged_with(&report_time_3).unwrap();
     let first_aggregate_share = vdaf
@@ -1271,7 +1270,6 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
                     TimeInterval::get_batch_aggregations_for_collection_identifier::<
                         0,
                         dummy::Vdaf,
-                        _,
                     >(
                         tx,
                         task.id(),

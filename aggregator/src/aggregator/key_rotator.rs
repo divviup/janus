@@ -159,7 +159,7 @@ impl<C: Clock> KeyRotator<C> {
 
     #[tracing::instrument(err, skip(tx))]
     async fn run_hpke(
-        tx: &Transaction<'_, C>,
+        tx: &Transaction<'_>,
         config: &HpkeKeyRotatorConfig,
     ) -> Result<(), DatastoreError> {
         // Take an ExclusiveLock on the table. This ensures that only one key rotator replica
@@ -401,7 +401,7 @@ impl<'a> HpkeKeyRotator<'a> {
         Ok(self)
     }
 
-    async fn write(&self, tx: &Transaction<'_, impl Clock>) -> Result<(), DatastoreError> {
+    async fn write(&self, tx: &Transaction<'_>) -> Result<(), DatastoreError> {
         let current_keypairs_ids: HashSet<_> = tx
             .get_hpke_keypairs()
             .await?

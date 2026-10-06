@@ -11,10 +11,7 @@ use aws_lc_rs::aead::{AES_128_GCM, LessSafeKey, UnboundKey};
 use backon::{BackoffBuilder, ConstantBuilder, Retryable};
 use chrono::{DateTime, Utc};
 use deadpool_postgres::{Manager, Pool, Timeouts};
-use janus_core::{
-    test_util::testcontainers::Postgres,
-    time::{Clock, MockClock},
-};
+use janus_core::{test_util::testcontainers::Postgres, time::Clock};
 use rand::{RngExt, distr::StandardUniform, random, rng};
 use sqlx::{
     Connection, PgConnection,
@@ -470,7 +467,7 @@ pub fn generate_aead_key() -> LessSafeKey {
     LessSafeKey::new(unbound_key)
 }
 
-impl Transaction<'_, MockClock> {
+impl Transaction<'_> {
     /// Verify that every row in `table` has the expected `created_at` and `updated_by` columns. The
     /// `created_at` time is checked against the transaction's clock's current time.
     /// If `updated_at` is true, then also check that column. Panics if any column is missing or

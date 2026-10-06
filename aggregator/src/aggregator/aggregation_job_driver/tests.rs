@@ -2830,7 +2830,6 @@ async fn leader_sync_leader_selected_aggregation_job_continue() {
                     LeaderSelected::get_batch_aggregations_for_collection_identifier::<
                         0,
                         dummy::Vdaf,
-                        _,
                     >(tx, task.id(), &vdaf, &batch_id, &aggregation_param)
                     .await
                     .unwrap(),

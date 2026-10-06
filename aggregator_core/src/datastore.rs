@@ -272,7 +272,7 @@ impl<C: Clock> Datastore<C> {
     pub async fn run_tx<F, T>(&self, name: &'static str, f: F) -> Result<T, Error>
     where
         for<'a> F:
-            Fn(&'a Transaction<C>) -> Pin<Box<dyn Future<Output = Result<T, Error>> + Send + 'a>>,
+            Fn(&'a Transaction) -> Pin<Box<dyn Future<Output = Result<T, Error>> + Send + 'a>>,
     {
         let before = Instant::now();
         let mut retry_count = 0;
@@ -325,7 +325,7 @@ impl<C: Clock> Datastore<C> {
     async fn run_tx_once<F, T>(&self, name: &'static str, f: &F) -> (Result<T, Error>, bool)
     where
         for<'a> F:
-            Fn(&'a Transaction<C>) -> Pin<Box<dyn Future<Output = Result<T, Error>> + Send + 'a>>,
+            Fn(&'a Transaction) -> Pin<Box<dyn Future<Output = Result<T, Error>> + Send + 'a>>,
     {
         // Acquire connection from the connection pooler.
         let before = Instant::now();
@@ -420,7 +420,7 @@ impl<C: Clock> Datastore<C> {
         F: 's,
         T: 's,
         for<'a> F:
-            Fn(&'a Transaction<C>) -> Pin<Box<dyn Future<Output = Result<T, Error>> + Send + 'a>>,
+            Fn(&'a Transaction) -> Pin<Box<dyn Future<Output = Result<T, Error>> + Send + 'a>>,
     {
         self.run_tx("default", f)
     }
@@ -517,10 +517,10 @@ const RETRIES_HISTOGRAM_BOUNDARIES: &[f64] = &[
 ];
 
 /// Transaction represents an ongoing datastore transaction.
-pub struct Transaction<'a, C: Clock> {
+pub struct Transaction<'a> {
     raw_tx: deadpool_postgres::Transaction<'a>,
     crypter: &'a Crypter,
-    clock: &'a C,
+    clock: &'a dyn Clock,
     name: &'a str,
     task_infos: Arc<Mutex<HashMap<TaskId, TaskInfo>>>,
 
@@ -534,7 +534,7 @@ enum OperationGroup {
     Draining(Arc<Barrier>), // barrier to wait upon to complete drain
 }
 
-impl<C: Clock> Transaction<'_, C> {
+impl Transaction<'_> {
     // For some error modes, Postgres will return an error to the caller & then fail all future
     // statements within the same transaction with an "in failed SQL transaction" error. This
     // effectively means one statement will receive a "root cause" error and then all later
@@ -699,7 +699,7 @@ WHERE success = TRUE ORDER BY version DESC LIMIT(1)",
     }
 
     /// Returns the clock used by this transaction.
-    pub fn clock(&self) -> &C {
+    pub fn clock(&self) -> &dyn Clock {
         self.clock
     }
 

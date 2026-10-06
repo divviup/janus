@@ -19,7 +19,7 @@ use janus_aggregator_core::{
     },
     task::AggregatorTask,
 };
-use janus_core::{report_id::ReportIdChecksumExt as _, time::Clock, vdaf::VdafInstance};
+use janus_core::{report_id::ReportIdChecksumExt as _, vdaf::VdafInstance};
 use janus_messages::{
     AggregationJobId, Interval, ReportError, ReportId, ReportIdChecksum, Time, VerifyResp,
     VerifyStepResult,
@@ -176,9 +176,9 @@ where
         skip(self, tx),
         err(level = Level::DEBUG),
     )]
-    pub async fn write<C: Clock>(
+    pub async fn write(
         &self,
-        tx: &Transaction<'_, C>,
+        tx: &Transaction<'_>,
         vdaf: Arc<A>,
     ) -> Result<HashMap<AggregationJobId, Vec<VerifyResp>>, Error> {
         // Read & update state based on the aggregation jobs to be written. We will read batch
@@ -261,12 +261,11 @@ where
 #[async_trait]
 trait WriteType {
     /// Writes an aggregation job back to the datastore.
-    async fn write_aggregation_job<'a, const SEED_SIZE: usize, C, B, A, RA>(
-        tx: &Transaction<'_, C>,
+    async fn write_aggregation_job<'a, const SEED_SIZE: usize, B, A, RA>(
+        tx: &Transaction<'_>,
         aggregation_job_info: &CowAggregationJobInfo<'a, SEED_SIZE, B, A, RA>,
     ) -> Result<(), Error>
     where
-        C: Clock,
         B: AccumulableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
         RA: ReportAggregationUpdate<SEED_SIZE, A>;
@@ -285,12 +284,11 @@ pub struct InitialWrite;
 
 #[async_trait]
 impl WriteType for InitialWrite {
-    async fn write_aggregation_job<'a, const SEED_SIZE: usize, C, B, A, RA>(
-        tx: &Transaction<'_, C>,
+    async fn write_aggregation_job<'a, const SEED_SIZE: usize, B, A, RA>(
+        tx: &Transaction<'_>,
         aggregation_job_info: &CowAggregationJobInfo<'a, SEED_SIZE, B, A, RA>,
     ) -> Result<(), Error>
     where
-        C: Clock,
         B: AccumulableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
         RA: ReportAggregationUpdate<SEED_SIZE, A>,
@@ -349,12 +347,11 @@ pub struct UpdateWrite;
 
 #[async_trait]
 impl WriteType for UpdateWrite {
-    async fn write_aggregation_job<'a, const SEED_SIZE: usize, C, B, A, RA>(
-        tx: &Transaction<'_, C>,
+    async fn write_aggregation_job<'a, const SEED_SIZE: usize, B, A, RA>(
+        tx: &Transaction<'_>,
         aggregation_job_info: &CowAggregationJobInfo<'a, SEED_SIZE, B, A, RA>,
     ) -> Result<(), Error>
     where
-        C: Clock,
         B: AccumulableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
         RA: ReportAggregationUpdate<SEED_SIZE, A>,
@@ -452,8 +449,8 @@ where
 {
     /// Construct a new set of lookup maps and copy-on-write data structures, from a provided set of
     /// aggregation jobs and the current state of the datastore.
-    pub async fn new<C: Clock>(
-        tx: &Transaction<'_, C>,
+    pub async fn new(
+        tx: &Transaction<'_>,
         vdaf: &A,
         writer: &'a AggregationJobWriter<SEED_SIZE, B, A, WT, RA>,
     ) -> Result<Self, Error> {
@@ -922,11 +919,11 @@ pub trait ReportAggregationUpdate<const SEED_SIZE: usize, A: AsyncAggregator<SEE
 
     /// Write this report aggregation to the datastore. This must be used only with newly-created
     /// report aggregations.
-    async fn write_new(&self, tx: &Transaction<impl Clock>) -> Result<(), Error>;
+    async fn write_new(&self, tx: &Transaction) -> Result<(), Error>;
 
     /// Write this report aggregation to the datastore. This must be used only for updates to
     /// existing report aggregations.
-    async fn write_update(&self, tx: &Transaction<impl Clock>) -> Result<(), Error>;
+    async fn write_update(&self, tx: &Transaction) -> Result<(), Error>;
 
     /// Returns a borrowed `Cow` referring to this report aggregation.
     fn borrow(&self) -> Cow<'_, Self::Borrowed>;
@@ -993,11 +990,11 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> ReportAggregationUpd
         self.report_aggregation.last_verify_resp()
     }
 
-    async fn write_new(&self, tx: &Transaction<impl Clock>) -> Result<(), Error> {
+    async fn write_new(&self, tx: &Transaction) -> Result<(), Error> {
         tx.put_report_aggregation(&self.report_aggregation).await
     }
 
-    async fn write_update(&self, tx: &Transaction<impl Clock>) -> Result<(), Error> {
+    async fn write_update(&self, tx: &Transaction) -> Result<(), Error> {
         tx.update_report_aggregation(&self.report_aggregation).await
     }
 
@@ -1042,11 +1039,11 @@ where
         None
     }
 
-    async fn write_new(&self, tx: &Transaction<impl Clock>) -> Result<(), Error> {
+    async fn write_new(&self, tx: &Transaction) -> Result<(), Error> {
         tx.put_leader_report_aggregation(self).await
     }
 
-    async fn write_update(&self, _tx: &Transaction<impl Clock>) -> Result<(), Error> {
+    async fn write_update(&self, _tx: &Transaction) -> Result<(), Error> {
         panic!("tried to update an existing report aggregation via ReportAggregationMetadata")
     }
 
@@ -1094,11 +1091,11 @@ where
         self.as_ref().last_verify_resp()
     }
 
-    async fn write_new(&self, tx: &Transaction<impl Clock>) -> Result<(), Error> {
+    async fn write_new(&self, tx: &Transaction) -> Result<(), Error> {
         self.as_ref().write_new(tx).await
     }
 
-    async fn write_update(&self, tx: &Transaction<impl Clock>) -> Result<(), Error> {
+    async fn write_update(&self, tx: &Transaction) -> Result<(), Error> {
         self.as_ref().write_update(tx).await
     }
 

@@ -1009,21 +1009,21 @@ impl<C: Clock> Aggregator<C> {
 // TODO(#1307): refactor Aggregator to perform indepedent batched operations (e.g. report handling
 // in Aggregate requests) using a parallelized library like Rayon.
 #[derive(Debug)]
-pub struct TaskAggregator<C: Clock> {
+pub struct TaskAggregator {
     /// The task being aggregated.
     pub(crate) task: Arc<AggregatorTask>,
     /// VDAF-specific operations.
     vdaf_ops: VdafOps,
     /// Report writer, with support for batching.
-    report_writer: Arc<ReportWriteBatcher<C>>,
+    report_writer: Arc<ReportWriteBatcher>,
 }
 
-impl<C: Clock> TaskAggregator<C> {
+impl TaskAggregator {
     /// Create a new aggregator. `report_recipient` is used to decrypt reports received by this
     /// aggregator.
     pub fn new(
         task: AggregatorTask,
-        report_writer: Arc<ReportWriteBatcher<C>>,
+        report_writer: Arc<ReportWriteBatcher>,
     ) -> Result<Self, Error> {
         let vdaf_ops = match task.vdaf() {
             VdafInstance::Prio3Count => {
@@ -1129,7 +1129,7 @@ impl<C: Clock> TaskAggregator<C> {
             .await
     }
 
-    async fn handle_aggregate_init(
+    async fn handle_aggregate_init<C: Clock>(
         &self,
         datastore: Arc<Datastore<C>>,
         hpke_keypairs: Arc<HpkeKeypairCache>,
@@ -1157,7 +1157,7 @@ impl<C: Clock> TaskAggregator<C> {
             .await
     }
 
-    async fn handle_aggregate_continue(
+    async fn handle_aggregate_continue<C: Clock>(
         &self,
         datastore: Arc<Datastore<C>>,
         metrics: &AggregatorMetrics,
@@ -1181,7 +1181,7 @@ impl<C: Clock> TaskAggregator<C> {
             .await
     }
 
-    async fn handle_aggregate_get(
+    async fn handle_aggregate_get<C: Clock>(
         &self,
         datastore: Arc<Datastore<C>>,
         aggregation_job_id: &AggregationJobId,
@@ -1192,7 +1192,7 @@ impl<C: Clock> TaskAggregator<C> {
             .await
     }
 
-    async fn handle_aggregate_delete(
+    async fn handle_aggregate_delete<C: Clock>(
         &self,
         datastore: &Datastore<C>,
         aggregation_job_id: &AggregationJobId,
@@ -1202,7 +1202,7 @@ impl<C: Clock> TaskAggregator<C> {
             .await
     }
 
-    async fn handle_create_collection_job(
+    async fn handle_create_collection_job<C: Clock>(
         &self,
         datastore: &Datastore<C>,
         collection_job_id: &CollectionJobId,
@@ -1218,7 +1218,7 @@ impl<C: Clock> TaskAggregator<C> {
             .await
     }
 
-    async fn handle_get_collection_job(
+    async fn handle_get_collection_job<C: Clock>(
         &self,
         datastore: &Datastore<C>,
         collection_job_id: &CollectionJobId,
@@ -1228,7 +1228,7 @@ impl<C: Clock> TaskAggregator<C> {
             .await
     }
 
-    async fn handle_delete_collection_job(
+    async fn handle_delete_collection_job<C: Clock>(
         &self,
         datastore: &Datastore<C>,
         collection_job_id: &CollectionJobId,
@@ -1238,7 +1238,7 @@ impl<C: Clock> TaskAggregator<C> {
             .await
     }
 
-    async fn handle_aggregate_share(
+    async fn handle_aggregate_share<C: Clock>(
         &self,
         datastore: &Datastore<C>,
         clock: &dyn Clock,
@@ -1262,7 +1262,7 @@ impl<C: Clock> TaskAggregator<C> {
             .await
     }
 
-    async fn handle_get_aggregate_share(
+    async fn handle_get_aggregate_share<C: Clock>(
         &self,
         datastore: &Datastore<C>,
         collector_hpke_config: &HpkeConfig,
@@ -1278,7 +1278,7 @@ impl<C: Clock> TaskAggregator<C> {
             .await
     }
 
-    async fn handle_delete_aggregate_share(
+    async fn handle_delete_aggregate_share<C: Clock>(
         &self,
         datastore: &Datastore<C>,
         aggregate_share_id: &AggregateShareId,
@@ -1498,19 +1498,19 @@ macro_rules! vdaf_ops_dispatch {
 
 impl VdafOps {
     #[tracing::instrument(skip_all, fields(task_id = ?task.id()), err(level = Level::DEBUG))]
-    async fn handle_upload<C: Clock>(
+    async fn handle_upload(
         &self,
         clock: &dyn Clock,
         hpke_keypairs: &HpkeKeypairCache,
         metrics: &AggregatorMetrics,
         task: &AggregatorTask,
-        report_writer: &ReportWriteBatcher<C>,
+        report_writer: &ReportWriteBatcher,
         reports: impl Stream<Item = Result<Report, Error>>,
     ) -> Result<UploadErrors, Arc<Error>> {
         match task.batch_mode() {
             task::BatchMode::TimeInterval => {
                 vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
-                    Self::handle_upload_generic::<VERIFY_KEY_LENGTH, TimeInterval, VdafType, _>(
+                    Self::handle_upload_generic::<VERIFY_KEY_LENGTH, TimeInterval, VdafType>(
                         Arc::clone(vdaf),
                         clock,
                         hpke_keypairs,
@@ -1524,7 +1524,7 @@ impl VdafOps {
             }
             task::BatchMode::LeaderSelected { .. } => {
                 vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
-                    Self::handle_upload_generic::<VERIFY_KEY_LENGTH, LeaderSelected, VdafType, _>(
+                    Self::handle_upload_generic::<VERIFY_KEY_LENGTH, LeaderSelected, VdafType>(
                         Arc::clone(vdaf),
                         clock,
                         hpke_keypairs,
@@ -1764,18 +1764,17 @@ impl VdafOps {
         }
     }
 
-    async fn handle_upload_generic<const SEED_SIZE: usize, B, A, C>(
+    async fn handle_upload_generic<const SEED_SIZE: usize, B, A>(
         vdaf: Arc<A>,
         clock: &dyn Clock,
         hpke_keypairs: &HpkeKeypairCache,
         metrics: &AggregatorMetrics,
         task: &AggregatorTask,
-        report_writer: &ReportWriteBatcher<C>,
+        report_writer: &ReportWriteBatcher,
         report_stream: impl Stream<Item = Result<Report, Error>>,
     ) -> Result<UploadErrors, Arc<Error>>
     where
         A: AsyncAggregator<SEED_SIZE>,
-        C: Clock,
         B: UploadableBatchMode,
     {
         // Process reports as they arrive from the stream, feeding them into FuturesOrdered
@@ -1795,7 +1794,7 @@ impl VdafOps {
                         Ok(report) => {
                             let vdaf_clone = Arc::clone(&vdaf);
                             futures.push_back(async move {
-                                Self::handle_uploaded_report::<SEED_SIZE, B, A, C>(
+                                Self::handle_uploaded_report::<SEED_SIZE, B, A>(
                                     vdaf_clone,
                                     clock,
                                     hpke_keypairs,
@@ -1847,18 +1846,17 @@ impl VdafOps {
         Ok(UploadErrors::new(&status))
     }
 
-    async fn handle_uploaded_report<const SEED_SIZE: usize, B, A, C>(
+    async fn handle_uploaded_report<const SEED_SIZE: usize, B, A>(
         vdaf: Arc<A>,
         clock: &dyn Clock,
         hpke_keypairs: &HpkeKeypairCache,
         metrics: &AggregatorMetrics,
         task: &AggregatorTask,
-        report_writer: &ReportWriteBatcher<C>,
+        report_writer: &ReportWriteBatcher,
         report: &Report,
     ) -> Result<(), UploadError>
     where
         A: AsyncAggregator<SEED_SIZE>,
-        C: Clock,
         B: UploadableBatchMode,
     {
         // Shorthand function for generating an UploadError::ReportRejected with proper parameters
@@ -2112,8 +2110,8 @@ impl VdafOps {
 }
 
 impl VdafOps {
-    async fn check_aggregate_init_idempotency<const SEED_SIZE: usize, B, A, C>(
-        tx: &Transaction<'_, C>,
+    async fn check_aggregate_init_idempotency<const SEED_SIZE: usize, B, A>(
+        tx: &Transaction<'_>,
         vdaf: &A,
         task_id: &TaskId,
         request_hash: [u8; 32],
@@ -2124,7 +2122,6 @@ impl VdafOps {
     where
         B: AccumulableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
-        C: Clock,
     {
         let existing_aggregation_job = match tx
             .get_aggregation_job::<SEED_SIZE, B, A>(task_id, mutating_aggregation_job.id())
@@ -2909,9 +2906,8 @@ impl VdafOps {
         const SEED_SIZE: usize,
         B: AccumulableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
-        C: Clock,
     >(
-        tx: &Transaction<'_, C>,
+        tx: &Transaction<'_>,
         task: Arc<AggregatorTask>,
         vdaf: Arc<A>,
         batch_aggregation_shard_count: u64,
@@ -2960,9 +2956,8 @@ impl VdafOps {
         const SEED_SIZE: usize,
         B: AccumulableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
-        C: Clock,
     >(
-        tx: &Transaction<'_, C>,
+        tx: &Transaction<'_>,
         task: Arc<AggregatorTask>,
         vdaf: Arc<A>,
         batch_aggregation_shard_count: u64,
@@ -2998,9 +2993,8 @@ impl VdafOps {
         const SEED_SIZE: usize,
         B: AccumulableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
-        C: Clock,
     >(
-        tx: &Transaction<'_, C>,
+        tx: &Transaction<'_>,
         task: Arc<AggregatorTask>,
         vdaf: Arc<A>,
         batch_aggregation_shard_count: u64,
@@ -3289,7 +3283,7 @@ impl VdafOps {
 
                     debug!(collect_request = ?req, "Cache miss, creating new collection job");
                     let (_, report_count) = try_join!(
-                        B::validate_query_count::<SEED_SIZE, C, A>(
+                        B::validate_query_count::<SEED_SIZE, A>(
                             tx,
                             &vdaf,
                             &task,
@@ -3972,7 +3966,7 @@ impl VdafOps {
                             aggregate_share_req.batch_selector().batch_identifier(),
                             &aggregation_param
                         ),
-                        B::validate_query_count::<SEED_SIZE, C, A>(
+                        B::validate_query_count::<SEED_SIZE, A>(
                             tx,
                             vdaf.as_ref(),
                             &task,

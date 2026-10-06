@@ -443,7 +443,7 @@ fn pretty_print_jobs_and_leases<
 }
 
 async fn dispatch_list_collection_jobs(
-    tx: &Transaction<'_, RealClock>,
+    tx: &Transaction<'_>,
     task_id: &TaskId,
     collection_job_id: Option<CollectionJobId>,
 ) -> Result<(), crate::aggregator::Error> {
@@ -484,7 +484,7 @@ async fn list_collection_jobs_generic<
     B: janus_messages::batch_mode::BatchMode,
     A: AsyncAggregator<SEED_SIZE>,
 >(
-    tx: &Transaction<'_, RealClock>,
+    tx: &Transaction<'_>,
     vdaf: &A,
     task_id: &TaskId,
     collection_job_id: Option<CollectionJobId>,
@@ -522,7 +522,7 @@ async fn list_collection_jobs_generic<
 }
 
 async fn dispatch_list_aggregation_jobs(
-    tx: &Transaction<'_, RealClock>,
+    tx: &Transaction<'_>,
     task_id: &TaskId,
     aggregation_job_id: Option<AggregationJobId>,
 ) -> Result<(), crate::aggregator::Error> {
@@ -563,7 +563,7 @@ async fn list_aggregation_jobs_generic<
     B: janus_messages::batch_mode::BatchMode,
     A: AsyncAggregator<SEED_SIZE>,
 >(
-    tx: &Transaction<'_, RealClock>,
+    tx: &Transaction<'_>,
     task_id: &TaskId,
     aggregation_job_id: Option<AggregationJobId>,
 ) -> Result<(), crate::aggregator::Error> {

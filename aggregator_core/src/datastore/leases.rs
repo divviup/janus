@@ -3,7 +3,7 @@
 use std::fmt::Debug;
 
 use chrono::{DateTime, Utc};
-use janus_core::{time::Clock, vdaf::VdafInstance};
+use janus_core::vdaf::VdafInstance;
 use janus_messages::{
     AggregationJobId, CollectionJobId, TaskId, TimePrecision, batch_mode::BatchMode,
 };
@@ -17,7 +17,7 @@ use crate::datastore::{
     task,
 };
 
-impl<C: Clock> Transaction<'_, C> {
+impl Transaction<'_> {
     /// Return the lease on a collection job for the provided ID, or `None` if no such collection
     /// job exists.
     ///
