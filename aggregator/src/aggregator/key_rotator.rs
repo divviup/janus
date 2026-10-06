@@ -254,6 +254,7 @@ impl<'a, C: Clock> HpkeKeyRotator<'a, C> {
     ///     key.
     ///   - For each configured ciphersuite, expire all but the newest active key.
     fn sweep(mut self) -> Result<Self, DatastoreError> {
+        let now = self.clock.now();
         let mut ops: Vec<HpkeOp> = Vec::new();
 
         // Bootstrap new keys.
@@ -303,9 +304,7 @@ impl<'a, C: Clock> HpkeKeyRotator<'a, C> {
                 let latest_active_key = active_keypairs.front();
 
                 if let Some(latest_pending_key) = latest_pending_key {
-                    if self
-                        .clock
-                        .elapsed(*latest_pending_key.last_state_change_at())
+                    if now - *latest_pending_key.last_state_change_at()
                         > self.config.pending_duration()?
                     {
                         ops.push(HpkeOp::Update(
@@ -323,9 +322,7 @@ impl<'a, C: Clock> HpkeKeyRotator<'a, C> {
                         }
                     }
                 } else if let Some(latest_active_key) = latest_active_key
-                    && self
-                        .clock
-                        .elapsed(*latest_active_key.last_state_change_at())
+                    && now - *latest_active_key.last_state_change_at()
                         > self.config.active_duration()?
                 {
                     ops.push(HpkeOp::Create(
@@ -359,9 +356,7 @@ impl<'a, C: Clock> HpkeKeyRotator<'a, C> {
             ops.extend(
                 expired_keypairs
                     .iter()
-                    .filter(|keypair| {
-                        self.clock.elapsed(*keypair.last_state_change_at()) > expired_duration
-                    })
+                    .filter(|keypair| now - *keypair.last_state_change_at() > expired_duration)
                     .map(|keypair| HpkeOp::Delete(*keypair.id(), "expired key")),
             );
         }
@@ -888,7 +883,7 @@ mod tests {
             if active_keys.len() > 1 {
                 return TestResult::error("there should be at most 1 active key");
             } else if active_keys.len() == 1
-                && clock.elapsed(*active_keys[0].last_state_change_at())
+                && clock.now() - *active_keys[0].last_state_change_at()
                     > config.active_duration().unwrap()
                 && !key_rotator.keypairs.values().any(|keypair| {
                     keypair.state() == &HpkeKeyState::Pending
@@ -959,7 +954,7 @@ mod tests {
             .keypairs
             .iter()
             .filter(|(_, keypair)| {
-                clock.elapsed(*keypair.last_state_change_at()) > config.expired_duration().unwrap()
+                clock.now() - *keypair.last_state_change_at() > config.expired_duration().unwrap()
                     && keypair.state() == &HpkeKeyState::Expired
             })
             .map(|(id, _)| *id)

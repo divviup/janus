@@ -12,12 +12,6 @@ use janus_messages::{Duration, Error, Interval, Time, TimePrecision};
 pub trait Clock: 'static + Clone + Debug + Sync + Send {
     /// Get the current time.
     fn now(&self) -> DateTime<Utc>;
-
-    /// Get the [`chrono::TimeDelta`] elapsed since the provided time according to this clock's
-    /// current time.
-    fn elapsed(&self, since: DateTime<Utc>) -> TimeDelta {
-        self.now() - since
-    }
 }
 
 /// A real clock returns the current time relative to the Unix epoch.
