@@ -707,6 +707,7 @@ impl CollectionJobDriver {
         clock: C,
         maximum_attempts_before_failure: usize,
     ) -> impl Fn(Lease<AcquiredCollectionJob>) -> BoxFuture<'static, Result<(), super::Error>> {
+        let clock = Arc::new(clock);
         move |lease: Lease<AcquiredCollectionJob>| {
             let (this, datastore) = (Arc::clone(&self), Arc::clone(&datastore));
             let lease = Arc::new(lease);

@@ -9,7 +9,7 @@ use chrono::{DateTime, TimeDelta, Utc};
 use janus_messages::{Duration, Error, Interval, Time, TimePrecision};
 
 /// A clock knows what time it currently is.
-pub trait Clock: 'static + Clone + Debug + Sync + Send {
+pub trait Clock: 'static + Debug + Sync + Send {
     /// Get the current time.
     fn now(&self) -> DateTime<Utc>;
 }

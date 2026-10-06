@@ -286,7 +286,7 @@ pub fn janus_main<C, Options, Config, F, Fut>(
     f: F,
 ) -> anyhow::Result<()>
 where
-    C: Clock,
+    C: Clock + Clone,
     Options: BinaryOptions,
     Config: BinaryConfig,
     F: FnOnce(BinaryContext<C, Options, Config>) -> Fut,
