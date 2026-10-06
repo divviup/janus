@@ -177,7 +177,7 @@ impl<C: Clock> KeyRotator<C> {
             .map(|keypair| (*keypair.id(), keypair))
             .collect();
 
-        HpkeKeyRotator::new(tx.clock().clone(), keypairs, config)?
+        HpkeKeyRotator::new(tx.clock(), keypairs, config)?
             .sweep()?
             .write(tx)
             .await
@@ -188,7 +188,7 @@ impl<C: Clock> KeyRotator<C> {
 #[derive(Educe)]
 #[educe(Debug)]
 struct HpkeKeyRotator<'a, C: Clock> {
-    clock: C,
+    clock: &'a C,
     config: &'a HpkeKeyRotatorConfig,
 
     // Data structures for intermediate state.
@@ -200,7 +200,7 @@ struct HpkeKeyRotator<'a, C: Clock> {
 
 impl<'a, C: Clock> HpkeKeyRotator<'a, C> {
     fn new(
-        clock: C,
+        clock: &'a C,
         keypairs: HashMap<HpkeConfigId, HpkeKeypair>,
         config: &'a HpkeKeyRotatorConfig,
     ) -> Result<Self, DatastoreError> {
@@ -751,7 +751,7 @@ mod tests {
             })
             .collect();
 
-        let key_rotator = HpkeKeyRotator::new(clock, state.keypairs, &config)
+        let key_rotator = HpkeKeyRotator::new(&clock, state.keypairs, &config)
             .unwrap()
             .sweep()
             .unwrap();
@@ -798,7 +798,7 @@ mod tests {
             return TestResult::discard();
         }
 
-        let key_rotator = HpkeKeyRotator::new(clock, state.keypairs, &config)
+        let key_rotator = HpkeKeyRotator::new(&clock, state.keypairs, &config)
             .unwrap()
             .sweep()
             .unwrap();
@@ -839,7 +839,7 @@ mod tests {
             })
             .collect();
 
-        let key_rotator = HpkeKeyRotator::new(clock, state.keypairs, &config)
+        let key_rotator = HpkeKeyRotator::new(&clock, state.keypairs, &config)
             .unwrap()
             .sweep()
             .unwrap();
@@ -865,7 +865,7 @@ mod tests {
         state: InitialHpkeKeysState,
     ) -> TestResult {
         let clock = MockClock::new(state.start);
-        let key_rotator = HpkeKeyRotator::new(clock.clone(), state.keypairs, &config)
+        let key_rotator = HpkeKeyRotator::new(&clock, state.keypairs, &config)
             .unwrap()
             .sweep()
             .unwrap();
@@ -903,7 +903,7 @@ mod tests {
         state: InitialHpkeKeysState,
     ) -> TestResult {
         let clock = MockClock::new(state.start);
-        let key_rotator = HpkeKeyRotator::new(clock, state.keypairs.clone(), &config)
+        let key_rotator = HpkeKeyRotator::new(&clock, state.keypairs.clone(), &config)
             .unwrap()
             .sweep()
             .unwrap();
@@ -964,7 +964,7 @@ mod tests {
             return TestResult::discard();
         }
 
-        let key_rotator = HpkeKeyRotator::new(clock, state.keypairs, &config)
+        let key_rotator = HpkeKeyRotator::new(&clock, state.keypairs, &config)
             .unwrap()
             .sweep()
             .unwrap();
