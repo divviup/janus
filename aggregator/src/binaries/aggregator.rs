@@ -62,7 +62,7 @@ async fn run_aggregator(
     sender: watch::Sender<Option<SocketAddr>>,
 ) -> Result<()> {
     let BinaryContext {
-        clock,
+        clock: _,
         options,
         mut config,
         datastore,
@@ -95,7 +95,6 @@ async fn run_aggregator(
 
     let mut aggregator_handler = AggregatorHandlerBuilder::new(
         Arc::clone(&datastore),
-        clock,
         TokioRuntime,
         &meter,
         config.aggregator_config(&options)?,

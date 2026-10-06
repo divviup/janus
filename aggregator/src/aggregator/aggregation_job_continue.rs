@@ -518,7 +518,6 @@ mod tests {
         // Create aggregator router.
         let builder = AggregatorHandlerBuilder::new(
             Arc::clone(&datastore),
-            clock,
             TestRuntime::default(),
             &meter,
             default_aggregator_config(),

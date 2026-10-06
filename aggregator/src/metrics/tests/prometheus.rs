@@ -103,7 +103,6 @@ async fn http_metrics() {
     datastore.put_hpke_key().await.unwrap();
     let router = AggregatorHandlerBuilder::new(
         datastore.clone(),
-        clock.clone(),
         TestRuntime::default(),
         &meter,
         default_aggregator_config(),

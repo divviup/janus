@@ -423,7 +423,6 @@ async fn bad_client_report_validity() {
 
     let handler = AggregatorHandlerBuilder::new(
         Arc::clone(&datastore),
-        clock,
         TestRuntime::default(),
         &noop_meter(),
         Default::default(),

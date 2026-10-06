@@ -77,15 +77,9 @@ impl UploadTest {
         let hpke_keypair = datastore.put_hpke_key().await.unwrap();
         datastore.put_aggregator_task(&leader_task).await.unwrap();
 
-        let aggregator = Aggregator::new(
-            Arc::clone(&datastore),
-            clock.clone(),
-            runtime,
-            &noop_meter(),
-            cfg,
-        )
-        .await
-        .unwrap();
+        let aggregator = Aggregator::new(Arc::clone(&datastore), runtime, &noop_meter(), cfg)
+            .await
+            .unwrap();
 
         Self {
             vdaf,

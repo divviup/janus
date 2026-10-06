@@ -157,7 +157,6 @@ where
 
         let router = AggregatorHandlerBuilder::new(
             Arc::clone(&datastore),
-            clock.clone(),
             TestRuntime::default(),
             &noop_meter(),
             Config {

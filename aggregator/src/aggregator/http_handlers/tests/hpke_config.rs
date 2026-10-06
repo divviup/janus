@@ -37,7 +37,6 @@ use crate::{
 #[tokio::test]
 async fn hpke_config() {
     let HttpHandlerTest {
-        clock,
         ephemeral_datastore: _ephemeral_datastore,
         datastore,
         hpke_keypair: first_hpke_keypair,
@@ -47,7 +46,6 @@ async fn hpke_config() {
     let aggregator = Arc::new(
         crate::aggregator::Aggregator::new(
             datastore.clone(),
-            clock.clone(),
             TestRuntime::default(),
             &noop_meter(),
             Config {
@@ -199,7 +197,6 @@ async fn hpke_config() {
 #[tokio::test]
 async fn hpke_config_with_taskprov() {
     let HttpHandlerTest {
-        clock,
         ephemeral_datastore: _ephemeral_datastore,
         datastore,
         hpke_keypair,
@@ -230,7 +227,6 @@ async fn hpke_config_with_taskprov() {
     let aggregator = Arc::new(
         crate::aggregator::Aggregator::new(
             datastore.clone(),
-            clock.clone(),
             TestRuntime::default(),
             &noop_meter(),
             cfg,
@@ -364,7 +360,6 @@ async fn hpke_config_cors_headers() {
 #[tokio::test]
 async fn hpke_config_list_order() {
     let HttpHandlerTest {
-        clock,
         ephemeral_datastore: _ephemeral_datastore,
         datastore,
         ..
@@ -531,7 +526,6 @@ async fn hpke_config_list_order() {
     let aggregator = Arc::new(
         crate::aggregator::Aggregator::new(
             datastore.clone(),
-            clock.clone(),
             TestRuntime::default(),
             &noop_meter(),
             Config {

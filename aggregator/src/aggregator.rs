@@ -143,8 +143,6 @@ mod upload_tests;
 pub struct Aggregator<C: Clock> {
     /// Datastore used for durable storage.
     datastore: Arc<Datastore<C>>,
-    /// Clock used to sample time.
-    clock: C,
     /// Configuration used for this aggregator.
     cfg: Config,
     /// Cache of task aggregators.
@@ -289,7 +287,6 @@ impl<C: Clock> Aggregator<C> {
     /// state then this function will fail.
     async fn new<R: Runtime + Send + Sync + 'static>(
         datastore: Arc<Datastore<C>>,
-        clock: C,
         runtime: R,
         meter: &Meter,
         cfg: Config,
@@ -355,7 +352,6 @@ impl<C: Clock> Aggregator<C> {
 
         Ok(Self {
             datastore,
-            clock,
             cfg,
             task_aggregators,
             metrics: AggregatorMetrics {
@@ -409,7 +405,12 @@ impl<C: Clock> Aggregator<C> {
             return Err(Arc::new(Error::UnrecognizedTask(*task_id)));
         }
         task_aggregator
-            .handle_upload(&self.clock, &self.hpke_keypairs, &self.metrics, reports)
+            .handle_upload(
+                self.datastore.clock(),
+                &self.hpke_keypairs,
+                &self.metrics,
+                reports,
+            )
             .await
     }
 
@@ -786,7 +787,7 @@ impl<C: Clock> Aggregator<C> {
         task_aggregator
             .handle_aggregate_share(
                 &self.datastore,
-                &self.clock,
+                self.datastore.clock(),
                 self.cfg.batch_aggregation_shard_count,
                 self.cfg.max_future_concurrency,
                 req_bytes,

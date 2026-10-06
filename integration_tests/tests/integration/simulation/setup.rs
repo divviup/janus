@@ -80,7 +80,6 @@ impl SimulationAggregator {
 
         let aggregator_handler = AggregatorHandlerBuilder::new(
             Arc::clone(&datastore),
-            state.clock.clone(),
             report_writer_runtime,
             meter,
             AggregatorConfig {

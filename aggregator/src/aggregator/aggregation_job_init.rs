@@ -867,7 +867,6 @@ mod tests {
         let meter = noop_meter();
         let builder = AggregatorHandlerBuilder::new(
             Arc::clone(&datastore),
-            clock.clone(),
             TestRuntime::default(),
             &meter,
             Config::default(),
@@ -1259,7 +1258,6 @@ mod tests {
         let meter = noop_meter();
         let builder = AggregatorHandlerBuilder::new(
             Arc::clone(&datastore),
-            clock.clone(),
             TestRuntime::default(),
             &meter,
             Config::default(),
@@ -1407,7 +1405,6 @@ mod tests {
         let meter = noop_meter();
         let builder = AggregatorHandlerBuilder::new(
             Arc::clone(&datastore),
-            clock.clone(),
             TestRuntime::default(),
             &meter,
             Config::default(),

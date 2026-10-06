@@ -934,7 +934,6 @@ async fn upload_handler_error_fanout() {
     let hpke_keypair = datastore.put_hpke_key().await.unwrap();
     let router = AggregatorHandlerBuilder::new(
         datastore.clone(),
-        clock.clone(),
         TestRuntime::default(),
         &noop_meter(),
         default_aggregator_config(),
@@ -1063,7 +1062,6 @@ async fn upload_client_early_disconnect() {
     let hpke_keypair = datastore.put_hpke_key().await.unwrap();
     let builder = AggregatorHandlerBuilder::new(
         datastore.clone(),
-        clock.clone(),
         TestRuntime::default(),
         &in_memory_metrics.meter,
         default_aggregator_config(),
@@ -1317,7 +1315,6 @@ async fn upload_client_http11_bulk() {
     let metrics = InMemoryMetricInfrastructure::new();
     let router = AggregatorHandlerBuilder::new(
         datastore.clone(),
-        clock.clone(),
         TestRuntime::default(),
         &metrics.meter,
         default_aggregator_config(),

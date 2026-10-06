@@ -496,7 +496,6 @@ where
 {
     pub async fn new<R>(
         datastore: Arc<Datastore<C>>,
-        clock: C,
         runtime: R,
         meter: &'a Meter,
         cfg: Config,
@@ -504,7 +503,7 @@ where
     where
         R: Runtime + Send + Sync + 'static,
     {
-        let aggregator = Arc::new(Aggregator::new(datastore, clock, runtime, meter, cfg).await?);
+        let aggregator = Arc::new(Aggregator::new(datastore, runtime, meter, cfg).await?);
         Ok(Self::from_aggregator(aggregator, meter))
     }
 
@@ -1176,7 +1175,6 @@ pub mod test_util {
             let meter = noop_meter();
             let router = AggregatorHandlerBuilder::new(
                 datastore.clone(),
-                clock.clone(),
                 TestRuntime::default(),
                 &meter,
                 default_aggregator_config(),
