@@ -114,7 +114,7 @@ async fn reject_unsupported_schema_version(ephemeral_datastore: EphemeralDatasto
     let error = Datastore::new_with_supported_versions(
         ephemeral_datastore.pool(),
         ephemeral_datastore.crypter(),
-        MockClock::default(),
+        Arc::new(MockClock::default()),
         &noop_meter(),
         &[0],
         TEST_DATASTORE_MAX_TRANSACTION_RETRIES,
@@ -4330,7 +4330,7 @@ impl TestBatchModeExt for LeaderSelected {
 }
 
 async fn setup_collection_job_acquire_test_case<B: TestBatchModeExt>(
-    ds: &Datastore<MockClock>,
+    ds: &Datastore,
     test_case: CollectionJobAcquireTestCase<B>,
 ) -> CollectionJobAcquireTestCase<B> {
     ds.run_unnamed_tx(|tx| {
@@ -4414,7 +4414,7 @@ async fn setup_collection_job_acquire_test_case<B: TestBatchModeExt>(
 }
 
 async fn run_collection_job_acquire_test_case<B: TestBatchModeExt>(
-    ds: &Datastore<MockClock>,
+    ds: &Datastore,
     test_case: CollectionJobAcquireTestCase<B>,
 ) -> Vec<Lease<AcquiredCollectionJob>> {
     let test_case = setup_collection_job_acquire_test_case(ds, test_case).await;
@@ -8570,8 +8570,8 @@ async fn roundtrip_interval_sql(ephemeral_datastore: EphemeralDatastore) {
 #[tokio::test]
 async fn roundtrip_hpke_keypair(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
-    let datastore = ephemeral_datastore.datastore(MockClock::default()).await;
-    let clock = datastore.clock.clone();
+    let clock = MockClock::default();
+    let datastore = ephemeral_datastore.datastore(clock.clone()).await;
     let keypair = hpke::HpkeKeypair::test();
 
     datastore

@@ -13,10 +13,7 @@ use janus_aggregator_core::{
     datastore::{Datastore, models::HpkeKeypair},
     taskprov::PeerAggregator,
 };
-use janus_core::{
-    hpke::{self, HpkeCiphersuite},
-    time::Clock,
-};
+use janus_core::hpke::{self, HpkeCiphersuite};
 use janus_messages::{HpkeConfig, HpkeConfigId, Role, TaskId};
 use moka::{
     Entry,
@@ -72,8 +69,8 @@ impl HpkeKeypairCache {
     const WAIT_RETRY_INTERVAL: Duration = Duration::from_secs(1);
     const WAIT_MAX_RETRIES: u32 = 10;
 
-    pub async fn new<C: Clock>(
-        datastore: Arc<Datastore<C>>,
+    pub async fn new(
+        datastore: Arc<Datastore>,
         refresh_interval: Duration,
         algorithm_priority: Vec<HpkeCiphersuite>,
         keypair_use_counter: Counter<u64>,
@@ -128,9 +125,7 @@ impl HpkeKeypairCache {
         })
     }
 
-    async fn get_hpke_keypairs<C: Clock>(
-        datastore: &Datastore<C>,
-    ) -> Result<Vec<HpkeKeypair>, Error> {
+    async fn get_hpke_keypairs(datastore: &Datastore) -> Result<Vec<HpkeKeypair>, Error> {
         // We need to ensure that there's at least one active keypair in the database before
         // proceeding.
         for _ in 0..Self::WAIT_MAX_RETRIES {
@@ -155,8 +150,8 @@ impl HpkeKeypairCache {
     }
 
     #[tracing::instrument(skip_all, err)]
-    async fn refresh_inner<C: Clock>(
-        datastore: &Datastore<C>,
+    async fn refresh_inner(
+        datastore: &Datastore,
         state: &StdMutex<HpkeKeypairCacheState>,
         algorithm_priority: &[HpkeCiphersuite],
         keypair_use_counter: &Counter<u64>,
@@ -206,7 +201,7 @@ impl HpkeKeypairCache {
     }
 
     #[cfg(feature = "test-util")]
-    pub async fn refresh<C: Clock>(&self, datastore: &Datastore<C>) -> Result<(), Error> {
+    pub async fn refresh(&self, datastore: &Datastore) -> Result<(), Error> {
         Self::refresh_inner(
             datastore,
             &self.state,
@@ -245,7 +240,7 @@ pub struct PeerAggregatorCache {
 }
 
 impl PeerAggregatorCache {
-    pub async fn new<C: Clock>(datastore: &Datastore<C>) -> Result<Self, Error> {
+    pub async fn new(datastore: &Datastore) -> Result<Self, Error> {
         Ok(Self {
             peers: datastore
                 .run_tx("refresh_peer_aggregators_cache", |tx| {
@@ -267,8 +262,8 @@ impl PeerAggregatorCache {
 }
 
 #[derive(Debug)]
-pub struct TaskAggregatorCache<C: Clock> {
-    datastore: Arc<Datastore<C>>,
+pub struct TaskAggregatorCache {
+    datastore: Arc<Datastore>,
     report_writer: Arc<ReportWriteBatcher>,
     cache: Cache<TaskId, TaskAggregatorRef>,
     cache_none: bool,
@@ -281,9 +276,9 @@ type TaskAggregatorRef = Option<Arc<TaskAggregator>>;
 pub const TASK_AGGREGATOR_CACHE_DEFAULT_TTL: Duration = Duration::from_secs(600);
 pub const TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY: u64 = 10_000;
 
-impl<C: Clock> TaskAggregatorCache<C> {
+impl TaskAggregatorCache {
     pub fn new(
-        datastore: Arc<Datastore<C>>,
+        datastore: Arc<Datastore>,
         report_writer: ReportWriteBatcher,
         cache_none: bool,
         capacity: u64,

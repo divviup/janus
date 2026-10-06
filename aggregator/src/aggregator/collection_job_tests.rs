@@ -49,7 +49,7 @@ pub(crate) struct CollectionJobTestCase {
     pub(super) task: Task,
     clock: MockClock,
     pub(super) router: Router,
-    pub(super) datastore: Arc<Datastore<MockClock>>,
+    pub(super) datastore: Arc<Datastore>,
     _ephemeral_datastore: EphemeralDatastore,
 }
 

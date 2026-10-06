@@ -1,6 +1,9 @@
 //! Functionality for tests interacting with Janus (<https://github.com/divviup/janus>).
 
-use std::net::{Ipv4Addr, SocketAddr};
+use std::{
+    net::{Ipv4Addr, SocketAddr},
+    sync::Arc,
+};
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use janus_aggregator::{
@@ -103,7 +106,7 @@ impl JanusContainer {
 pub struct JanusInProcess {
     socket_address: SocketAddr,
     stopper: Stopper,
-    datastore: Datastore<RealClock>,
+    datastore: Datastore,
     _ephemeral_datastore: EphemeralDatastore,
     pub aggregator_metrics: InMemoryMetricInfrastructure,
     pub aggregation_job_creator_metrics: InMemoryMetricInfrastructure,
@@ -120,6 +123,7 @@ impl JanusInProcess {
         // Set up common utilities.
         let stopper = Stopper::new();
         let clock = RealClock::default();
+        let clock_arc = Arc::new(clock);
         let ephemeral_datastore = ephemeral_datastore().await;
         let datastore = ephemeral_datastore.datastore(clock).await;
         let encoded_datastore_key =
@@ -263,7 +267,7 @@ impl JanusInProcess {
         // Spawn each component.
         let (aggregator_future, mut socket_address_receiver) =
             aggregator::make_callback_ephemeral_address(BinaryContext {
-                clock,
+                clock: clock_arc.clone(),
                 options: aggregator_options,
                 config: aggregator_config,
                 datastore: ephemeral_datastore.datastore(clock).await,
@@ -275,7 +279,7 @@ impl JanusInProcess {
         });
         tokio::spawn({
             let future = aggregation_job_creator::main_callback(BinaryContext {
-                clock,
+                clock: clock_arc.clone(),
                 options: aggregation_job_creator_options,
                 config: aggregation_job_creator_config,
                 datastore: ephemeral_datastore.datastore(clock).await,
@@ -288,7 +292,7 @@ impl JanusInProcess {
         });
         tokio::spawn({
             let future = aggregation_job_driver::main_callback(BinaryContext {
-                clock,
+                clock: clock_arc.clone(),
                 options: aggregation_job_driver_options,
                 config: aggregation_job_driver_config,
                 datastore: ephemeral_datastore.datastore(clock).await,
@@ -301,7 +305,7 @@ impl JanusInProcess {
         });
         tokio::spawn({
             let future = collection_job_driver::main_callback(BinaryContext {
-                clock,
+                clock: clock_arc.clone(),
                 options: collection_job_driver_options,
                 config: collection_job_driver_config,
                 datastore: ephemeral_datastore.datastore(clock).await,
@@ -314,7 +318,7 @@ impl JanusInProcess {
         });
         tokio::spawn({
             let future = key_rotator::main_callback(BinaryContext {
-                clock,
+                clock: clock_arc.clone(),
                 options: key_rotator_options,
                 config: key_rotator_config,
                 datastore,

@@ -15,7 +15,7 @@ use janus_aggregator_core::{
         self, Datastore, Transaction, models::LeaderStoredReport, task_counters::TaskUploadCounter,
     },
 };
-use janus_core::{Runtime, time::Clock};
+use janus_core::Runtime;
 use janus_messages::TaskId;
 use rand::{RngExt, rng};
 use tokio::{
@@ -44,8 +44,8 @@ pub struct ReportWriteBatcher {
 }
 
 impl ReportWriteBatcher {
-    pub fn new<R: Runtime + Send + Sync + 'static, C: Clock>(
-        ds: Arc<Datastore<C>>,
+    pub fn new<R: Runtime + Send + Sync + 'static>(
+        ds: Arc<Datastore>,
         runtime: R,
         counter_shard_count: u64,
         max_batch_size: usize,
@@ -112,8 +112,8 @@ impl ReportWriteBatcher {
         name = "ReportWriteBatcher::run_upload_batcher",
         skip(ds, runtime, report_rx)
     )]
-    async fn run_upload_batcher<R: Runtime + Send + Sync, C: Clock>(
-        ds: Arc<Datastore<C>>,
+    async fn run_upload_batcher<R: Runtime + Send + Sync>(
+        ds: Arc<Datastore>,
         runtime: Arc<R>,
         mut report_rx: ReportWriteBatcherReceiver,
         counter_shard_count: u64,
@@ -165,8 +165,8 @@ impl ReportWriteBatcher {
     }
 
     #[tracing::instrument(name = "ReportWriteBatcher::write_batch", skip_all)]
-    async fn write_batch<C: Clock>(
-        ds: Arc<Datastore<C>>,
+    async fn write_batch(
+        ds: Arc<Datastore>,
         counter_shard_count: u64,
         report_results: Vec<(ReportResult, Option<ResultSender>)>,
     ) {

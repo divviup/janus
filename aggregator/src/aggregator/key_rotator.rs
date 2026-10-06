@@ -54,8 +54,8 @@ use crate::cache::HpkeKeypairCache;
 /// managed. The key rotator keeps only one key per ciphersuite around, preferring to use the latest
 /// inserted key.
 #[derive(Debug)]
-pub struct KeyRotator<C: Clock> {
-    datastore: Arc<Datastore<C>>,
+pub struct KeyRotator {
+    datastore: Arc<Datastore>,
     hpke: HpkeKeyRotatorConfig,
 }
 
@@ -132,8 +132,8 @@ impl Default for HpkeKeyRotatorConfig {
     }
 }
 
-impl<C: Clock> KeyRotator<C> {
-    pub fn new(datastore: Arc<Datastore<C>>, hpke: HpkeKeyRotatorConfig) -> Self {
+impl KeyRotator {
+    pub fn new(datastore: Arc<Datastore>, hpke: HpkeKeyRotatorConfig) -> Self {
         Self { datastore, hpke }
     }
 
@@ -561,7 +561,7 @@ mod tests {
     use super::HpkeKeyRotator;
     use crate::aggregator::key_rotator::{HpkeKeyRotatorConfig, KeyRotator};
 
-    async fn get_hpke_keypairs<C: Clock>(ds: &Datastore<C>) -> Vec<HpkeKeypair> {
+    async fn get_hpke_keypairs(ds: &Datastore) -> Vec<HpkeKeypair> {
         ds.run_unnamed_tx(|tx| Box::pin(async move { tx.get_hpke_keypairs().await }))
             .await
             .unwrap()

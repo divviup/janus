@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use clap::{Parser, Subcommand};
 use janus_aggregator::{
     binaries::{
@@ -53,7 +55,7 @@ enum Nested {
 }
 
 fn main() -> anyhow::Result<()> {
-    let clock = RealClock::default();
+    let clock = Arc::new(RealClock::default());
     match Options::parse() {
         Options::Aggregator(options) | Options::Default(Nested::Aggregator(options)) => janus_main(
             "aggregator",

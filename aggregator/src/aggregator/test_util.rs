@@ -7,7 +7,6 @@ use janus_aggregator_core::{
 };
 use janus_core::{
     hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
-    time::MockClock,
     vdaf::{VdafInstance, vdaf_application_context},
 };
 use janus_messages::{
@@ -182,7 +181,7 @@ pub fn generate_helper_report_share_for_plaintext(
 }
 
 pub async fn assert_task_aggregation_counter(
-    datastore: &Datastore<MockClock>,
+    datastore: &Datastore,
     task_id: TaskId,
     expected_counters: TaskAggregationCounter,
 ) {

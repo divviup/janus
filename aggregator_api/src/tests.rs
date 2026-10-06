@@ -48,7 +48,7 @@ use crate::{
 
 const AUTH_TOKEN: &str = "Y29sbGVjdG9yLWFiY2RlZjAw";
 
-async fn setup_api_test() -> (axum::Router, EphemeralDatastore, Arc<Datastore<MockClock>>) {
+async fn setup_api_test() -> (axum::Router, EphemeralDatastore, Arc<Datastore>) {
     install_test_trace_subscriber();
     let ephemeral_datastore = ephemeral_datastore().await;
     let datastore = Arc::new(ephemeral_datastore.datastore(MockClock::default()).await);

@@ -317,7 +317,7 @@ async fn aggregation_job_driver() {
     // Run. Let the aggregation job driver step aggregation jobs, then kill it.
     let aggregation_job_driver = Arc::new(
         JobDriver::new(
-            clock,
+            Arc::new(clock),
             runtime_manager.with_label("stepper"),
             noop_meter(),
             stopper.clone(),
@@ -5797,7 +5797,7 @@ struct CancelAggregationJobTestCase {
     batch_identifier: Interval,
     report_aggregation: ReportAggregation<VERIFY_KEY_LENGTH_PRIO3, Prio3Count>,
     _ephemeral_datastore: EphemeralDatastore,
-    datastore: Arc<Datastore<MockClock>>,
+    datastore: Arc<Datastore>,
     lease: Lease<AcquiredAggregationJob>,
     mock_helper: ServerGuard,
 }
@@ -6202,7 +6202,7 @@ async fn abandon_failing_aggregation_job_with_retryable_error() {
     ));
     let job_driver = Arc::new(
         JobDriver::new(
-            clock.clone(),
+            Arc::new(clock.clone()),
             runtime_manager.with_label("stepper"),
             noop_meter(),
             stopper.clone(),
@@ -6454,7 +6454,7 @@ async fn abandon_failing_aggregation_job_with_fatal_error() {
     ));
     let job_driver = Arc::new(
         JobDriver::new(
-            clock.clone(),
+            Arc::new(clock.clone()),
             runtime_manager.with_label("stepper"),
             noop_meter(),
             stopper.clone(),

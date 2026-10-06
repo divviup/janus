@@ -163,14 +163,14 @@ pub async fn database_pool(db_config: &DbConfig, db_password: Option<&str>) -> R
 ///
 /// `datastore_keys` is a list of AES-128-GCM keys, encoded in base64 with no padding, used to
 /// protect secret values stored in the datastore; it must not be empty.
-pub async fn datastore<C: Clock>(
+pub async fn datastore(
     pool: Pool,
-    clock: C,
+    clock: Arc<dyn Clock>,
     meter: &Meter,
     datastore_keys: &[String],
     check_schema_version: bool,
     max_transaction_retries: u64,
-) -> Result<Datastore<C>> {
+) -> Result<Datastore> {
     let datastore_keys = datastore_keys
         .iter()
         .filter(|k| !k.is_empty())
@@ -269,27 +269,26 @@ impl Debug for CommonBinaryOptions {
 }
 
 /// BinaryContext provides contextual objects related to a Janus binary.
-pub struct BinaryContext<C: Clock, Options: BinaryOptions, Config: BinaryConfig> {
-    pub clock: C,
+pub struct BinaryContext<Options: BinaryOptions, Config: BinaryConfig> {
+    pub clock: Arc<dyn Clock>,
     pub options: Options,
     pub config: Config,
-    pub datastore: Datastore<C>,
+    pub datastore: Datastore,
     pub meter: Meter,
     pub stopper: Stopper,
 }
 
-pub fn janus_main<C, Options, Config, F, Fut>(
+pub fn janus_main<Options, Config, F, Fut>(
     service_name: &str,
     options: Options,
-    clock: C,
+    clock: Arc<dyn Clock>,
     uses_rayon: bool,
     f: F,
 ) -> anyhow::Result<()>
 where
-    C: Clock + Clone,
     Options: BinaryOptions,
     Config: BinaryConfig,
-    F: FnOnce(BinaryContext<C, Options, Config>) -> Fut,
+    F: FnOnce(BinaryContext<Options, Config>) -> Fut,
     Fut: Future<Output = anyhow::Result<()>>,
 {
     initialize_rustls();

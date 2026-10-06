@@ -115,10 +115,10 @@ supported_schema_versions!(1);
 
 /// Datastore represents a datastore for Janus, with support for transactional reads and writes.
 /// In practice, Datastore instances are currently backed by a PostgreSQL database.
-pub struct Datastore<C: Clock> {
+pub struct Datastore {
     pool: deadpool_postgres::Pool,
     crypter: Crypter,
-    clock: C,
+    clock: Arc<dyn Clock>,
     task_infos: Arc<Mutex<HashMap<TaskId, TaskInfo>>>,
     transaction_status_counter: Counter<u64>,
     transaction_retry_histogram: Histogram<u64>,
@@ -129,22 +129,22 @@ pub struct Datastore<C: Clock> {
     max_transaction_retries: u64,
 }
 
-impl<C: Clock> Debug for Datastore<C> {
+impl Debug for Datastore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Datastore")
     }
 }
 
-impl<C: Clock> Datastore<C> {
+impl Datastore {
     /// `new` creates a new Datastore using the provided connection pool. An error is returned if
     /// the current database migration version is not supported by this version of Janus.
     pub async fn new(
         pool: deadpool_postgres::Pool,
         crypter: Crypter,
-        clock: C,
+        clock: Arc<dyn Clock>,
         meter: &Meter,
         max_transaction_retries: u64,
-    ) -> Result<Datastore<C>, Error> {
+    ) -> Result<Datastore, Error> {
         Self::new_with_supported_versions(
             pool,
             crypter,
@@ -159,11 +159,11 @@ impl<C: Clock> Datastore<C> {
     async fn new_with_supported_versions(
         pool: deadpool_postgres::Pool,
         crypter: Crypter,
-        clock: C,
+        clock: Arc<dyn Clock>,
         meter: &Meter,
         supported_schema_versions: &[i64],
         max_transaction_retries: u64,
-    ) -> Result<Datastore<C>, Error> {
+    ) -> Result<Datastore, Error> {
         let datastore = Self::new_without_supported_versions(
             pool,
             crypter,
@@ -192,10 +192,10 @@ impl<C: Clock> Datastore<C> {
     pub async fn new_without_supported_versions(
         pool: deadpool_postgres::Pool,
         crypter: Crypter,
-        clock: C,
+        clock: Arc<dyn Clock>,
         meter: &Meter,
         max_transaction_retries: u64,
-    ) -> Datastore<C> {
+    ) -> Datastore {
         let transaction_status_counter = meter
             .u64_counter(TRANSACTION_METER_NAME)
             .with_description("Count of database transactions run, with their status.")
@@ -359,7 +359,7 @@ impl<C: Clock> Datastore<C> {
         let tx = Transaction {
             raw_tx,
             crypter: &self.crypter,
-            clock: &self.clock,
+            clock: &*self.clock,
             name,
             task_infos: Arc::clone(&self.task_infos),
             retry: AtomicBool::new(false),
@@ -406,8 +406,8 @@ impl<C: Clock> Datastore<C> {
     }
 
     /// Returns the clock in use by this datastore.
-    pub fn clock(&self) -> &C {
-        &self.clock
+    pub fn clock(&self) -> &dyn Clock {
+        &*self.clock
     }
 
     /// See [`Datastore::run_tx`]. This method provides a placeholder transaction name. It is useful

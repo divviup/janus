@@ -182,9 +182,9 @@ where
         }
     }
 
-    async fn step_aggregation_job<C: Clock>(
+    async fn step_aggregation_job(
         &self,
-        datastore: Arc<Datastore<C>>,
+        datastore: Arc<Datastore>,
         hpke_keypairs: Arc<HpkeKeypairCache>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
     ) -> Result<(), Error> {
@@ -193,7 +193,6 @@ where
                 vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
                     self.step_aggregation_job_generic::<
                         VERIFY_KEY_LENGTH,
-                        C,
                         TimeInterval,
                         VdafType,
                     >(
@@ -208,7 +207,6 @@ where
                 vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
                     self.step_aggregation_job_generic::<
                         VERIFY_KEY_LENGTH,
-                        C,
                         LeaderSelected,
                         VdafType,
                     >(
@@ -224,12 +222,11 @@ where
 
     async fn step_aggregation_job_generic<
         const SEED_SIZE: usize,
-        C: Clock,
         B: CollectableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
-        datastore: Arc<Datastore<C>>,
+        datastore: Arc<Datastore>,
         hpke_keypairs: Arc<HpkeKeypairCache>,
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
@@ -311,12 +308,11 @@ where
 
     async fn step_aggregation_job_leader<
         const SEED_SIZE: usize,
-        C: Clock,
         B: CollectableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
-        datastore: Arc<Datastore<C>>,
+        datastore: Arc<Datastore>,
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
         task: AggregatorTask,
@@ -412,12 +408,11 @@ where
     #[allow(clippy::too_many_arguments)]
     async fn step_aggregation_job_leader_init<
         const SEED_SIZE: usize,
-        C: Clock,
         B: CollectableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
-        datastore: Arc<Datastore<C>>,
+        datastore: Arc<Datastore>,
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
         task: AggregatorTask,
@@ -725,12 +720,11 @@ where
 
     async fn step_aggregation_job_leader_continue<
         const SEED_SIZE: usize,
-        C: Clock,
         B: CollectableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
-        datastore: Arc<Datastore<C>>,
+        datastore: Arc<Datastore>,
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
         task: AggregatorTask,
@@ -923,12 +917,11 @@ where
 
     async fn step_aggregation_job_leader_poll<
         const SEED_SIZE: usize,
-        C: Clock,
         B: CollectableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
-        datastore: Arc<Datastore<C>>,
+        datastore: Arc<Datastore>,
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
         task: AggregatorTask,
@@ -1025,12 +1018,11 @@ where
     #[allow(clippy::too_many_arguments)]
     async fn step_aggregation_job_leader_process_response<
         const SEED_SIZE: usize,
-        C: Clock,
         B: CollectableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
-        datastore: Arc<Datastore<C>>,
+        datastore: Arc<Datastore>,
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
         task: AggregatorTask,
@@ -1073,12 +1065,11 @@ where
 
     async fn step_aggregation_job_leader_process_response_processing<
         const SEED_SIZE: usize,
-        C: Clock,
         B: CollectableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
-        datastore: Arc<Datastore<C>>,
+        datastore: Arc<Datastore>,
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
         task: AggregatorTask,
@@ -1179,12 +1170,11 @@ where
 
     async fn step_aggregation_job_leader_process_response_finished<
         const SEED_SIZE: usize,
-        C: Clock,
         B: CollectableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
-        datastore: Arc<Datastore<C>>,
+        datastore: Arc<Datastore>,
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
         task: AggregatorTask,
@@ -1452,12 +1442,11 @@ where
 
     async fn step_aggregation_job_helper<
         const SEED_SIZE: usize,
-        C: Clock,
         B: CollectableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
-        datastore: Arc<Datastore<C>>,
+        datastore: Arc<Datastore>,
         hpke_keypairs: Arc<HpkeKeypairCache>,
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
@@ -1528,12 +1517,11 @@ where
 
     async fn step_aggregation_job_helper_init<
         const SEED_SIZE: usize,
-        C: Clock,
         B: CollectableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
-        datastore: Arc<Datastore<C>>,
+        datastore: Arc<Datastore>,
         hpke_keypairs: Arc<HpkeKeypairCache>,
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
@@ -1631,12 +1619,11 @@ where
 
     async fn step_aggregation_job_helper_continue<
         const SEED_SIZE: usize,
-        C: Clock,
         B: CollectableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
-        datastore: Arc<Datastore<C>>,
+        datastore: Arc<Datastore>,
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
         task: AggregatorTask,
@@ -1726,9 +1713,9 @@ where
         Ok(())
     }
 
-    async fn abandon_aggregation_job<C: Clock>(
+    async fn abandon_aggregation_job(
         &self,
-        datastore: Arc<Datastore<C>>,
+        datastore: Arc<Datastore>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
     ) -> Result<(), Error> {
         match lease.leased().batch_mode() {
@@ -1736,7 +1723,6 @@ where
                 vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
                     self.cancel_aggregation_job_generic::<
                         VERIFY_KEY_LENGTH,
-                        C,
                         TimeInterval,
                         VdafType,
                     >(vdaf, datastore, lease)
@@ -1747,7 +1733,6 @@ where
                 vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
                     self.cancel_aggregation_job_generic::<
                         VERIFY_KEY_LENGTH,
-                        C,
                         LeaderSelected,
                         VdafType,
                     >(vdaf, datastore, lease)
@@ -1759,13 +1744,12 @@ where
 
     async fn cancel_aggregation_job_generic<
         const SEED_SIZE: usize,
-        C: Clock,
         B: CollectableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         vdaf: A,
-        datastore: Arc<Datastore<C>>,
+        datastore: Arc<Datastore>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
     ) -> Result<(), Error> {
         let vdaf = Arc::new(vdaf);
@@ -1866,15 +1850,15 @@ where
     }
 
     /// Produce a closure for use as a `[JobDriver::JobAcquirer]`.
-    pub fn make_incomplete_job_acquirer_callback<C: Clock>(
+    pub fn make_incomplete_job_acquirer_callback(
         &self,
-        datastore: Arc<Datastore<C>>,
+        datastore: Arc<Datastore>,
         lease_duration: Duration,
     ) -> impl Fn(
         usize,
     )
         -> BoxFuture<'static, Result<Vec<Lease<AcquiredAggregationJob>>, datastore::Error>>
-    + use<C, R> {
+    + use<R> {
         move |max_acquire_count: usize| {
             let datastore = Arc::clone(&datastore);
 
@@ -1895,9 +1879,9 @@ where
     }
 
     /// Produce a closure for use as a `[JobDriver::JobStepper]`.
-    pub fn make_job_stepper_callback<C: Clock>(
+    pub fn make_job_stepper_callback(
         self: Arc<Self>,
-        datastore: Arc<Datastore<C>>,
+        datastore: Arc<Datastore>,
         maximum_attempts_before_failure: usize,
     ) -> impl Fn(Lease<AcquiredAggregationJob>) -> BoxFuture<'static, Result<(), Error>> {
         let hpke_keypairs = Arc::new(Mutex::new(None));
@@ -2010,10 +1994,7 @@ where
     /// Convenience method to construct an [`HpkeKeypairCache`] in tests, to be passed to other
     /// methods.
     #[cfg(test)]
-    async fn make_keypair_cache(
-        &self,
-        datastore: &Arc<Datastore<impl Clock>>,
-    ) -> Arc<HpkeKeypairCache> {
+    async fn make_keypair_cache(&self, datastore: &Arc<Datastore>) -> Arc<HpkeKeypairCache> {
         Arc::new(
             HpkeKeypairCache::new(
                 Arc::clone(datastore),

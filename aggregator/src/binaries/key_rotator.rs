@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use clap::Parser;
-use janus_core::time::RealClock;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -13,7 +12,7 @@ use crate::{
     config::{BinaryConfig, CommonConfig},
 };
 
-pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Result<()> {
+pub async fn main_callback(ctx: BinaryContext<Options, Config>) -> Result<()> {
     let BinaryContext {
         config, datastore, ..
     } = ctx;

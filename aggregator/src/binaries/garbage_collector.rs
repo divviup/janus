@@ -3,7 +3,6 @@ use std::{sync::Arc, time::Duration};
 use anyhow::Result;
 use clap::Parser;
 use janus_aggregator_core::datastore::Datastore;
-use janus_core::time::RealClock;
 use opentelemetry::metrics::Meter;
 use serde::{Deserialize, Serialize};
 use tokio::time::interval;
@@ -16,7 +15,7 @@ use crate::{
     config::{BinaryConfig, CommonConfig},
 };
 
-pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Result<()> {
+pub async fn main_callback(ctx: BinaryContext<Options, Config>) -> Result<()> {
     let BinaryContext {
         config,
         datastore,
@@ -33,7 +32,7 @@ pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Re
 }
 
 pub(super) async fn run_garbage_collector(
-    datastore: Arc<Datastore<RealClock>>,
+    datastore: Arc<Datastore>,
     gc_config: GarbageCollectorConfig,
     meter: Meter,
     stopper: Stopper,

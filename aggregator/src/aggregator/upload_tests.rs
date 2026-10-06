@@ -40,10 +40,10 @@ use crate::aggregator::{
 
 struct UploadTest {
     vdaf: Prio3Count,
-    aggregator: Aggregator<MockClock>,
+    aggregator: Aggregator,
     clock: MockClock,
     task: Task,
-    datastore: Arc<Datastore<MockClock>>,
+    datastore: Arc<Datastore>,
     ephemeral_datastore: EphemeralDatastore,
     hpke_keypair: HpkeKeypair,
 }

@@ -2,7 +2,6 @@ use std::iter;
 
 use async_trait::async_trait;
 use futures::future::try_join_all;
-use janus_core::time::Clock;
 use janus_messages::{
     Interval, Query, TaskId, Time,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
@@ -220,7 +219,6 @@ pub trait CollectableBatchMode: AccumulableBatchMode {
     async fn get_batch_aggregation_job_count_for_collection_identifier<
         const SEED_SIZE: usize,
         A: AsyncAggregator<SEED_SIZE>,
-        C: Clock,
     >(
         tx: &Transaction,
         task_id: &TaskId,

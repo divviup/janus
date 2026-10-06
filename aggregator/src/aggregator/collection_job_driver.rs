@@ -98,9 +98,9 @@ impl CollectionJobDriver {
     /// later run of the collection job driver to try again. Both aggregate shares will be
     /// recomputed at that time.
     #[tracing::instrument(skip(self, datastore), err)]
-    pub async fn step_collection_job<C: Clock>(
+    pub async fn step_collection_job(
         &self,
-        datastore: Arc<Datastore<C>>,
+        datastore: Arc<Datastore>,
         clock: &dyn Clock,
         lease: Arc<Lease<AcquiredCollectionJob>>,
     ) -> Result<(), Error> {
@@ -117,7 +117,6 @@ impl CollectionJobDriver {
                     ) => {
                         self.step_collection_job_generic::<
                             VERIFY_KEY_LENGTH,
-                            C,
                             TimeInterval,
                             DpStrategy,
                             VdafType,
@@ -138,7 +137,6 @@ impl CollectionJobDriver {
                     ) => {
                         self.step_collection_job_generic::<
                             VERIFY_KEY_LENGTH,
-                            C,
                             LeaderSelected,
                             DpStrategy,
                             VdafType,
@@ -152,13 +150,12 @@ impl CollectionJobDriver {
 
     async fn step_collection_job_generic<
         const SEED_SIZE: usize,
-        C: Clock,
         B: CollectableBatchMode,
         S: DifferentialPrivacyStrategy,
         A: AsyncAggregatorWithNoise<SEED_SIZE, S>,
     >(
         &self,
-        datastore: Arc<Datastore<C>>,
+        datastore: Arc<Datastore>,
         clock: &dyn Clock,
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredCollectionJob>>,
@@ -172,189 +169,201 @@ impl CollectionJobDriver {
             A::AggregationParam::get_decoded(lease.leased().encoded_aggregation_param())
                 .map_err(Error::MessageDecode)?;
 
-        let rslt = datastore
-            .run_tx("step_collection_job_1", |tx| {
-                let vdaf = Arc::clone(&vdaf);
-                let lease = Arc::clone(&lease);
-                let collection_identifier = Arc::clone(&collection_identifier);
-                let aggregation_param = aggregation_param.clone();
-                let batch_aggregation_shard_count = self.batch_aggregation_shard_count;
-                let collection_retry_strategy = self.collection_retry_strategy.clone();
-                let metrics = self.metrics.clone();
-                let max_future_concurrency = self.max_future_concurrency;
+        let rslt =
+            datastore
+                .run_tx("step_collection_job_1", |tx| {
+                    let vdaf = Arc::clone(&vdaf);
+                    let lease = Arc::clone(&lease);
+                    let collection_identifier = Arc::clone(&collection_identifier);
+                    let aggregation_param = aggregation_param.clone();
+                    let batch_aggregation_shard_count = self.batch_aggregation_shard_count;
+                    let collection_retry_strategy = self.collection_retry_strategy.clone();
+                    let metrics = self.metrics.clone();
+                    let max_future_concurrency = self.max_future_concurrency;
 
-                Box::pin(async move {
-                    // Read the task & collection job.
-                    //
-                    // Also, try to read an existing, already-FINISHED collection job for the same
-                    // batch & aggregation parameter, so that we can reuse an already-computed
-                    // result if available.
-                    //
-                    // Also, look for unaggregated reports & count the number of created/terminated
-                    // aggregation jobs relevant to the collection job, so that we can determine if
-                    // we are read to complete the collection job in the case there is no
-                    // preexisting FINISHED collection job.
-                    let (
-                        task,
-                        collection_job,
-                        finished_collection_job,
-                        interval_has_unaggregated_reports,
-                        (agg_jobs_created, agg_jobs_terminated),
-                    ) = try_join!(
-                        tx.get_aggregator_task(lease.leased().task_id()),
-                        tx.get_collection_job::<SEED_SIZE, B, A>(
-                            vdaf.as_ref(),
-                            lease.leased().task_id(),
-                            lease.leased().collection_job_id()
-                        ),
-                        tx.get_finished_collection_job::<SEED_SIZE, B, A>(
-                            vdaf.as_ref(),
-                            lease.leased().task_id(),
-                            &collection_identifier,
-                            &aggregation_param,
-                        ),
-                        {
-                            let task_id = *lease.leased().task_id();
-                            let collection_identifier = Arc::clone(&collection_identifier);
+                    Box::pin(async move {
+                        // Read the task & collection job.
+                        //
+                        // Also, try to read an existing, already-FINISHED collection job for the
+                        // same batch & aggregation parameter, so that we
+                        // can reuse an already-computed
+                        // result if available.
+                        //
+                        // Also, look for unaggregated reports & count the number of
+                        // created/terminated aggregation jobs relevant to
+                        // the collection job, so that we can determine if
+                        // we are read to complete the collection job in the case there is no
+                        // preexisting FINISHED collection job.
+                        let (
+                            task,
+                            collection_job,
+                            finished_collection_job,
+                            interval_has_unaggregated_reports,
+                            (agg_jobs_created, agg_jobs_terminated),
+                        ) = try_join!(
+                            tx.get_aggregator_task(lease.leased().task_id()),
+                            tx.get_collection_job::<SEED_SIZE, B, A>(
+                                vdaf.as_ref(),
+                                lease.leased().task_id(),
+                                lease.leased().collection_job_id()
+                            ),
+                            tx.get_finished_collection_job::<SEED_SIZE, B, A>(
+                                vdaf.as_ref(),
+                                lease.leased().task_id(),
+                                &collection_identifier,
+                                &aggregation_param,
+                            ),
+                            {
+                                let task_id = *lease.leased().task_id();
+                                let collection_identifier = Arc::clone(&collection_identifier);
 
-                            async move {
-                                if let Some(collection_interval) =
-                                    B::to_batch_interval(&collection_identifier)
-                                {
-                                    tx.interval_has_unaggregated_reports(
-                                        &task_id,
-                                        collection_interval,
-                                    )
-                                    .await
-                                } else {
-                                    Ok(false)
+                                async move {
+                                    if let Some(collection_interval) =
+                                        B::to_batch_interval(&collection_identifier)
+                                    {
+                                        tx.interval_has_unaggregated_reports(
+                                            &task_id,
+                                            collection_interval,
+                                        )
+                                        .await
+                                    } else {
+                                        Ok(false)
+                                    }
                                 }
-                            }
-                        },
-                        B::get_batch_aggregation_job_count_for_collection_identifier::<
-                            SEED_SIZE,
-                            A,
-                            C,
-                        >(
-                            tx,
-                            lease.leased().task_id(),
-                            &collection_identifier,
-                            &aggregation_param,
-                        ),
-                    )?;
-
-                    let task = task.ok_or_else(|| {
-                        datastore::Error::User(
-                            Error::UnrecognizedTask(*lease.leased().task_id()).into(),
-                        )
-                    })?;
-
-                    let collection_job = collection_job.ok_or_else(|| {
-                        datastore::Error::User(
-                            Error::UnrecognizedCollectionJob(
-                                *task.id(),
-                                *lease.leased().collection_job_id(),
-                            )
-                            .into(),
-                        )
-                    })?;
-
-                    // If we found a matching finished collection job, borrow its state & exit
-                    // early. We don't need to update the batch aggregations because handling for
-                    // the finished collection job will have done so already.
-                    if let Some(finished_collection_job) = finished_collection_job {
-                        let collection_job =
-                            collection_job.with_state(finished_collection_job.state().clone());
-                        try_join!(
-                            tx.update_collection_job::<SEED_SIZE, B, A>(&collection_job),
-                            tx.release_collection_job(&lease, None),
+                            },
+                            B::get_batch_aggregation_job_count_for_collection_identifier::<
+                                SEED_SIZE,
+                                A,
+                            >(
+                                tx,
+                                lease.leased().task_id(),
+                                &collection_identifier,
+                                &aggregation_param,
+                            ),
                         )?;
-                        metrics.jobs_finished_counter.add(1, &[]);
-                        return Ok(None);
-                    }
 
-                    // Check if any aggregation jobs relevant to this collection job are incomplete,
-                    // and whether there are reports still waiting to be associated to an
-                    // aggregation job. If so, we have to wait before we can compute the final
-                    // aggregate value.
-                    if interval_has_unaggregated_reports || agg_jobs_created != agg_jobs_terminated
-                    {
-                        let retry_delay = collection_retry_strategy
-                            .compute_retry_delay(lease.leased().step_attempts());
-                        tx.release_collection_job(&lease, Some(&retry_delay))
+                        let task = task.ok_or_else(|| {
+                            datastore::Error::User(
+                                Error::UnrecognizedTask(*lease.leased().task_id()).into(),
+                            )
+                        })?;
+
+                        let collection_job = collection_job.ok_or_else(|| {
+                            datastore::Error::User(
+                                Error::UnrecognizedCollectionJob(
+                                    *task.id(),
+                                    *lease.leased().collection_job_id(),
+                                )
+                                .into(),
+                            )
+                        })?;
+
+                        // If we found a matching finished collection job, borrow its state & exit
+                        // early. We don't need to update the batch aggregations because handling
+                        // for the finished collection job will have done so
+                        // already.
+                        if let Some(finished_collection_job) = finished_collection_job {
+                            let collection_job =
+                                collection_job.with_state(finished_collection_job.state().clone());
+                            try_join!(
+                                tx.update_collection_job::<SEED_SIZE, B, A>(&collection_job),
+                                tx.release_collection_job(&lease, None),
+                            )?;
+                            metrics.jobs_finished_counter.add(1, &[]);
+                            return Ok(None);
+                        }
+
+                        // Check if any aggregation jobs relevant to this collection job are
+                        // incomplete, and whether there are reports still
+                        // waiting to be associated to an aggregation job.
+                        // If so, we have to wait before we can compute the final
+                        // aggregate value.
+                        if interval_has_unaggregated_reports
+                            || agg_jobs_created != agg_jobs_terminated
+                        {
+                            let retry_delay = collection_retry_strategy
+                                .compute_retry_delay(lease.leased().step_attempts());
+                            tx.release_collection_job(&lease, Some(&retry_delay))
+                                .await?;
+                            return Ok(None);
+                        }
+
+                        // There is no pre-existing finished collection job, but the collection job
+                        // is ready to be completed. Read batch aggregations
+                        // so that we can compute the final aggregate value.
+                        let batch_aggregations =
+                            B::get_batch_aggregations_for_collection_identifier(
+                                tx,
+                                lease.leased().task_id(),
+                                vdaf.as_ref(),
+                                &collection_identifier,
+                                &aggregation_param,
+                            )
                             .await?;
-                        return Ok(None);
-                    }
 
-                    // There is no pre-existing finished collection job, but the collection job is
-                    // ready to be completed. Read batch aggregations so that we can compute the
-                    // final aggregate value.
-                    let batch_aggregations = B::get_batch_aggregations_for_collection_identifier(
-                        tx,
-                        lease.leased().task_id(),
-                        vdaf.as_ref(),
-                        &collection_identifier,
-                        &aggregation_param,
-                    )
-                    .await?;
+                        let mut aggregate_share = AggregateShareComputer::new(&task);
 
-                    let mut aggregate_share = AggregateShareComputer::new(&task);
+                        // Mark batch aggregations as collected to avoid further aggregation. (We
+                        // don't need to do this if there is a FINISHED
+                        // collection job since that job will have marked
+                        // the batch aggregations.)
+                        //
+                        // To ensure that concurrent aggregations don't write into a
+                        // currently-nonexistent batch aggregation, we write (empty) batch
+                        // aggregations for any that have not already been
+                        // written to storage. We do this transactionally to
+                        // avoid the possibility of overwriting other transactions'
+                        // updates to batch aggregations.
+                        let batch_aggregations = batch_aggregations
+                            .into_iter()
+                            .map(|ba| {
+                                // Empty batch aggregations cannot contribute to the aggregate share
+                                // so don't bother including them.
+                                aggregate_share
+                                    .update(&ba)
+                                    .map_err(|e| datastore::Error::User(e.into()))?;
+                                ba.collected()
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
 
-                    // Mark batch aggregations as collected to avoid further aggregation. (We don't
-                    // need to do this if there is a FINISHED collection job since that job will
-                    // have marked the batch aggregations.)
-                    //
-                    // To ensure that concurrent aggregations don't write into a
-                    // currently-nonexistent batch aggregation, we write (empty) batch aggregations
-                    // for any that have not already been written to storage. We do this
-                    // transactionally to avoid the possibility of overwriting other transactions'
-                    // updates to batch aggregations.
-                    let batch_aggregations = batch_aggregations
-                        .into_iter()
-                        .map(|ba| {
-                            // Empty batch aggregations cannot contribute to the aggregate share so
-                            // don't bother including them.
-                            aggregate_share
-                                .update(&ba)
-                                .map_err(|e| datastore::Error::User(e.into()))?;
-                            ba.collected()
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
+                        let leader_aggregate_share = aggregate_share
+                            .finalize()
+                            .map_err(|e| datastore::Error::User(e.into()))?;
 
-                    let leader_aggregate_share = aggregate_share
-                        .finalize()
-                        .map_err(|e| datastore::Error::User(e.into()))?;
+                        let batch_aggregations_iter = BatchAggregationsIterator::new(
+                            &task,
+                            batch_aggregation_shard_count,
+                            collection_job.batch_identifier(),
+                            &aggregation_param,
+                            batch_aggregations.iter().map(Cow::Borrowed),
+                        );
 
-                    let batch_aggregations_iter = BatchAggregationsIterator::new(
-                        &task,
-                        batch_aggregation_shard_count,
-                        collection_job.batch_identifier(),
-                        &aggregation_param,
-                        batch_aggregations.iter().map(Cow::Borrowed),
-                    );
+                        // Rather than awaiting all the futures at once, which can cause heap growth
+                        // proportional to the number of batch aggregations to write, put them into
+                        // an buffered stream so that they get run in groups
+                        // of bounded size. #3857
+                        futures::stream::iter(batch_aggregations_iter.clone().map(Ok))
+                            .try_for_each_concurrent(
+                                max_future_concurrency,
+                                async |(ba, is_update)| {
+                                    if is_update {
+                                        tx.update_batch_aggregation(&ba).await
+                                    } else {
+                                        tx.put_batch_aggregation(&ba).await
+                                    }
+                                },
+                            )
+                            .await?;
 
-                    // Rather than awaiting all the futures at once, which can cause heap growth
-                    // proportional to the number of batch aggregations to write, put them into an
-                    // buffered stream so that they get run in groups of bounded size. #3857
-                    futures::stream::iter(batch_aggregations_iter.clone().map(Ok))
-                        .try_for_each_concurrent(max_future_concurrency, async |(ba, is_update)| {
-                            if is_update {
-                                tx.update_batch_aggregation(&ba).await
-                            } else {
-                                tx.put_batch_aggregation(&ba).await
-                            }
-                        })
-                        .await?;
-
-                    Ok(Some((
-                        task,
-                        collection_job,
-                        batch_aggregations,
-                        leader_aggregate_share,
-                    )))
+                        Ok(Some((
+                            task,
+                            collection_job,
+                            batch_aggregations,
+                            leader_aggregate_share,
+                        )))
+                    })
                 })
-            })
-            .await?;
+                .await?;
 
         let (task, collection_job, batch_aggregations, mut leader_aggregate_share) = match rslt {
             Some((task, collection_job, batch_aggregations, leader_aggregate_share)) => (
@@ -593,9 +602,9 @@ impl CollectionJobDriver {
     }
 
     #[tracing::instrument(skip(self, datastore), err)]
-    pub async fn abandon_collection_job<C: Clock>(
+    pub async fn abandon_collection_job(
         &self,
-        datastore: Arc<Datastore<C>>,
+        datastore: Arc<Datastore>,
         lease: Arc<Lease<AcquiredCollectionJob>>,
     ) -> Result<(), Error> {
         match lease.leased().batch_mode() {
@@ -603,7 +612,6 @@ impl CollectionJobDriver {
                 vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
                     self.abandon_collection_job_generic::<
                         VERIFY_KEY_LENGTH,
-                        C,
                         TimeInterval,
                         VdafType,
                     >(
@@ -618,7 +626,6 @@ impl CollectionJobDriver {
                 vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
                     self.abandon_collection_job_generic::<
                         VERIFY_KEY_LENGTH,
-                        C,
                         LeaderSelected,
                         VdafType,
                     >(
@@ -634,12 +641,11 @@ impl CollectionJobDriver {
 
     async fn abandon_collection_job_generic<
         const SEED_SIZE: usize,
-        C: Clock,
         B: BatchMode,
         A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
-        datastore: Arc<Datastore<C>>,
+        datastore: Arc<Datastore>,
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredCollectionJob>>,
     ) -> Result<(), Error> {
@@ -673,15 +679,15 @@ impl CollectionJobDriver {
     }
 
     /// Produce a closure for use as a `[JobDriver::JobAcquirer`].
-    pub fn make_incomplete_job_acquirer_callback<C: Clock>(
+    pub fn make_incomplete_job_acquirer_callback(
         &self,
-        datastore: Arc<Datastore<C>>,
+        datastore: Arc<Datastore>,
         lease_duration: Duration,
     ) -> impl Fn(
         usize,
     )
         -> BoxFuture<'static, Result<Vec<Lease<AcquiredCollectionJob>>, datastore::Error>>
-    + use<C> {
+    + use<> {
         move |maximum_acquire_count| {
             let datastore = Arc::clone(&datastore);
             Box::pin(async move {
@@ -701,13 +707,12 @@ impl CollectionJobDriver {
     }
 
     /// Produce a closure for use as a `[JobDriver::JobStepper]`.
-    pub fn make_job_stepper_callback<C: Clock>(
+    pub fn make_job_stepper_callback(
         self: Arc<Self>,
-        datastore: Arc<Datastore<C>>,
-        clock: C,
+        datastore: Arc<Datastore>,
+        clock: Arc<dyn Clock>,
         maximum_attempts_before_failure: usize,
     ) -> impl Fn(Lease<AcquiredCollectionJob>) -> BoxFuture<'static, Result<(), super::Error>> {
-        let clock = Arc::new(clock);
         move |lease: Lease<AcquiredCollectionJob>| {
             let (this, datastore) = (Arc::clone(&self), Arc::clone(&datastore));
             let lease = Arc::new(lease);
@@ -975,7 +980,7 @@ mod tests {
     async fn setup_collection_job_test_case(
         server: &mut mockito::Server,
         clock: MockClock,
-        datastore: Arc<Datastore<MockClock>>,
+        datastore: Arc<Datastore>,
         acquire_lease: bool,
     ) -> (
         Task,
@@ -1743,6 +1748,7 @@ mod tests {
             RetryStrategy::NO_DELAY.clone(),
             10000,
         ));
+        let clock = Arc::new(clock);
         let job_driver = Arc::new(
             JobDriver::new(
                 clock.clone(),
@@ -1851,6 +1857,7 @@ mod tests {
             RetryStrategy::NO_DELAY.clone(),
             10000,
         ));
+        let clock = Arc::new(clock);
         let job_driver = Arc::new(
             JobDriver::new(
                 clock.clone(),

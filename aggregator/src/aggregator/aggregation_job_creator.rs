@@ -23,7 +23,7 @@ use janus_aggregator_core::{
     task::{self, AggregatorTask},
 };
 use janus_core::{
-    time::{Clock, DateTimeExt, IntervalExt, TimeExt},
+    time::{DateTimeExt, IntervalExt, TimeExt},
     vdaf::{
         Prio3SumVecField64MultiproofHmacSha256Aes128, VERIFY_KEY_LENGTH_PRIO3,
         VERIFY_KEY_LENGTH_PRIO3_HMACSHA256_AES128, VdafInstance,
@@ -60,9 +60,9 @@ use crate::{
     metrics::AGGREGATION_JOB_SIZE_HISTOGRAM_BOUNDARIES,
 };
 
-pub struct AggregationJobCreator<C: Clock> {
+pub struct AggregationJobCreator {
     // Dependencies.
-    datastore: Arc<Datastore<C>>,
+    datastore: Arc<Datastore>,
 
     // Configuration values.
     /// The number of batch aggregation shards to use per batch.
@@ -95,9 +95,9 @@ pub struct AggregationJobCreator<C: Clock> {
     aggregation_job_size_histogram: Histogram<u64>,
 }
 
-impl<C: Clock + 'static> AggregationJobCreator<C> {
+impl AggregationJobCreator {
     pub fn new(
-        datastore: Arc<Datastore<C>>,
+        datastore: Arc<Datastore>,
         meter: Meter,
         batch_aggregation_shard_count: u64,
         tasks_update_frequency: Duration,
@@ -106,7 +106,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         max_aggregation_job_size: usize,
         aggregation_job_creation_report_window: usize,
         late_report_grace_period: janus_messages::Duration,
-    ) -> AggregationJobCreator<C> {
+    ) -> AggregationJobCreator {
         assert!(
             min_aggregation_job_size > 0,
             "invalid configuration: min_aggregation_job_size cannot be zero"

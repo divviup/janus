@@ -140,13 +140,13 @@ pub mod test_util;
 mod upload_tests;
 
 /// Aggregator implements a DAP aggregator.
-pub struct Aggregator<C: Clock> {
+pub struct Aggregator {
     /// Datastore used for durable storage.
-    datastore: Arc<Datastore<C>>,
+    datastore: Arc<Datastore>,
     /// Configuration used for this aggregator.
     cfg: Config,
     /// Cache of task aggregators.
-    task_aggregators: TaskAggregatorCache<C>,
+    task_aggregators: TaskAggregatorCache,
     /// Metrics.
     metrics: AggregatorMetrics,
 
@@ -276,7 +276,7 @@ impl Default for Config {
     }
 }
 
-impl<C: Clock> Aggregator<C> {
+impl Aggregator {
     /// Creates a new [`Aggregator`].
     ///
     /// # Errors
@@ -286,7 +286,7 @@ impl<C: Clock> Aggregator<C> {
     /// If there is not at least one HPKE keypair in the database in the [`HpkeKeyState::Active`]
     /// state then this function will fail.
     async fn new<R: Runtime + Send + Sync + 'static>(
-        datastore: Arc<Datastore<C>>,
+        datastore: Arc<Datastore>,
         runtime: R,
         meter: &Meter,
         cfg: Config,
@@ -1130,9 +1130,9 @@ impl TaskAggregator {
             .await
     }
 
-    async fn handle_aggregate_init<C: Clock>(
+    async fn handle_aggregate_init(
         &self,
-        datastore: Arc<Datastore<C>>,
+        datastore: Arc<Datastore>,
         hpke_keypairs: Arc<HpkeKeypairCache>,
         metrics: &AggregatorMetrics,
         batch_aggregation_shard_count: u64,
@@ -1158,9 +1158,9 @@ impl TaskAggregator {
             .await
     }
 
-    async fn handle_aggregate_continue<C: Clock>(
+    async fn handle_aggregate_continue(
         &self,
-        datastore: Arc<Datastore<C>>,
+        datastore: Arc<Datastore>,
         metrics: &AggregatorMetrics,
         batch_aggregation_shard_count: u64,
         task_counter_shard_count: u64,
@@ -1182,9 +1182,9 @@ impl TaskAggregator {
             .await
     }
 
-    async fn handle_aggregate_get<C: Clock>(
+    async fn handle_aggregate_get(
         &self,
-        datastore: Arc<Datastore<C>>,
+        datastore: Arc<Datastore>,
         aggregation_job_id: &AggregationJobId,
         step: AggregationJobStep,
     ) -> Result<Option<AggregationJobResp>, Error> {
@@ -1193,9 +1193,9 @@ impl TaskAggregator {
             .await
     }
 
-    async fn handle_aggregate_delete<C: Clock>(
+    async fn handle_aggregate_delete(
         &self,
-        datastore: &Datastore<C>,
+        datastore: &Datastore,
         aggregation_job_id: &AggregationJobId,
     ) -> Result<(), Error> {
         self.vdaf_ops
@@ -1203,9 +1203,9 @@ impl TaskAggregator {
             .await
     }
 
-    async fn handle_create_collection_job<C: Clock>(
+    async fn handle_create_collection_job(
         &self,
-        datastore: &Datastore<C>,
+        datastore: &Datastore,
         collection_job_id: &CollectionJobId,
         req_bytes: &[u8],
     ) -> Result<Vec<u8>, Error> {
@@ -1219,9 +1219,9 @@ impl TaskAggregator {
             .await
     }
 
-    async fn handle_get_collection_job<C: Clock>(
+    async fn handle_get_collection_job(
         &self,
-        datastore: &Datastore<C>,
+        datastore: &Datastore,
         collection_job_id: &CollectionJobId,
     ) -> Result<Vec<u8>, Error> {
         self.vdaf_ops
@@ -1229,9 +1229,9 @@ impl TaskAggregator {
             .await
     }
 
-    async fn handle_delete_collection_job<C: Clock>(
+    async fn handle_delete_collection_job(
         &self,
-        datastore: &Datastore<C>,
+        datastore: &Datastore,
         collection_job_id: &CollectionJobId,
     ) -> Result<(), Error> {
         self.vdaf_ops
@@ -1239,9 +1239,9 @@ impl TaskAggregator {
             .await
     }
 
-    async fn handle_aggregate_share<C: Clock>(
+    async fn handle_aggregate_share(
         &self,
-        datastore: &Datastore<C>,
+        datastore: &Datastore,
         clock: &dyn Clock,
         batch_aggregation_shard_count: u64,
         max_future_concurrency: usize,
@@ -1263,9 +1263,9 @@ impl TaskAggregator {
             .await
     }
 
-    async fn handle_get_aggregate_share<C: Clock>(
+    async fn handle_get_aggregate_share(
         &self,
-        datastore: &Datastore<C>,
+        datastore: &Datastore,
         collector_hpke_config: &HpkeConfig,
         aggregate_share_id: &AggregateShareId,
     ) -> Result<AggregateShare, Error> {
@@ -1279,9 +1279,9 @@ impl TaskAggregator {
             .await
     }
 
-    async fn handle_delete_aggregate_share<C: Clock>(
+    async fn handle_delete_aggregate_share(
         &self,
-        datastore: &Datastore<C>,
+        datastore: &Datastore,
         aggregate_share_id: &AggregateShareId,
     ) -> Result<(), Error> {
         self.vdaf_ops
@@ -1548,9 +1548,9 @@ impl VdafOps {
         fields(task_id = ?task.id()),
         err(level = Level::DEBUG)
     )]
-    async fn handle_aggregate_init<C: Clock>(
+    async fn handle_aggregate_init(
         &self,
-        datastore: Arc<Datastore<C>>,
+        datastore: Arc<Datastore>,
         hpke_keypairs: Arc<HpkeKeypairCache>,
         metrics: &AggregatorMetrics,
         task: Arc<AggregatorTask>,
@@ -1568,7 +1568,6 @@ impl VdafOps {
                         VERIFY_KEY_LENGTH,
                         TimeInterval,
                         VdafType,
-                        _,
                     >(
                         datastore,
                         hpke_keypairs,
@@ -1591,7 +1590,6 @@ impl VdafOps {
                         VERIFY_KEY_LENGTH,
                         LeaderSelected,
                         VdafType,
-                        _,
                     >(
                         datastore,
                         hpke_keypairs,
@@ -1616,9 +1614,9 @@ impl VdafOps {
         fields(task_id = ?task.id(), step = %req.step()),
         err(level = Level::DEBUG)
     )]
-    async fn handle_aggregate_continue<C: Clock>(
+    async fn handle_aggregate_continue(
         &self,
-        datastore: Arc<Datastore<C>>,
+        datastore: Arc<Datastore>,
         metrics: &AggregatorMetrics,
         task: Arc<AggregatorTask>,
         batch_aggregation_shard_count: u64,
@@ -1634,7 +1632,6 @@ impl VdafOps {
                         VERIFY_KEY_LENGTH,
                         TimeInterval,
                         VdafType,
-                        _,
                     >(
                         datastore,
                         Arc::clone(vdaf),
@@ -1655,7 +1652,6 @@ impl VdafOps {
                         VERIFY_KEY_LENGTH,
                         LeaderSelected,
                         VdafType,
-                        _,
                     >(
                         datastore,
                         Arc::clone(vdaf),
@@ -1678,9 +1674,9 @@ impl VdafOps {
         fields(task_id = ?task.id()),
         err(level = Level::DEBUG)
     )]
-    async fn handle_aggregate_get<C: Clock>(
+    async fn handle_aggregate_get(
         &self,
-        datastore: Arc<Datastore<C>>,
+        datastore: Arc<Datastore>,
         task: Arc<AggregatorTask>,
         aggregation_job_id: &AggregationJobId,
         step: AggregationJobStep,
@@ -1692,7 +1688,6 @@ impl VdafOps {
                         VERIFY_KEY_LENGTH,
                         TimeInterval,
                         VdafType,
-                        _,
                     >(
                         datastore,
                         Arc::clone(vdaf),
@@ -1709,7 +1704,6 @@ impl VdafOps {
                         VERIFY_KEY_LENGTH,
                         LeaderSelected,
                         VdafType,
-                        _,
                     >(
                         datastore,
                         Arc::clone(vdaf),
@@ -1727,9 +1721,9 @@ impl VdafOps {
         fields(task_id = ?task.id()),
         err(level = Level::DEBUG)
     )]
-    async fn handle_aggregate_delete<C: Clock>(
+    async fn handle_aggregate_delete(
         &self,
-        datastore: &Datastore<C>,
+        datastore: &Datastore,
         task: Arc<AggregatorTask>,
         aggregation_job_id: &AggregationJobId,
     ) -> Result<(), Error> {
@@ -1740,7 +1734,6 @@ impl VdafOps {
                         VERIFY_KEY_LENGTH,
                         TimeInterval,
                         VdafType,
-                        _,
                     >(
                         datastore,
                         task,
@@ -1754,7 +1747,6 @@ impl VdafOps {
                         VERIFY_KEY_LENGTH,
                         LeaderSelected,
                         VdafType,
-                        _,
                     >(
                         datastore,
                         task,
@@ -2229,8 +2221,8 @@ impl VdafOps {
     /// Implements [helper aggregate initialization][1].
     ///
     /// [1]: https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#name-helper-initialization
-    async fn handle_aggregate_init_generic<const SEED_SIZE: usize, B, A, C>(
-        datastore: Arc<Datastore<C>>,
+    async fn handle_aggregate_init_generic<const SEED_SIZE: usize, B, A>(
+        datastore: Arc<Datastore>,
         hpke_keypairs: Arc<HpkeKeypairCache>,
         vdaf: Arc<A>,
         metrics: &AggregatorMetrics,
@@ -2245,14 +2237,13 @@ impl VdafOps {
     where
         B: AccumulableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
-        C: Clock,
     {
         // Unwrap safety: SHA-256 computed by ring should always be 32 bytes.
         let request_hash = digest(&SHA256, req_bytes).as_ref().try_into().unwrap();
         let req =
             AggregationJobInitializeReq::get_decoded(req_bytes).map_err(Error::MessageDecode)?;
 
-        Self::handle_aggregate_init_inner::<SEED_SIZE, B, A, C>(
+        Self::handle_aggregate_init_inner::<SEED_SIZE, B, A>(
             datastore,
             hpke_keypairs,
             vdaf,
@@ -2274,8 +2265,8 @@ impl VdafOps {
         fields(verification_key_id = req.verification_key_id()),
         err(level = Level::DEBUG)
     )]
-    async fn handle_aggregate_init_inner<const SEED_SIZE: usize, B, A, C>(
-        datastore: Arc<Datastore<C>>,
+    async fn handle_aggregate_init_inner<const SEED_SIZE: usize, B, A>(
+        datastore: Arc<Datastore>,
         hpke_keypairs: Arc<HpkeKeypairCache>,
         vdaf: Arc<A>,
         metrics: &AggregatorMetrics,
@@ -2291,7 +2282,6 @@ impl VdafOps {
     where
         B: AccumulableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
-        C: Clock,
     {
         // If two ReportShare messages have the same report ID, then the helper MUST abort with
         // error "invalidMessage". (§4.5.1.2)
@@ -2410,8 +2400,8 @@ impl VdafOps {
     }
 
     // All report aggregations must be in the HelperInitProcessing state.
-    async fn handle_aggregate_init_generic_sync<const SEED_SIZE: usize, B, A, C>(
-        datastore: Arc<Datastore<C>>,
+    async fn handle_aggregate_init_generic_sync<const SEED_SIZE: usize, B, A>(
+        datastore: Arc<Datastore>,
         hpke_keypairs: Arc<HpkeKeypairCache>,
         vdaf: Arc<A>,
         metrics: &AggregatorMetrics,
@@ -2426,7 +2416,6 @@ impl VdafOps {
     where
         B: AccumulableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
-        C: Clock,
     {
         // Check if this is a repeated request, and if it is the same as before, send
         // the same response as last time.
@@ -2489,8 +2478,8 @@ impl VdafOps {
     }
 
     // All report aggregations must be in the HelperInitProcessing state.
-    async fn handle_aggregate_init_generic_async<const SEED_SIZE: usize, B, A, C>(
-        datastore: Arc<Datastore<C>>,
+    async fn handle_aggregate_init_generic_async<const SEED_SIZE: usize, B, A>(
+        datastore: Arc<Datastore>,
         vdaf: Arc<A>,
         metrics: &AggregatorMetrics,
         task: Arc<AggregatorTask>,
@@ -2504,7 +2493,6 @@ impl VdafOps {
     where
         B: AccumulableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
-        C: Clock,
     {
         Self::handle_aggregate_init_generic_write(
             datastore,
@@ -2528,8 +2516,8 @@ impl VdafOps {
         Ok(None)
     }
 
-    async fn handle_aggregate_init_generic_write<const SEED_SIZE: usize, B, A, C>(
-        datastore: Arc<Datastore<C>>,
+    async fn handle_aggregate_init_generic_write<const SEED_SIZE: usize, B, A>(
+        datastore: Arc<Datastore>,
         vdaf: Arc<A>,
         metrics: &AggregatorMetrics,
         task: Arc<AggregatorTask>,
@@ -2543,7 +2531,6 @@ impl VdafOps {
     where
         B: AccumulableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
-        C: Clock,
     {
         let task_aggregation_counters = TaskAggregationCounter::default();
         let verify_resps = datastore
@@ -2637,9 +2624,8 @@ impl VdafOps {
         const SEED_SIZE: usize,
         B: AccumulableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
-        C: Clock,
     >(
-        datastore: Arc<Datastore<C>>,
+        datastore: Arc<Datastore>,
         vdaf: Arc<A>,
         metrics: &AggregatorMetrics,
         task: Arc<AggregatorTask>,
@@ -3029,9 +3015,8 @@ impl VdafOps {
         const SEED_SIZE: usize,
         B: AccumulableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
-        C: Clock,
     >(
-        datastore: Arc<Datastore<C>>,
+        datastore: Arc<Datastore>,
         vdaf: Arc<A>,
         task: Arc<AggregatorTask>,
         aggregation_job_id: &AggregationJobId,
@@ -3113,9 +3098,8 @@ impl VdafOps {
         const SEED_SIZE: usize,
         B: AccumulableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
-        C: Clock,
     >(
-        datastore: &Datastore<C>,
+        datastore: &Datastore,
         task: Arc<AggregatorTask>,
         aggregation_job_id: &AggregationJobId,
     ) -> Result<(), Error> {
@@ -3148,9 +3132,9 @@ impl VdafOps {
         fields(task_id = ?task.id()),
         err(level = Level::DEBUG)
     )]
-    async fn handle_create_collection_job<C: Clock>(
+    async fn handle_create_collection_job(
         &self,
-        datastore: &Datastore<C>,
+        datastore: &Datastore,
         task: Arc<AggregatorTask>,
         collection_job_id: &CollectionJobId,
         collection_req_bytes: &[u8],
@@ -3162,7 +3146,6 @@ impl VdafOps {
                         VERIFY_KEY_LENGTH,
                         TimeInterval,
                         VdafType,
-                        _,
                     >(datastore, task, Arc::clone(vdaf), collection_job_id, collection_req_bytes)
                     .await
                 })
@@ -3173,7 +3156,6 @@ impl VdafOps {
                         VERIFY_KEY_LENGTH,
                         LeaderSelected,
                         VdafType,
-                        _,
                     >(datastore, task, Arc::clone(vdaf), collection_job_id, collection_req_bytes)
                     .await
                 })
@@ -3185,9 +3167,8 @@ impl VdafOps {
         const SEED_SIZE: usize,
         B: CollectableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
-        C: Clock,
     >(
-        datastore: &Datastore<C>,
+        datastore: &Datastore,
         task: Arc<AggregatorTask>,
         vdaf: Arc<A>,
         collection_job_id: &CollectionJobId,
@@ -3209,9 +3190,8 @@ impl VdafOps {
         const SEED_SIZE: usize,
         B: CollectableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
-        C: Clock,
     >(
-        datastore: &Datastore<C>,
+        datastore: &Datastore,
         task: Arc<AggregatorTask>,
         vdaf: Arc<A>,
         collection_job_id: &CollectionJobId,
@@ -3330,9 +3310,9 @@ impl VdafOps {
         fields(task_id = ?task.id()),
         err(level = Level::DEBUG)
     )]
-    async fn handle_get_collection_job<C: Clock>(
+    async fn handle_get_collection_job(
         &self,
-        datastore: &Datastore<C>,
+        datastore: &Datastore,
         task: Arc<AggregatorTask>,
         collection_job_id: &CollectionJobId,
     ) -> Result<Vec<u8>, Error> {
@@ -3343,7 +3323,6 @@ impl VdafOps {
                         VERIFY_KEY_LENGTH,
                         TimeInterval,
                         VdafType,
-                        _,
                     >(datastore, task, Arc::clone(vdaf), collection_job_id)
                     .await
                 })
@@ -3354,7 +3333,6 @@ impl VdafOps {
                         VERIFY_KEY_LENGTH,
                         LeaderSelected,
                         VdafType,
-                        _,
                     >(datastore, task, Arc::clone(vdaf), collection_job_id)
                     .await
                 })
@@ -3367,9 +3345,8 @@ impl VdafOps {
         const SEED_SIZE: usize,
         B: CollectableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
-        C: Clock,
     >(
-        datastore: &Datastore<C>,
+        datastore: &Datastore,
         task: Arc<AggregatorTask>,
         vdaf: Arc<A>,
         collection_job_id: &CollectionJobId,
@@ -3481,9 +3458,9 @@ impl VdafOps {
         fields(task_id = ?task.id()),
         err(level = Level::DEBUG)
     )]
-    async fn handle_delete_collection_job<C: Clock>(
+    async fn handle_delete_collection_job(
         &self,
-        datastore: &Datastore<C>,
+        datastore: &Datastore,
         task: Arc<AggregatorTask>,
         collection_job_id: &CollectionJobId,
     ) -> Result<(), Error> {
@@ -3494,7 +3471,6 @@ impl VdafOps {
                         VERIFY_KEY_LENGTH,
                         TimeInterval,
                         VdafType,
-                        _,
                     >(datastore, task, Arc::clone(vdaf), collection_job_id)
                     .await
                 })
@@ -3505,7 +3481,6 @@ impl VdafOps {
                         VERIFY_KEY_LENGTH,
                         LeaderSelected,
                         VdafType,
-                        _,
                     >(datastore, task, Arc::clone(vdaf), collection_job_id)
                     .await
                 })
@@ -3517,9 +3492,8 @@ impl VdafOps {
         const SEED_SIZE: usize,
         B: CollectableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
-        C: Clock,
     >(
-        datastore: &Datastore<C>,
+        datastore: &Datastore,
         task: Arc<AggregatorTask>,
         vdaf: Arc<A>,
         collection_job_id: &CollectionJobId,
@@ -3562,9 +3536,9 @@ impl VdafOps {
         fields(task_id = ?task.id()),
         err(level = Level::DEBUG)
     )]
-    async fn handle_get_aggregate_share<C: Clock>(
+    async fn handle_get_aggregate_share(
         &self,
-        datastore: &Datastore<C>,
+        datastore: &Datastore,
         task: Arc<AggregatorTask>,
         collector_hpke_config: &HpkeConfig,
         aggregate_share_id: &AggregateShareId,
@@ -3585,7 +3559,6 @@ impl VdafOps {
                             TimeInterval,
                             DpStrategyType,
                             VdafType,
-                            _,
                         >(
                             datastore,
                             task,
@@ -3611,7 +3584,6 @@ impl VdafOps {
                             LeaderSelected,
                             DpStrategyType,
                             VdafType,
-                            _,
                         >(
                             datastore,
                             task,
@@ -3630,9 +3602,8 @@ impl VdafOps {
         B: CollectableBatchMode,
         S: DifferentialPrivacyStrategy + Clone + Send + Sync + 'static,
         A: AsyncAggregatorWithNoise<SEED_SIZE, S>,
-        C: Clock,
     >(
-        datastore: &Datastore<C>,
+        datastore: &Datastore,
         task: Arc<AggregatorTask>,
         vdaf: Arc<A>,
         collector_hpke_config: &HpkeConfig,
@@ -3688,9 +3659,9 @@ impl VdafOps {
         fields(task_id = ?task.id()),
         err(level = Level::DEBUG)
     )]
-    async fn handle_aggregate_share<C: Clock>(
+    async fn handle_aggregate_share(
         &self,
-        datastore: &Datastore<C>,
+        datastore: &Datastore,
         clock: &dyn Clock,
         task: Arc<AggregatorTask>,
         batch_aggregation_shard_count: u64,
@@ -3715,7 +3686,6 @@ impl VdafOps {
                             TimeInterval,
                             DpStrategyType,
                             VdafType,
-                            _,
                         >(
                             datastore,
                             clock,
@@ -3746,7 +3716,6 @@ impl VdafOps {
                             LeaderSelected,
                             DpStrategyType,
                             VdafType,
-                            _,
                         >(
                             datastore,
                             clock,
@@ -3770,9 +3739,8 @@ impl VdafOps {
         B: CollectableBatchMode,
         S: DifferentialPrivacyStrategy + Clone + Send + Sync + 'static,
         A: AsyncAggregatorWithNoise<SEED_SIZE, S>,
-        C: Clock,
     >(
-        datastore: &Datastore<C>,
+        datastore: &Datastore,
         clock: &dyn Clock,
         task: Arc<AggregatorTask>,
         vdaf: Arc<A>,
@@ -3815,9 +3783,8 @@ impl VdafOps {
         B: CollectableBatchMode,
         S: DifferentialPrivacyStrategy + Clone + Send + Sync + 'static,
         A: AsyncAggregatorWithNoise<SEED_SIZE, S>,
-        C: Clock,
     >(
-        datastore: &Datastore<C>,
+        datastore: &Datastore,
         clock: &dyn Clock,
         task: Arc<AggregatorTask>,
         vdaf: Arc<A>,
@@ -4083,9 +4050,9 @@ impl VdafOps {
         fields(task_id = ?task.id()),
         err(level = Level::DEBUG)
     )]
-    async fn handle_delete_aggregate_share<C: Clock>(
+    async fn handle_delete_aggregate_share(
         &self,
-        datastore: &Datastore<C>,
+        datastore: &Datastore,
         task: Arc<AggregatorTask>,
         aggregate_share_id: &AggregateShareId,
     ) -> Result<(), Error> {
@@ -4132,8 +4099,8 @@ fn validate_collection_job_extensions(
     Ok(())
 }
 
-fn write_task_aggregation_counter<C: Clock>(
-    datastore: Arc<Datastore<C>>,
+fn write_task_aggregation_counter(
+    datastore: Arc<Datastore>,
     shard_count: u64,
     task_id: TaskId,
     counters: TaskAggregationCounter,

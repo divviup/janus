@@ -24,9 +24,9 @@ use tracing::{Instrument, debug, error, info_span};
 use crate::binary_utils::Stopper;
 
 /// Periodically seeks incomplete jobs in the datastore and drives them concurrently.
-pub struct JobDriver<C: Clock, R, JobAcquirer, JobStepper> {
+pub struct JobDriver<R, JobAcquirer, JobStepper> {
     /// Clock used to determine when to schedule jobs.
-    clock: C,
+    clock: Arc<dyn Clock>,
     /// Runtime object used to spawn asynchronous tasks.
     runtime: R,
     /// Meter used to process metric values.
@@ -50,18 +50,9 @@ pub struct JobDriver<C: Clock, R, JobAcquirer, JobStepper> {
     job_stepper: JobStepper,
 }
 
-impl<
-    C,
-    R,
-    JobStepperError,
-    JobAcquirer,
-    JobAcquirerFuture,
-    JobStepper,
-    JobStepperFuture,
-    AcquiredJob,
-> JobDriver<C, R, JobAcquirer, JobStepper>
+impl<R, JobStepperError, JobAcquirer, JobAcquirerFuture, JobStepper, JobStepperFuture, AcquiredJob>
+    JobDriver<R, JobAcquirer, JobStepper>
 where
-    C: Clock,
     R: Runtime + Send + Sync + 'static,
     JobStepperError: Debug + Display + Send + Sync + 'static,
     JobAcquirer: Fn(usize) -> JobAcquirerFuture + Send + Sync + 'static,
@@ -72,7 +63,7 @@ where
 {
     /// Create a new [`JobDriver`].
     pub fn new(
-        clock: C,
+        clock: Arc<dyn Clock>,
         runtime: R,
         meter: Meter,
         stopper: Stopper,
@@ -291,7 +282,7 @@ mod tests {
 
         // Setup.
         install_test_trace_subscriber();
-        let clock = MockClock::default();
+        let clock = Arc::new(MockClock::default());
         let mut runtime_manager = TestRuntimeManager::new();
         let stopper = Stopper::new();
 

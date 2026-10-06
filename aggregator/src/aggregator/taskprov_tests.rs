@@ -68,7 +68,7 @@ pub struct TaskprovTestCase<const VERIFY_KEY_SIZE: usize, V: Vdaf> {
     _ephemeral_datastore: EphemeralDatastore,
     clock: MockClock,
     collector_hpke_keypair: HpkeKeypair,
-    datastore: Arc<Datastore<MockClock>>,
+    datastore: Arc<Datastore>,
     router: axum::Router,
     peer_aggregator: PeerAggregator,
     task: Task,
