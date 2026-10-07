@@ -578,13 +578,7 @@ async fn in_cluster_count_ohttp() {
     janus_pair
         .task_parameters
         .endpoint_fragments
-        .encapsulated_upload_endpoint = Some(
-        janus_pair
-            .leader
-            .encapsulated_upload_endpoint
-            .clone()
-            .unwrap(),
-    );
+        .encapsulated_upload_endpoint = janus_pair.leader.encapsulated_upload_endpoint.clone();
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
