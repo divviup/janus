@@ -392,7 +392,7 @@ impl InClusterJanusPair {
 
     fn in_cluster_aggregator_api_url(namespace: &str) -> Url {
         let mut url = Self::in_cluster_aggregator_url(namespace);
-        url.set_path("aggregator-api/");
+        url.set_path("aggregator-api");
         url
     }
 
