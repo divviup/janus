@@ -60,7 +60,7 @@ const DEFAULT_ASYNC_POLL_INTERVAL: StdDuration = StdDuration::from_secs(1);
 
 pub(super) struct SimulationAggregator {
     pub(super) _ephemeral_datastore: EphemeralDatastore,
-    pub(super) datastore: Arc<Datastore<MockClock>>,
+    pub(super) datastore: Arc<Datastore>,
     pub(super) socket_address: SocketAddr,
     pub(super) fault_injector: FaultInjector,
     pub(super) inspect_monitor: InspectMonitor,
@@ -80,7 +80,6 @@ impl SimulationAggregator {
 
         let aggregator_handler = AggregatorHandlerBuilder::new(
             Arc::clone(&datastore),
-            state.clock.clone(),
             report_writer_runtime,
             meter,
             AggregatorConfig {
@@ -141,11 +140,11 @@ pub(super) struct Components {
     pub(super) helper: SimulationAggregator,
     pub(super) http_client: reqwest::Client,
     pub(super) client: Client<Prio3Histogram>,
-    pub(super) leader_garbage_collector: GarbageCollector<MockClock>,
-    pub(super) helper_garbage_collector: GarbageCollector<MockClock>,
-    pub(super) leader_key_rotator: KeyRotator<MockClock>,
-    pub(super) helper_key_rotator: KeyRotator<MockClock>,
-    pub(super) aggregation_job_creator: Arc<AggregationJobCreator<MockClock>>,
+    pub(super) leader_garbage_collector: GarbageCollector,
+    pub(super) helper_garbage_collector: GarbageCollector,
+    pub(super) leader_key_rotator: KeyRotator,
+    pub(super) helper_key_rotator: KeyRotator,
+    pub(super) aggregation_job_creator: Arc<AggregationJobCreator>,
     pub(super) leader_aggregation_job_driver_acquirer_cb:
         JobAcquirerCallback<AcquiredAggregationJob>,
     pub(super) leader_aggregation_job_driver_stepper_cb: JobStepperCallback<AcquiredAggregationJob>,
@@ -334,7 +333,7 @@ impl Components {
         let collection_job_driver_stepper_cb =
             Box::new(collection_job_driver.make_job_stepper_callback(
                 Arc::clone(&leader.datastore),
-                MockClock::default(),
+                Arc::new(MockClock::default()),
                 2,
             ));
 

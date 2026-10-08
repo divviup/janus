@@ -23,7 +23,7 @@ use janus_core::{
     cli::{AeadAlgorithm, KdfAlgorithm, KemAlgorithm},
     hpke::HpkeKeypair,
     initialize_rustls,
-    time::{Clock, RealClock, TimeDeltaExt},
+    time::{RealClock, TimeDeltaExt},
     vdaf_dispatch,
 };
 use janus_messages::{
@@ -443,7 +443,7 @@ fn pretty_print_jobs_and_leases<
 }
 
 async fn dispatch_list_collection_jobs(
-    tx: &Transaction<'_, RealClock>,
+    tx: &Transaction<'_>,
     task_id: &TaskId,
     collection_job_id: Option<CollectionJobId>,
 ) -> Result<(), crate::aggregator::Error> {
@@ -484,7 +484,7 @@ async fn list_collection_jobs_generic<
     B: janus_messages::batch_mode::BatchMode,
     A: AsyncAggregator<SEED_SIZE>,
 >(
-    tx: &Transaction<'_, RealClock>,
+    tx: &Transaction<'_>,
     vdaf: &A,
     task_id: &TaskId,
     collection_job_id: Option<CollectionJobId>,
@@ -522,7 +522,7 @@ async fn list_collection_jobs_generic<
 }
 
 async fn dispatch_list_aggregation_jobs(
-    tx: &Transaction<'_, RealClock>,
+    tx: &Transaction<'_>,
     task_id: &TaskId,
     aggregation_job_id: Option<AggregationJobId>,
 ) -> Result<(), crate::aggregator::Error> {
@@ -563,7 +563,7 @@ async fn list_aggregation_jobs_generic<
     B: janus_messages::batch_mode::BatchMode,
     A: AsyncAggregator<SEED_SIZE>,
 >(
-    tx: &Transaction<'_, RealClock>,
+    tx: &Transaction<'_>,
     task_id: &TaskId,
     aggregation_job_id: Option<AggregationJobId>,
 ) -> Result<(), crate::aggregator::Error> {
@@ -613,8 +613,8 @@ async fn install_tracing_and_metrics_handlers(
     Ok((trace_guard, metrics_guard))
 }
 
-async fn generate_hpke_key<C: Clock>(
-    datastore: &Datastore<C>,
+async fn generate_hpke_key(
+    datastore: &Datastore,
     dry_run: bool,
     id: HpkeConfigId,
     kem: HpkeKemId,
@@ -641,8 +641,8 @@ async fn generate_hpke_key<C: Clock>(
     Ok(())
 }
 
-async fn set_hpke_key_state<C: Clock>(
-    datastore: &Datastore<C>,
+async fn set_hpke_key_state(
+    datastore: &Datastore,
     dry_run: bool,
     id: HpkeConfigId,
     state: HpkeKeyState,
@@ -658,8 +658,8 @@ async fn set_hpke_key_state<C: Clock>(
     Ok(())
 }
 
-async fn add_taskprov_peer_aggregator<C: Clock>(
-    datastore: &Datastore<C>,
+async fn add_taskprov_peer_aggregator(
+    datastore: &Datastore,
     dry_run: bool,
     peer_endpoint: &Url,
     role: Role,
@@ -705,8 +705,8 @@ async fn add_taskprov_peer_aggregator<C: Clock>(
     Ok(())
 }
 
-async fn provision_tasks<C: Clock>(
-    datastore: &Datastore<C>,
+async fn provision_tasks(
+    datastore: &Datastore,
     tasks_file: &Path,
     generate_missing_parameters: bool,
     dry_run: bool,
@@ -851,7 +851,7 @@ async fn datastore_from_opts(
     command_line_options: &CommandLineOptions,
     config_file: &ConfigFile,
     kube_client: &LazyKubeClient,
-) -> Result<Datastore<RealClock>> {
+) -> Result<Datastore> {
     let pool = database_pool(
         &config_file.common_config.database,
         command_line_options
@@ -863,7 +863,7 @@ async fn datastore_from_opts(
 
     datastore(
         pool,
-        RealClock::default(),
+        Arc::new(RealClock::default()),
         &meter("janus_aggregator"),
         &kubernetes_secret_options
             .datastore_keys(&command_line_options.common_options, kube_client)
@@ -1135,7 +1135,7 @@ mod tests {
 
     // Returns the HPKE config written to disk.
     async fn run_generate_hpke_key_testcase(
-        ds: &Datastore<RealClock>,
+        ds: &Datastore,
         dry_run: bool,
         id: HpkeConfigId,
         kem: HpkeKemId,
@@ -1309,7 +1309,7 @@ mod tests {
     }
 
     async fn run_add_taskprov_peer_aggregator_testcase(
-        ds: &Datastore<RealClock>,
+        ds: &Datastore,
         dry_run: bool,
         peer_endpoint: &Url,
         peer_role: Role,
@@ -1446,7 +1446,7 @@ mod tests {
     }
 
     async fn run_provision_tasks_testcase(
-        ds: &Datastore<RealClock>,
+        ds: &Datastore,
         tasks: &[AggregatorTask],
         dry_run: bool,
     ) -> Vec<AggregatorTask> {

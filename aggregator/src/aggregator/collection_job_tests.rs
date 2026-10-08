@@ -49,7 +49,7 @@ pub(crate) struct CollectionJobTestCase {
     pub(super) task: Task,
     clock: MockClock,
     pub(super) router: Router,
-    pub(super) datastore: Arc<Datastore<MockClock>>,
+    pub(super) datastore: Arc<Datastore>,
     _ephemeral_datastore: EphemeralDatastore,
 }
 
@@ -283,7 +283,6 @@ pub(crate) async fn setup_collection_job_test_case(
 
     let router = AggregatorHandlerBuilder::new(
         Arc::clone(&datastore),
-        clock.clone(),
         TestRuntime::default(),
         &noop_meter(),
         Config {

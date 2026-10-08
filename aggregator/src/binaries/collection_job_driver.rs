@@ -2,7 +2,7 @@ use std::{fmt::Debug, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use janus_core::{TokioRuntime, time::RealClock};
+use janus_core::TokioRuntime;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
@@ -12,7 +12,7 @@ use crate::{
     config::{BinaryConfig, CommonConfig, JobDriverConfig},
 };
 
-pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Result<()> {
+pub async fn main_callback(ctx: BinaryContext<Options, Config>) -> Result<()> {
     const CLIENT_USER_AGENT: &str = concat!(
         env!("CARGO_PKG_NAME"),
         "/",
@@ -49,7 +49,7 @@ pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Re
 
     // Start running.
     let job_driver = Arc::new(JobDriver::new(
-        ctx.clock,
+        ctx.clock.clone(),
         TokioRuntime,
         ctx.meter,
         ctx.stopper,

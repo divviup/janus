@@ -15,7 +15,7 @@ use janus_aggregator_core::{
         self, Datastore, Transaction, models::LeaderStoredReport, task_counters::TaskUploadCounter,
     },
 };
-use janus_core::{Runtime, time::Clock};
+use janus_core::Runtime;
 use janus_messages::TaskId;
 use rand::{RngExt, rng};
 use tokio::{
@@ -31,21 +31,21 @@ use crate::aggregator::{
     error::{ReportRejection, ReportRejectionReason, UploadError},
 };
 
-type ReportResult<C> = Result<Box<dyn ReportWriter<C>>, ReportRejection>;
+type ReportResult = Result<Box<dyn ReportWriter>, ReportRejection>;
 
 type ResultSender = oneshot::Sender<Result<(), Arc<Error>>>;
 
-type ReportWriteBatcherSender<C> = mpsc::Sender<(ReportResult<C>, Option<ResultSender>)>;
-type ReportWriteBatcherReceiver<C> = mpsc::Receiver<(ReportResult<C>, Option<ResultSender>)>;
+type ReportWriteBatcherSender = mpsc::Sender<(ReportResult, Option<ResultSender>)>;
+type ReportWriteBatcherReceiver = mpsc::Receiver<(ReportResult, Option<ResultSender>)>;
 
 #[derive(Debug)]
-pub struct ReportWriteBatcher<C> {
-    report_tx: ReportWriteBatcherSender<C>,
+pub struct ReportWriteBatcher {
+    report_tx: ReportWriteBatcherSender,
 }
 
-impl<C: Clock> ReportWriteBatcher<C> {
+impl ReportWriteBatcher {
     pub fn new<R: Runtime + Send + Sync + 'static>(
-        ds: Arc<Datastore<C>>,
+        ds: Arc<Datastore>,
         runtime: R,
         counter_shard_count: u64,
         max_batch_size: usize,
@@ -87,7 +87,7 @@ impl<C: Clock> ReportWriteBatcher<C> {
     /// This function waits for and returns the result of the batch write.
     pub(crate) async fn write_report(
         &self,
-        report_writer: Box<dyn ReportWriter<C>>,
+        report_writer: Box<dyn ReportWriter>,
     ) -> Result<(), UploadError> {
         // Send report to be written.
         // Unwrap safety: report_rx is not dropped until ReportWriteBatcher is dropped.
@@ -113,9 +113,9 @@ impl<C: Clock> ReportWriteBatcher<C> {
         skip(ds, runtime, report_rx)
     )]
     async fn run_upload_batcher<R: Runtime + Send + Sync>(
-        ds: Arc<Datastore<C>>,
+        ds: Arc<Datastore>,
         runtime: Arc<R>,
-        mut report_rx: ReportWriteBatcherReceiver<C>,
+        mut report_rx: ReportWriteBatcherReceiver,
         counter_shard_count: u64,
         max_batch_size: usize,
         max_batch_write_delay: Duration,
@@ -166,12 +166,12 @@ impl<C: Clock> ReportWriteBatcher<C> {
 
     #[tracing::instrument(name = "ReportWriteBatcher::write_batch", skip_all)]
     async fn write_batch(
-        ds: Arc<Datastore<C>>,
+        ds: Arc<Datastore>,
         counter_shard_count: u64,
-        report_results: Vec<(ReportResult<C>, Option<ResultSender>)>,
+        report_results: Vec<(ReportResult, Option<ResultSender>)>,
     ) {
         // Run all report writes concurrently.
-        let (report_results, result_senders): (Vec<ReportResult<C>>, Vec<Option<ResultSender>>) =
+        let (report_results, result_senders): (Vec<ReportResult>, Vec<Option<ResultSender>>) =
             report_results.into_iter().unzip();
         let report_results = Arc::new(report_results);
         let results = ds
@@ -246,10 +246,10 @@ impl<C: Clock> ReportWriteBatcher<C> {
 }
 
 #[async_trait]
-pub trait ReportWriter<C: Clock>: Debug + Send + Sync {
+pub trait ReportWriter: Debug + Send + Sync {
     async fn write_report(
         &self,
-        tx: &Transaction<C>,
+        tx: &Transaction,
         task_upload_counters: &TaskUploadCounters,
     ) -> Result<(), Error>;
 }
@@ -280,15 +280,14 @@ where
 }
 
 #[async_trait]
-impl<const SEED_SIZE: usize, C, B, A> ReportWriter<C> for WritableReport<SEED_SIZE, B, A>
+impl<const SEED_SIZE: usize, B, A> ReportWriter for WritableReport<SEED_SIZE, B, A>
 where
     A: AsyncAggregator<SEED_SIZE>,
-    C: Clock,
     B: UploadableBatchMode,
 {
     async fn write_report(
         &self,
-        tx: &Transaction<C>,
+        tx: &Transaction,
         task_upload_counter: &TaskUploadCounters,
     ) -> Result<(), Error> {
         // Some validation requires we query the database. Thus it's still possible to reject a
@@ -355,10 +354,10 @@ impl TaskUploadCounters {
     }
 
     /// Flushes the stored [`TaskUploadCounter`]s to the database. The stored counters are cleared.
-    async fn write<C: Clock>(
+    async fn write(
         &self,
         counter_shard_count: u64,
-        tx: &Transaction<'_, C>,
+        tx: &Transaction<'_>,
     ) -> Result<(), datastore::Error> {
         let ord = rng().random_range(0..counter_shard_count);
         let map = {

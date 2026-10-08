@@ -21,11 +21,7 @@ use janus_aggregator_core::{
     task::{AggregatorTask, AggregatorTaskParameters, reconstruct_task_interval},
     taskprov::PeerAggregator,
 };
-use janus_core::{
-    auth_tokens::AuthenticationTokenHash,
-    hpke::HpkeKeypair,
-    time::{Clock, TimeDeltaExt},
-};
+use janus_core::{auth_tokens::AuthenticationTokenHash, hpke::HpkeKeypair, time::TimeDeltaExt};
 use janus_messages::{
     Duration, HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId, Role, TaskId,
     batch_mode::Code as SupportedBatchMode,
@@ -49,9 +45,7 @@ pub(super) struct PaginationQuery {
     pagination_token: Option<String>,
 }
 
-pub(super) async fn get_config<C: Clock>(
-    State(state): State<Arc<ApiState<C>>>,
-) -> Json<AggregatorApiConfig> {
+pub(super) async fn get_config(State(state): State<Arc<ApiState>>) -> Json<AggregatorApiConfig> {
     static VERSION: LazyLock<String> =
         LazyLock::new(|| format!("{}-{}", env!("CARGO_PKG_VERSION"), git_revision()));
 
@@ -81,8 +75,8 @@ pub(super) async fn get_config<C: Clock>(
     })
 }
 
-pub(super) async fn get_task_ids<C: Clock>(
-    State(state): State<Arc<ApiState<C>>>,
+pub(super) async fn get_task_ids(
+    State(state): State<Arc<ApiState>>,
     Query(query): Query<PaginationQuery>,
 ) -> Result<Json<GetTaskIdsResp>, Error> {
     let lower_bound = query
@@ -106,8 +100,8 @@ pub(super) async fn get_task_ids<C: Clock>(
     }))
 }
 
-pub(super) async fn post_task<C: Clock>(
-    State(state): State<Arc<ApiState<C>>>,
+pub(super) async fn post_task(
+    State(state): State<Arc<ApiState>>,
     Json(req): Json<PostTaskReq>,
 ) -> Result<Json<TaskResp>, Error> {
     if !matches!(req.role, Role::Leader | Role::Helper) {
@@ -271,8 +265,8 @@ pub(super) async fn post_task<C: Clock>(
     Ok(Json(task_resp))
 }
 
-pub(super) async fn get_task<C: Clock>(
-    State(state): State<Arc<ApiState<C>>>,
+pub(super) async fn get_task(
+    State(state): State<Arc<ApiState>>,
     Path(task_id): Path<String>,
 ) -> Result<Json<TaskResp>, Error> {
     let task_id = parse_task_id_param(&task_id)?;
@@ -290,8 +284,8 @@ pub(super) async fn get_task<C: Clock>(
     ))
 }
 
-pub(super) async fn delete_task<C: Clock>(
-    State(state): State<Arc<ApiState<C>>>,
+pub(super) async fn delete_task(
+    State(state): State<Arc<ApiState>>,
     Path(task_id): Path<String>,
 ) -> Result<StatusCode, Error> {
     let task_id = parse_task_id_param(&task_id)?;
@@ -307,8 +301,8 @@ pub(super) async fn delete_task<C: Clock>(
     }
 }
 
-pub(super) async fn patch_task<C: Clock>(
-    State(state): State<Arc<ApiState<C>>>,
+pub(super) async fn patch_task(
+    State(state): State<Arc<ApiState>>,
     Path(task_id): Path<String>,
     Json(req): Json<PatchTaskReq>,
 ) -> Result<Json<TaskResp>, Error> {
@@ -334,8 +328,8 @@ pub(super) async fn patch_task<C: Clock>(
     ))
 }
 
-pub(super) async fn get_task_upload_metrics<C: Clock>(
-    State(state): State<Arc<ApiState<C>>>,
+pub(super) async fn get_task_upload_metrics(
+    State(state): State<Arc<ApiState>>,
     Path(task_id): Path<String>,
 ) -> Result<Json<GetTaskUploadMetricsResp>, Error> {
     let task_id = parse_task_id_param(&task_id)?;
@@ -350,8 +344,8 @@ pub(super) async fn get_task_upload_metrics<C: Clock>(
     )))
 }
 
-pub(super) async fn get_task_aggregation_metrics<C: Clock>(
-    State(state): State<Arc<ApiState<C>>>,
+pub(super) async fn get_task_aggregation_metrics(
+    State(state): State<Arc<ApiState>>,
     Path(task_id): Path<String>,
 ) -> Result<Json<GetTaskAggregationMetricsResp>, Error> {
     let task_id = parse_task_id_param(&task_id)?;
@@ -366,8 +360,8 @@ pub(super) async fn get_task_aggregation_metrics<C: Clock>(
     )))
 }
 
-pub(super) async fn get_hpke_configs<C: Clock>(
-    State(state): State<Arc<ApiState<C>>>,
+pub(super) async fn get_hpke_configs(
+    State(state): State<Arc<ApiState>>,
 ) -> Result<Json<Vec<HpkeConfigResp>>, Error> {
     Ok(Json(
         state
@@ -382,8 +376,8 @@ pub(super) async fn get_hpke_configs<C: Clock>(
     ))
 }
 
-pub(super) async fn get_hpke_config<C: Clock>(
-    State(state): State<Arc<ApiState<C>>>,
+pub(super) async fn get_hpke_config(
+    State(state): State<Arc<ApiState>>,
     Path(config_id): Path<String>,
 ) -> Result<Json<HpkeConfigResp>, Error> {
     let config_id = parse_hpke_config_id_param(&config_id)?;
@@ -398,8 +392,8 @@ pub(super) async fn get_hpke_config<C: Clock>(
     )))
 }
 
-pub(super) async fn put_hpke_config<C: Clock>(
-    State(state): State<Arc<ApiState<C>>>,
+pub(super) async fn put_hpke_config(
+    State(state): State<Arc<ApiState>>,
     Json(req): Json<PutHpkeConfigReq>,
 ) -> Result<(StatusCode, Json<HpkeConfigResp>), Error> {
     let existing_keypairs = state
@@ -444,8 +438,8 @@ pub(super) async fn put_hpke_config<C: Clock>(
     ))
 }
 
-pub(super) async fn patch_hpke_config<C: Clock>(
-    State(state): State<Arc<ApiState<C>>>,
+pub(super) async fn patch_hpke_config(
+    State(state): State<Arc<ApiState>>,
     Path(config_id): Path<String>,
     Json(req): Json<PatchHpkeConfigReq>,
 ) -> Result<StatusCode, Error> {
@@ -461,8 +455,8 @@ pub(super) async fn patch_hpke_config<C: Clock>(
     Ok(StatusCode::OK)
 }
 
-pub(super) async fn delete_hpke_config<C: Clock>(
-    State(state): State<Arc<ApiState<C>>>,
+pub(super) async fn delete_hpke_config(
+    State(state): State<Arc<ApiState>>,
     Path(config_id): Path<String>,
 ) -> Result<StatusCode, Error> {
     let config_id = parse_hpke_config_id_param(&config_id)?;
@@ -478,8 +472,8 @@ pub(super) async fn delete_hpke_config<C: Clock>(
     }
 }
 
-pub(super) async fn get_taskprov_peer_aggregators<C: Clock>(
-    State(state): State<Arc<ApiState<C>>>,
+pub(super) async fn get_taskprov_peer_aggregators(
+    State(state): State<Arc<ApiState>>,
 ) -> Result<Json<Vec<TaskprovPeerAggregatorResp>>, Error> {
     Ok(Json(
         state
@@ -500,8 +494,8 @@ pub(super) async fn get_taskprov_peer_aggregators<C: Clock>(
 /// TODO(1685): Requiring that we delete an existing peer aggregator before we can change it makes
 /// token rotation cumbersome and fragile. Since token rotation is the main use case for updating
 /// an existing peer aggregator, we will resolve peer aggregator updates in that issue.
-pub(super) async fn post_taskprov_peer_aggregator<C: Clock>(
-    State(state): State<Arc<ApiState<C>>>,
+pub(super) async fn post_taskprov_peer_aggregator(
+    State(state): State<Arc<ApiState>>,
     Json(req): Json<PostTaskprovPeerAggregatorReq>,
 ) -> Result<(StatusCode, Json<TaskprovPeerAggregatorResp>), Error> {
     let to_insert = PeerAggregator::new(
@@ -536,8 +530,8 @@ pub(super) async fn post_taskprov_peer_aggregator<C: Clock>(
     Ok((StatusCode::CREATED, Json(inserted)))
 }
 
-pub(super) async fn delete_taskprov_peer_aggregator<C: Clock>(
-    State(state): State<Arc<ApiState<C>>>,
+pub(super) async fn delete_taskprov_peer_aggregator(
+    State(state): State<Arc<ApiState>>,
     Json(req): Json<DeleteTaskprovPeerAggregatorReq>,
 ) -> Result<StatusCode, Error> {
     let res = state

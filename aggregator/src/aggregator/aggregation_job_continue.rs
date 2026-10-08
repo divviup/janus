@@ -410,7 +410,7 @@ mod tests {
         V: Aggregator<VERIFY_KEY_LENGTH, 16>,
     > {
         task: Task,
-        datastore: Arc<Datastore<MockClock>>,
+        datastore: Arc<Datastore>,
         verify_init_generator: VerifyInitGenerator<VERIFY_KEY_LENGTH, V>,
         aggregation_job_id: AggregationJobId,
         aggregation_parameter: V::AggregationParam,
@@ -518,7 +518,6 @@ mod tests {
         // Create aggregator router.
         let builder = AggregatorHandlerBuilder::new(
             Arc::clone(&datastore),
-            clock,
             TestRuntime::default(),
             &meter,
             default_aggregator_config(),

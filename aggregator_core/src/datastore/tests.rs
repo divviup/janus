@@ -114,7 +114,7 @@ async fn reject_unsupported_schema_version(ephemeral_datastore: EphemeralDatasto
     let error = Datastore::new_with_supported_versions(
         ephemeral_datastore.pool(),
         ephemeral_datastore.crypter(),
-        MockClock::default(),
+        Arc::new(MockClock::default()),
         &noop_meter(),
         &[0],
         TEST_DATASTORE_MAX_TRANSACTION_RETRIES,
@@ -4275,7 +4275,7 @@ trait TestBatchModeExt: CollectableBatchMode {
     fn batch_identifier_for_client_timestamps(client_timestamps: &[Time]) -> Self::BatchIdentifier;
 
     async fn write_outstanding_batch(
-        tx: &Transaction<MockClock>,
+        tx: &Transaction,
         task_id: &TaskId,
         batch_identifier: &Self::BatchIdentifier,
         time_bucket_start: &Option<Time>,
@@ -4297,7 +4297,7 @@ impl TestBatchModeExt for TimeInterval {
     }
 
     async fn write_outstanding_batch(
-        _: &Transaction<MockClock>,
+        _: &Transaction,
         _: &TaskId,
         _: &Self::BatchIdentifier,
         _: &Option<Time>,
@@ -4317,7 +4317,7 @@ impl TestBatchModeExt for LeaderSelected {
     }
 
     async fn write_outstanding_batch(
-        tx: &Transaction<MockClock>,
+        tx: &Transaction,
         task_id: &TaskId,
         batch_identifier: &Self::BatchIdentifier,
         time_bucket_start: &Option<Time>,
@@ -4330,7 +4330,7 @@ impl TestBatchModeExt for LeaderSelected {
 }
 
 async fn setup_collection_job_acquire_test_case<B: TestBatchModeExt>(
-    ds: &Datastore<MockClock>,
+    ds: &Datastore,
     test_case: CollectionJobAcquireTestCase<B>,
 ) -> CollectionJobAcquireTestCase<B> {
     ds.run_unnamed_tx(|tx| {
@@ -4414,7 +4414,7 @@ async fn setup_collection_job_acquire_test_case<B: TestBatchModeExt>(
 }
 
 async fn run_collection_job_acquire_test_case<B: TestBatchModeExt>(
-    ds: &Datastore<MockClock>,
+    ds: &Datastore,
     test_case: CollectionJobAcquireTestCase<B>,
 ) -> Vec<Lease<AcquiredCollectionJob>> {
     let test_case = setup_collection_job_acquire_test_case(ds, test_case).await;
@@ -5863,11 +5863,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
             let vdaf = dummy::Vdaf::default();
 
             let batch_aggregations =
-                TimeInterval::get_batch_aggregations_for_collection_identifier::<
-                    0,
-                    dummy::Vdaf,
-                    _,
-                >(
+                TimeInterval::get_batch_aggregations_for_collection_identifier::<0, dummy::Vdaf>(
                     tx,
                     task.id(),
                     &vdaf,
@@ -5876,7 +5872,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                             START_TIMESTAMP + 100,
                             task.time_precision(),
                         ),
-                        Duration::from_time_precision_units(4)
+                        Duration::from_time_precision_units(4),
                     )
                     .unwrap(),
                     &aggregation_param,
@@ -5920,11 +5916,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                 .unwrap();
 
             let batch_aggregations =
-                TimeInterval::get_batch_aggregations_for_collection_identifier::<
-                    0,
-                    dummy::Vdaf,
-                    _,
-                >(
+                TimeInterval::get_batch_aggregations_for_collection_identifier::<0, dummy::Vdaf>(
                     tx,
                     task.id(),
                     &vdaf,
@@ -5969,11 +5961,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
             let vdaf = dummy::Vdaf::default();
 
             let batch_aggregations: Vec<BatchAggregation<0, TimeInterval, dummy::Vdaf>> =
-                TimeInterval::get_batch_aggregations_for_collection_identifier::<
-                    0,
-                    dummy::Vdaf,
-                    _,
-                >(
+                TimeInterval::get_batch_aggregations_for_collection_identifier::<0, dummy::Vdaf>(
                     tx,
                     task.id(),
                     &vdaf,
@@ -5982,7 +5970,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                             START_TIMESTAMP + 100,
                             task.time_precision(),
                         ),
-                        Duration::from_time_precision_units(3)
+                        Duration::from_time_precision_units(3),
                     )
                     .unwrap(),
                     &aggregation_param,
@@ -7148,7 +7136,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
 
     // Setup.
     async fn write_aggregation_artifacts<B: TestBatchModeExt>(
-        tx: &Transaction<'_, MockClock>,
+        tx: &Transaction<'_>,
         task_id: &TaskId,
         aggregation_param: &dummy::AggregationParam,
         client_timestamps: &[Time],
@@ -7584,7 +7572,7 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
 
     // Setup.
     async fn write_collect_artifacts<B: TestBatchModeExt>(
-        tx: &Transaction<'_, MockClock>,
+        tx: &Transaction<'_>,
         task: &AggregatorTask,
         client_timestamps: &[Time],
     ) -> (
@@ -8582,8 +8570,8 @@ async fn roundtrip_interval_sql(ephemeral_datastore: EphemeralDatastore) {
 #[tokio::test]
 async fn roundtrip_hpke_keypair(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
-    let datastore = ephemeral_datastore.datastore(MockClock::default()).await;
-    let clock = datastore.clock.clone();
+    let clock = MockClock::default();
+    let datastore = ephemeral_datastore.datastore(clock.clone()).await;
     let keypair = hpke::HpkeKeypair::test();
 
     datastore

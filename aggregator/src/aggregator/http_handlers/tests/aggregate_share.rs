@@ -17,7 +17,7 @@ use janus_core::{
     auth_tokens::test_util::WithAuthenticationToken,
     hpke::{self, HpkeApplicationInfo, Label},
     report_id::ReportIdChecksumExt,
-    time::{Clock, DateTimeExt, MockClock},
+    time::{Clock, DateTimeExt},
     vdaf::VdafInstance,
 };
 use janus_messages::{
@@ -1104,7 +1104,7 @@ async fn aggregate_share_request_get_poll_after_put_leader_selected() {
 }
 
 async fn setup_time_interval_task_with_batch_aggregation(
-    datastore: &Datastore<MockClock>,
+    datastore: &Datastore,
     batch_interval: Interval,
     aggregation_param: dummy::AggregationParam,
     report_count: u64,

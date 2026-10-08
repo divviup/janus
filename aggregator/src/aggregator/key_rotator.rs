@@ -54,8 +54,8 @@ use crate::cache::HpkeKeypairCache;
 /// managed. The key rotator keeps only one key per ciphersuite around, preferring to use the latest
 /// inserted key.
 #[derive(Debug)]
-pub struct KeyRotator<C: Clock> {
-    datastore: Arc<Datastore<C>>,
+pub struct KeyRotator {
+    datastore: Arc<Datastore>,
     hpke: HpkeKeyRotatorConfig,
 }
 
@@ -132,8 +132,8 @@ impl Default for HpkeKeyRotatorConfig {
     }
 }
 
-impl<C: Clock> KeyRotator<C> {
-    pub fn new(datastore: Arc<Datastore<C>>, hpke: HpkeKeyRotatorConfig) -> Self {
+impl KeyRotator {
+    pub fn new(datastore: Arc<Datastore>, hpke: HpkeKeyRotatorConfig) -> Self {
         Self { datastore, hpke }
     }
 
@@ -159,7 +159,7 @@ impl<C: Clock> KeyRotator<C> {
 
     #[tracing::instrument(err, skip(tx))]
     async fn run_hpke(
-        tx: &Transaction<'_, C>,
+        tx: &Transaction<'_>,
         config: &HpkeKeyRotatorConfig,
     ) -> Result<(), DatastoreError> {
         // Take an ExclusiveLock on the table. This ensures that only one key rotator replica
@@ -177,7 +177,7 @@ impl<C: Clock> KeyRotator<C> {
             .map(|keypair| (*keypair.id(), keypair))
             .collect();
 
-        HpkeKeyRotator::new(tx.clock().clone(), keypairs, config)?
+        HpkeKeyRotator::new(tx.clock(), keypairs, config)?
             .sweep()?
             .write(tx)
             .await
@@ -187,8 +187,8 @@ impl<C: Clock> KeyRotator<C> {
 /// In-memory representation of the `hpke_keys` table.
 #[derive(Educe)]
 #[educe(Debug)]
-struct HpkeKeyRotator<'a, C: Clock> {
-    clock: C,
+struct HpkeKeyRotator<'a> {
+    clock: &'a dyn Clock,
     config: &'a HpkeKeyRotatorConfig,
 
     // Data structures for intermediate state.
@@ -198,9 +198,9 @@ struct HpkeKeyRotator<'a, C: Clock> {
     initially_empty: bool,
 }
 
-impl<'a, C: Clock> HpkeKeyRotator<'a, C> {
+impl<'a> HpkeKeyRotator<'a> {
     fn new(
-        clock: C,
+        clock: &'a dyn Clock,
         keypairs: HashMap<HpkeConfigId, HpkeKeypair>,
         config: &'a HpkeKeyRotatorConfig,
     ) -> Result<Self, DatastoreError> {
@@ -254,6 +254,7 @@ impl<'a, C: Clock> HpkeKeyRotator<'a, C> {
     ///     key.
     ///   - For each configured ciphersuite, expire all but the newest active key.
     fn sweep(mut self) -> Result<Self, DatastoreError> {
+        let now = self.clock.now();
         let mut ops: Vec<HpkeOp> = Vec::new();
 
         // Bootstrap new keys.
@@ -303,9 +304,7 @@ impl<'a, C: Clock> HpkeKeyRotator<'a, C> {
                 let latest_active_key = active_keypairs.front();
 
                 if let Some(latest_pending_key) = latest_pending_key {
-                    if self
-                        .clock
-                        .elapsed(*latest_pending_key.last_state_change_at())
+                    if now - *latest_pending_key.last_state_change_at()
                         > self.config.pending_duration()?
                     {
                         ops.push(HpkeOp::Update(
@@ -323,9 +322,7 @@ impl<'a, C: Clock> HpkeKeyRotator<'a, C> {
                         }
                     }
                 } else if let Some(latest_active_key) = latest_active_key
-                    && self
-                        .clock
-                        .elapsed(*latest_active_key.last_state_change_at())
+                    && now - *latest_active_key.last_state_change_at()
                         > self.config.active_duration()?
                 {
                     ops.push(HpkeOp::Create(
@@ -359,9 +356,7 @@ impl<'a, C: Clock> HpkeKeyRotator<'a, C> {
             ops.extend(
                 expired_keypairs
                     .iter()
-                    .filter(|keypair| {
-                        self.clock.elapsed(*keypair.last_state_change_at()) > expired_duration
-                    })
+                    .filter(|keypair| now - *keypair.last_state_change_at() > expired_duration)
                     .map(|keypair| HpkeOp::Delete(*keypair.id(), "expired key")),
             );
         }
@@ -406,7 +401,7 @@ impl<'a, C: Clock> HpkeKeyRotator<'a, C> {
         Ok(self)
     }
 
-    async fn write(&self, tx: &Transaction<'_, C>) -> Result<(), DatastoreError> {
+    async fn write(&self, tx: &Transaction<'_>) -> Result<(), DatastoreError> {
         let current_keypairs_ids: HashSet<_> = tx
             .get_hpke_keypairs()
             .await?
@@ -566,7 +561,7 @@ mod tests {
     use super::HpkeKeyRotator;
     use crate::aggregator::key_rotator::{HpkeKeyRotatorConfig, KeyRotator};
 
-    async fn get_hpke_keypairs<C: Clock>(ds: &Datastore<C>) -> Vec<HpkeKeypair> {
+    async fn get_hpke_keypairs(ds: &Datastore) -> Vec<HpkeKeypair> {
         ds.run_unnamed_tx(|tx| Box::pin(async move { tx.get_hpke_keypairs().await }))
             .await
             .unwrap()
@@ -756,7 +751,7 @@ mod tests {
             })
             .collect();
 
-        let key_rotator = HpkeKeyRotator::new(clock, state.keypairs, &config)
+        let key_rotator = HpkeKeyRotator::new(&clock, state.keypairs, &config)
             .unwrap()
             .sweep()
             .unwrap();
@@ -803,7 +798,7 @@ mod tests {
             return TestResult::discard();
         }
 
-        let key_rotator = HpkeKeyRotator::new(clock, state.keypairs, &config)
+        let key_rotator = HpkeKeyRotator::new(&clock, state.keypairs, &config)
             .unwrap()
             .sweep()
             .unwrap();
@@ -844,7 +839,7 @@ mod tests {
             })
             .collect();
 
-        let key_rotator = HpkeKeyRotator::new(clock, state.keypairs, &config)
+        let key_rotator = HpkeKeyRotator::new(&clock, state.keypairs, &config)
             .unwrap()
             .sweep()
             .unwrap();
@@ -870,7 +865,7 @@ mod tests {
         state: InitialHpkeKeysState,
     ) -> TestResult {
         let clock = MockClock::new(state.start);
-        let key_rotator = HpkeKeyRotator::new(clock.clone(), state.keypairs, &config)
+        let key_rotator = HpkeKeyRotator::new(&clock, state.keypairs, &config)
             .unwrap()
             .sweep()
             .unwrap();
@@ -888,7 +883,7 @@ mod tests {
             if active_keys.len() > 1 {
                 return TestResult::error("there should be at most 1 active key");
             } else if active_keys.len() == 1
-                && clock.elapsed(*active_keys[0].last_state_change_at())
+                && clock.now() - *active_keys[0].last_state_change_at()
                     > config.active_duration().unwrap()
                 && !key_rotator.keypairs.values().any(|keypair| {
                     keypair.state() == &HpkeKeyState::Pending
@@ -908,7 +903,7 @@ mod tests {
         state: InitialHpkeKeysState,
     ) -> TestResult {
         let clock = MockClock::new(state.start);
-        let key_rotator = HpkeKeyRotator::new(clock, state.keypairs.clone(), &config)
+        let key_rotator = HpkeKeyRotator::new(&clock, state.keypairs.clone(), &config)
             .unwrap()
             .sweep()
             .unwrap();
@@ -959,7 +954,7 @@ mod tests {
             .keypairs
             .iter()
             .filter(|(_, keypair)| {
-                clock.elapsed(*keypair.last_state_change_at()) > config.expired_duration().unwrap()
+                clock.now() - *keypair.last_state_change_at() > config.expired_duration().unwrap()
                     && keypair.state() == &HpkeKeyState::Expired
             })
             .map(|(id, _)| *id)
@@ -969,7 +964,7 @@ mod tests {
             return TestResult::discard();
         }
 
-        let key_rotator = HpkeKeyRotator::new(clock, state.keypairs, &config)
+        let key_rotator = HpkeKeyRotator::new(&clock, state.keypairs, &config)
             .unwrap()
             .sweep()
             .unwrap();

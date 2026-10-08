@@ -14,9 +14,7 @@ use clap::Parser;
 use educe::Educe;
 use janus_aggregator_api::{self, aggregator_api_handler};
 use janus_aggregator_core::datastore::Datastore;
-use janus_core::{
-    TokioRuntime, auth_tokens::AuthenticationToken, hpke::HpkeCiphersuite, time::RealClock,
-};
+use janus_core::{TokioRuntime, auth_tokens::AuthenticationToken, hpke::HpkeCiphersuite};
 use janus_messages::Url as DapUrl;
 use opentelemetry::metrics::Meter;
 use sec1::EcPrivateKey;
@@ -38,7 +36,7 @@ use crate::{
     config::{BinaryConfig, CommonConfig, TaskprovConfig},
 };
 
-pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Result<()> {
+pub async fn main_callback(ctx: BinaryContext<Options, Config>) -> Result<()> {
     let (sender, _) = watch::channel(None);
     run_aggregator(ctx, sender).await
 }
@@ -48,7 +46,7 @@ pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Re
 ///
 /// This is useful when specifying ephemeral socket addresses.
 pub fn make_callback_ephemeral_address(
-    ctx: BinaryContext<RealClock, Options, Config>,
+    ctx: BinaryContext<Options, Config>,
 ) -> (
     impl Future<Output = Result<()>> + Send,
     watch::Receiver<Option<SocketAddr>>,
@@ -58,11 +56,11 @@ pub fn make_callback_ephemeral_address(
 }
 
 async fn run_aggregator(
-    ctx: BinaryContext<RealClock, Options, Config>,
+    ctx: BinaryContext<Options, Config>,
     sender: watch::Sender<Option<SocketAddr>>,
 ) -> Result<()> {
     let BinaryContext {
-        clock,
+        clock: _,
         options,
         mut config,
         datastore,
@@ -95,7 +93,6 @@ async fn run_aggregator(
 
     let mut aggregator_handler = AggregatorHandlerBuilder::new(
         Arc::clone(&datastore),
-        clock,
         TokioRuntime,
         &meter,
         config.aggregator_config(&options)?,
@@ -168,7 +165,7 @@ async fn run_aggregator(
 fn build_aggregator_api_handler<'a>(
     options: &Options,
     config: &'a Config,
-    datastore: &Arc<Datastore<RealClock>>,
+    datastore: &Arc<Datastore>,
     meter: &Meter,
 ) -> Result<Option<(Router, &'a AggregatorApi)>> {
     let Some(aggregator_api) = &config.aggregator_api else {

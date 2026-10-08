@@ -18,7 +18,7 @@ use janus_aggregator_core::{
     datastore::{self, Datastore},
     http_server::{HttpMetrics, http_metrics_middleware},
 };
-use janus_core::{auth_tokens::AuthenticationToken, hpke, http::extract_bearer_token, time::Clock};
+use janus_core::{auth_tokens::AuthenticationToken, hpke, http::extract_bearer_token};
 use janus_messages::{HpkeConfigId, RoleParseError, TaskId, Url as DapUrl};
 use opentelemetry::metrics::Meter;
 use routes::*;
@@ -36,18 +36,14 @@ pub struct Config {
 const CONTENT_TYPE: &str = "application/vnd.janus.aggregator+json;version=0.1";
 
 /// Shared state for the aggregator API.
-pub(crate) struct ApiState<C: Clock> {
-    pub(crate) datastore: Arc<Datastore<C>>,
+pub(crate) struct ApiState {
+    pub(crate) datastore: Arc<Datastore>,
     pub(crate) config: Config,
 }
 
 /// Returns a new handler for an instance of the aggregator API, backed by the given datastore,
 /// according to the given configuration.
-pub fn aggregator_api_handler<C: Clock>(
-    ds: Arc<Datastore<C>>,
-    cfg: Config,
-    meter: &Meter,
-) -> Router {
+pub fn aggregator_api_handler(ds: Arc<Datastore>, cfg: Config, meter: &Meter) -> Router {
     let http_metrics = HttpMetrics::new(meter, "janus_aggregator_api_responses");
 
     let state = Arc::new(ApiState {
@@ -56,38 +52,33 @@ pub fn aggregator_api_handler<C: Clock>(
     });
 
     Router::new()
-        .route("/", get(get_config::<C>))
-        .route("/task_ids", get(get_task_ids::<C>))
-        .route("/tasks", post(post_task::<C>))
+        .route("/", get(get_config))
+        .route("/task_ids", get(get_task_ids))
+        .route("/tasks", post(post_task))
         .route(
             "/tasks/{task_id}",
-            get(get_task::<C>)
-                .patch(patch_task::<C>)
-                .delete(delete_task::<C>),
+            get(get_task).patch(patch_task).delete(delete_task),
         )
         .route(
             "/tasks/{task_id}/metrics/uploads",
-            get(get_task_upload_metrics::<C>),
+            get(get_task_upload_metrics),
         )
         .route(
             "/tasks/{task_id}/metrics/aggregations",
-            get(get_task_aggregation_metrics::<C>),
+            get(get_task_aggregation_metrics),
         )
-        .route(
-            "/hpke_configs",
-            get(get_hpke_configs::<C>).put(put_hpke_config::<C>),
-        )
+        .route("/hpke_configs", get(get_hpke_configs).put(put_hpke_config))
         .route(
             "/hpke_configs/{config_id}",
-            get(get_hpke_config::<C>)
-                .patch(patch_hpke_config::<C>)
-                .delete(delete_hpke_config::<C>),
+            get(get_hpke_config)
+                .patch(patch_hpke_config)
+                .delete(delete_hpke_config),
         )
         .route(
             "/taskprov/peer_aggregators",
-            get(get_taskprov_peer_aggregators::<C>)
-                .post(post_taskprov_peer_aggregator::<C>)
-                .delete(delete_taskprov_peer_aggregator::<C>),
+            get(get_taskprov_peer_aggregators)
+                .post(post_taskprov_peer_aggregator)
+                .delete(delete_taskprov_peer_aggregator),
         )
         .layer(
             ServiceBuilder::new()
@@ -95,7 +86,7 @@ pub fn aggregator_api_handler<C: Clock>(
                 .layer(middleware::from_fn(http_metrics_middleware))
                 .layer(middleware::from_fn_with_state(
                     Arc::clone(&state),
-                    auth_check::<C>,
+                    auth_check,
                 ))
                 .layer(middleware::from_fn(replace_mime_types)),
         )
@@ -103,11 +94,7 @@ pub fn aggregator_api_handler<C: Clock>(
 }
 
 /// Middleware that checks auth tokens.
-async fn auth_check<C: Clock>(
-    State(state): State<Arc<ApiState<C>>>,
-    request: Request,
-    next: Next,
-) -> Response {
+async fn auth_check(State(state): State<Arc<ApiState>>, request: Request, next: Next) -> Response {
     let headers = request.headers();
     let Ok(Some(bearer_token)) = extract_bearer_token(headers) else {
         return StatusCode::UNAUTHORIZED.into_response();

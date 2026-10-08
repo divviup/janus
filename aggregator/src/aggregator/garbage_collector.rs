@@ -6,15 +6,14 @@ use std::sync::{
 use anyhow::{Context, Error, Result};
 use futures::future::{OptionFuture, join_all, try_join_all};
 use janus_aggregator_core::datastore::{self, Datastore};
-use janus_core::time::Clock;
 use janus_messages::TaskId;
 use opentelemetry::metrics::{Counter, Meter};
 use tokio::{sync::Semaphore, try_join};
 use tracing::error;
 
-pub struct GarbageCollector<C: Clock> {
+pub struct GarbageCollector {
     // Dependencies.
-    datastore: Arc<Datastore<C>>,
+    datastore: Arc<Datastore>,
 
     // Configuration.
     report_limit: u64,
@@ -29,9 +28,9 @@ pub struct GarbageCollector<C: Clock> {
     deleted_batch_counter: Counter<u64>,
 }
 
-impl<C: Clock> GarbageCollector<C> {
+impl GarbageCollector {
     pub fn new(
-        datastore: Arc<Datastore<C>>,
+        datastore: Arc<Datastore>,
         meter: &Meter,
         report_limit: u64,
         aggregation_limit: u64,

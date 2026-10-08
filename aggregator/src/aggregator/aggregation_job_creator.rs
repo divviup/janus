@@ -23,7 +23,7 @@ use janus_aggregator_core::{
     task::{self, AggregatorTask},
 };
 use janus_core::{
-    time::{Clock, DateTimeExt, IntervalExt, TimeExt},
+    time::{DateTimeExt, IntervalExt, TimeExt},
     vdaf::{
         Prio3SumVecField64MultiproofHmacSha256Aes128, VERIFY_KEY_LENGTH_PRIO3,
         VERIFY_KEY_LENGTH_PRIO3_HMACSHA256_AES128, VdafInstance,
@@ -60,9 +60,9 @@ use crate::{
     metrics::AGGREGATION_JOB_SIZE_HISTOGRAM_BOUNDARIES,
 };
 
-pub struct AggregationJobCreator<C: Clock> {
+pub struct AggregationJobCreator {
     // Dependencies.
-    datastore: Arc<Datastore<C>>,
+    datastore: Arc<Datastore>,
 
     // Configuration values.
     /// The number of batch aggregation shards to use per batch.
@@ -95,9 +95,9 @@ pub struct AggregationJobCreator<C: Clock> {
     aggregation_job_size_histogram: Histogram<u64>,
 }
 
-impl<C: Clock + 'static> AggregationJobCreator<C> {
+impl AggregationJobCreator {
     pub fn new(
-        datastore: Arc<Datastore<C>>,
+        datastore: Arc<Datastore>,
         meter: Meter,
         batch_aggregation_shard_count: u64,
         tasks_update_frequency: Duration,
@@ -106,7 +106,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         max_aggregation_job_size: usize,
         aggregation_job_creation_report_window: usize,
         late_report_grace_period: janus_messages::Duration,
-    ) -> AggregationJobCreator<C> {
+    ) -> AggregationJobCreator {
         assert!(
             min_aggregation_job_size > 0,
             "invalid configuration: min_aggregation_job_size cannot be zero"
@@ -1066,13 +1066,12 @@ mod tests {
                             VERIFY_KEY_LENGTH_PRIO3,
                             TimeInterval,
                             _,
-                            _,
                         >(
                             tx, vdaf.as_ref(), leader_task.id(), want_ra_states.as_ref()
                         )
                         .await;
                     let (helper_aggregations, helper_batch_aggregations) =
-                        read_and_verify_aggregate_info_for_task::<0, TimeInterval, dummy::Vdaf, _>(
+                        read_and_verify_aggregate_info_for_task::<0, TimeInterval, dummy::Vdaf>(
                             tx,
                             &dummy::Vdaf::new(1),
                             helper_task.id(),
@@ -1248,7 +1247,6 @@ mod tests {
                     Ok(read_and_verify_aggregate_info_for_task::<
                         VERIFY_KEY_LENGTH_PRIO3,
                         TimeInterval,
-                        _,
                         _,
                     >(tx, vdaf.as_ref(), task.id(), want_ra_states.as_ref())
                     .await)
@@ -1427,7 +1425,6 @@ mod tests {
                         VERIFY_KEY_LENGTH_PRIO3,
                         TimeInterval,
                         _,
-                        _,
                     >(tx, vdaf.as_ref(), task.id(), want_ra_states.as_ref())
                     .await)
                 })
@@ -1483,7 +1480,6 @@ mod tests {
                     Ok(read_and_verify_aggregate_info_for_task::<
                         VERIFY_KEY_LENGTH_PRIO3,
                         TimeInterval,
-                        _,
                         _,
                     >(tx, vdaf.as_ref(), task.id(), want_ra_states.as_ref())
                     .await)
@@ -1614,7 +1610,6 @@ mod tests {
                         VERIFY_KEY_LENGTH_PRIO3,
                         TimeInterval,
                         _,
-                        _,
                     >(tx, vdaf.as_ref(), task.id(), want_ra_states.as_ref())
                     .await)
                 })
@@ -1652,7 +1647,6 @@ mod tests {
                     Ok(read_and_verify_aggregate_info_for_task::<
                         VERIFY_KEY_LENGTH_PRIO3,
                         TimeInterval,
-                        _,
                         _,
                     >(tx, vdaf.as_ref(), task.id(), want_ra_states.as_ref())
                     .await)
@@ -1821,7 +1815,6 @@ mod tests {
                     Ok(read_and_verify_aggregate_info_for_task::<
                         VERIFY_KEY_LENGTH_PRIO3,
                         TimeInterval,
-                        _,
                         _,
                     >(tx, vdaf.as_ref(), task.id(), want_ra_states.as_ref())
                     .await)
@@ -1996,7 +1989,6 @@ mod tests {
                         read_and_verify_aggregate_info_for_task::<
                             VERIFY_KEY_LENGTH_PRIO3,
                             LeaderSelected,
-                            _,
                             _,
                         >(
                             tx, vdaf.as_ref(), task.id(), want_ra_states.as_ref()
@@ -2193,7 +2185,6 @@ mod tests {
                             VERIFY_KEY_LENGTH_PRIO3,
                             LeaderSelected,
                             _,
-                            _,
                         >(
                             tx, vdaf.as_ref(), task.id(), want_ra_states.as_ref()
                         )
@@ -2364,7 +2355,6 @@ mod tests {
                             VERIFY_KEY_LENGTH_PRIO3,
                             LeaderSelected,
                             _,
-                            _,
                         >(
                             tx, vdaf.as_ref(), task.id(), want_ra_states.as_ref()
                         )
@@ -2460,7 +2450,6 @@ mod tests {
                         read_and_verify_aggregate_info_for_task::<
                             VERIFY_KEY_LENGTH_PRIO3,
                             LeaderSelected,
-                            _,
                             _,
                         >(
                             tx, vdaf.as_ref(), task.id(), want_ra_states.as_ref()
@@ -2630,7 +2619,6 @@ mod tests {
                             VERIFY_KEY_LENGTH_PRIO3,
                             LeaderSelected,
                             _,
-                            _,
                         >(
                             tx, vdaf.as_ref(), task.id(), want_ra_states.as_ref()
                         )
@@ -2734,7 +2722,6 @@ mod tests {
                         read_and_verify_aggregate_info_for_task::<
                             VERIFY_KEY_LENGTH_PRIO3,
                             LeaderSelected,
-                            _,
                             _,
                         >(
                             tx, vdaf.as_ref(), task.id(), want_ra_states.as_ref()
@@ -2943,7 +2930,6 @@ mod tests {
                         read_and_verify_aggregate_info_for_task::<
                             VERIFY_KEY_LENGTH_PRIO3,
                             LeaderSelected,
-                            _,
                             _,
                         >(
                             tx, vdaf.as_ref(), task.id(), want_ra_states.as_ref()
@@ -3154,7 +3140,7 @@ mod tests {
                 let (task, vdaf) = (Arc::clone(&task), Arc::clone(&vdaf));
                 Box::pin(async move {
                     Ok(
-                        read_and_verify_aggregate_info_for_task::<0, TimeInterval, dummy::Vdaf, _>(
+                        read_and_verify_aggregate_info_for_task::<0, TimeInterval, dummy::Vdaf>(
                             tx,
                             &vdaf,
                             task.id(),
@@ -3231,7 +3217,7 @@ mod tests {
                 );
                 Box::pin(async move {
                     Ok(
-                        read_and_verify_aggregate_info_for_task::<0, TimeInterval, dummy::Vdaf, _>(
+                        read_and_verify_aggregate_info_for_task::<0, TimeInterval, dummy::Vdaf>(
                             tx,
                             &vdaf,
                             task.id(),
@@ -3299,7 +3285,7 @@ mod tests {
                 );
                 Box::pin(async move {
                     Ok(
-                        read_and_verify_aggregate_info_for_task::<0, TimeInterval, dummy::Vdaf, _>(
+                        read_and_verify_aggregate_info_for_task::<0, TimeInterval, dummy::Vdaf>(
                             tx,
                             &vdaf,
                             task.id(),
@@ -3325,8 +3311,8 @@ mod tests {
     /// aggregation parameter) are merged together, with the resulting batch aggregation having
     /// shard 0; batch aggregations for different batches are returned sorted by task ID, batch
     /// identifier, and aggregation parameter.
-    async fn read_and_verify_aggregate_info_for_task<const SEED_SIZE: usize, B, A, C>(
-        tx: &Transaction<'_, C>,
+    async fn read_and_verify_aggregate_info_for_task<const SEED_SIZE: usize, B, A>(
+        tx: &Transaction<'_>,
         vdaf: &A,
         task_id: &TaskId,
         want_ra_states: &HashMap<
@@ -3343,7 +3329,6 @@ mod tests {
     where
         B: AccumulableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
-        C: Clock,
     {
         let (agg_jobs_and_report_ids, batch_aggregations) = try_join!(
             try_join_all(

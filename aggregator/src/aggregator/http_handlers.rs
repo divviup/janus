@@ -26,7 +26,6 @@ use janus_core::{
     auth_tokens::{AuthenticationToken, DAP_AUTH_HEADER},
     http::{check_content_type, extract_bearer_token},
     taskprov::TASKPROV_HEADER,
-    time::Clock,
 };
 use janus_messages::{
     AggregateShare, AggregateShareId, AggregateShareReq, AggregationJobContinueReq,
@@ -481,22 +480,15 @@ pub struct HelperAggregationRequestQueue {
     pub timeout_ms: Option<u64>,
 }
 
-pub struct AggregatorHandlerBuilder<'a, C>
-where
-    C: Clock,
-{
-    aggregator: Arc<Aggregator<C>>,
+pub struct AggregatorHandlerBuilder<'a> {
+    aggregator: Arc<Aggregator>,
     meter: &'a Meter,
     helper_aggregation_request_queue: Option<HelperAggregationRequestQueue>,
 }
 
-impl<'a, C> AggregatorHandlerBuilder<'a, C>
-where
-    C: Clock,
-{
+impl<'a> AggregatorHandlerBuilder<'a> {
     pub async fn new<R>(
-        datastore: Arc<Datastore<C>>,
-        clock: C,
+        datastore: Arc<Datastore>,
         runtime: R,
         meter: &'a Meter,
         cfg: Config,
@@ -504,11 +496,11 @@ where
     where
         R: Runtime + Send + Sync + 'static,
     {
-        let aggregator = Arc::new(Aggregator::new(datastore, clock, runtime, meter, cfg).await?);
+        let aggregator = Arc::new(Aggregator::new(datastore, runtime, meter, cfg).await?);
         Ok(Self::from_aggregator(aggregator, meter))
     }
 
-    pub fn from_aggregator(aggregator: Arc<Aggregator<C>>, meter: &'a Meter) -> Self {
+    pub fn from_aggregator(aggregator: Arc<Aggregator>, meter: &'a Meter) -> Self {
         Self {
             aggregator,
             meter,
@@ -568,10 +560,10 @@ where
         // back-pressure and load-shedding on helpers.
         let aggregation_job_routes = axum::Router::new().route(
             AGGREGATION_JOB_ROUTE,
-            put(aggregation_jobs_put::<C>)
-                .post(aggregation_jobs_post::<C>)
-                .get(aggregation_jobs_get::<C>)
-                .delete(aggregation_jobs_delete::<C>),
+            put(aggregation_jobs_put)
+                .post(aggregation_jobs_post)
+                .get(aggregation_jobs_get)
+                .delete(aggregation_jobs_delete),
         );
         let aggregation_job_routes = if let Some(queue) = helper_queue {
             aggregation_job_routes.layer(middleware::from_fn_with_state(
@@ -585,24 +577,24 @@ where
         axum::Router::new()
             .route(
                 "/hpke_config",
-                axum::routing::get(axum_hpke_config::<C>).layer(hpke_cors),
+                axum::routing::get(axum_hpke_config).layer(hpke_cors),
             )
             .route(
                 "/tasks/{task_id}/reports",
-                post(upload_post::<C>).layer(upload_cors),
+                post(upload_post).layer(upload_cors),
             )
             .merge(aggregation_job_routes)
             .route(
                 COLLECTION_JOB_ROUTE,
-                put(collection_jobs_put::<C>)
-                    .get(collection_jobs_get::<C>)
-                    .delete(collection_jobs_delete::<C>),
+                put(collection_jobs_put)
+                    .get(collection_jobs_get)
+                    .delete(collection_jobs_delete),
             )
             .route(
                 AGGREGATE_SHARES_ROUTE,
-                put(aggregate_shares_put::<C>)
-                    .get(aggregate_shares_get::<C>)
-                    .delete(aggregate_shares_delete::<C>),
+                put(aggregate_shares_put)
+                    .get(aggregate_shares_get)
+                    .delete(aggregate_shares_delete),
             )
             .with_state(Arc::clone(&self.aggregator))
             .layer(
@@ -622,8 +614,8 @@ where
 const HPKE_CONFIG_SIGNATURE_HEADER: &str = "x-hpke-config-signature";
 
 /// Axum handler for the "/hpke_config" GET endpoint.
-async fn axum_hpke_config<C: Clock>(
-    AxumState(aggregator): AxumState<Arc<Aggregator<C>>>,
+async fn axum_hpke_config(
+    AxumState(aggregator): AxumState<Arc<Aggregator>>,
 ) -> Result<Response, Error> {
     let (encoded_hpke_config_list, signature) = aggregator.handle_hpke_config().await?;
 
@@ -717,10 +709,10 @@ where
 }
 
 /// Axum handler for the "/tasks/{task_id}/reports" POST endpoint.
-async fn upload_post<C: Clock>(
+async fn upload_post(
     headers: HeaderMap,
     Path(task_id): Path<String>,
-    AxumState(aggregator): AxumState<Arc<Aggregator<C>>>,
+    AxumState(aggregator): AxumState<Arc<Aggregator>>,
     body: Body,
 ) -> Result<Response, Error> {
     validate_content_type_headers::<UploadRequest>(&headers)?;
@@ -755,10 +747,10 @@ async fn upload_post<C: Clock>(
 }
 
 /// Axum handler for the "/tasks/.../aggregation_jobs/..." PUT endpoint.
-async fn aggregation_jobs_put<C: Clock>(
+async fn aggregation_jobs_put(
     headers: HeaderMap,
     path: AggregationJobPath,
-    AxumState(aggregator): AxumState<Arc<Aggregator<C>>>,
+    AxumState(aggregator): AxumState<Arc<Aggregator>>,
     body: Bytes,
 ) -> Result<Response, Error> {
     validate_content_type_headers::<AggregationJobInitializeReq>(&headers)?;
@@ -788,10 +780,10 @@ async fn aggregation_jobs_put<C: Clock>(
 }
 
 /// Axum handler for the "/tasks/.../aggregation_jobs/..." POST endpoint.
-async fn aggregation_jobs_post<C: Clock>(
+async fn aggregation_jobs_post(
     headers: HeaderMap,
     path: AggregationJobPath,
-    AxumState(aggregator): AxumState<Arc<Aggregator<C>>>,
+    AxumState(aggregator): AxumState<Arc<Aggregator>>,
     body: Bytes,
 ) -> Result<Response, Error> {
     validate_content_type_headers::<AggregationJobContinueReq>(&headers)?;
@@ -826,11 +818,11 @@ async fn aggregation_jobs_post<C: Clock>(
 }
 
 /// Axum handler for the "/tasks/.../aggregation_jobs/..." GET endpoint.
-async fn aggregation_jobs_get<C: Clock>(
+async fn aggregation_jobs_get(
     headers: HeaderMap,
     path: AggregationJobPath,
     axum::extract::RawQuery(query): axum::extract::RawQuery,
-    AxumState(aggregator): AxumState<Arc<Aggregator<C>>>,
+    AxumState(aggregator): AxumState<Arc<Aggregator>>,
 ) -> Result<Response, Error> {
     let task_id = path.task_id;
     let aggregation_job_id = path.aggregation_job_id;
@@ -861,10 +853,10 @@ async fn aggregation_jobs_get<C: Clock>(
 }
 
 /// Axum handler for the "/tasks/.../aggregation_jobs/..." DELETE endpoint.
-async fn aggregation_jobs_delete<C: Clock>(
+async fn aggregation_jobs_delete(
     headers: HeaderMap,
     path: AggregationJobPath,
-    AxumState(aggregator): AxumState<Arc<Aggregator<C>>>,
+    AxumState(aggregator): AxumState<Arc<Aggregator>>,
 ) -> Result<StatusCode, Error> {
     let task_id = path.task_id;
     let aggregation_job_id = path.aggregation_job_id;
@@ -883,10 +875,10 @@ async fn aggregation_jobs_delete<C: Clock>(
 }
 
 /// Axum handler for the "/tasks/.../collection_jobs/..." PUT endpoint.
-async fn collection_jobs_put<C: Clock>(
+async fn collection_jobs_put(
     headers: HeaderMap,
     path: CollectionJobPath,
-    AxumState(aggregator): AxumState<Arc<Aggregator<C>>>,
+    AxumState(aggregator): AxumState<Arc<Aggregator>>,
     body: Bytes,
 ) -> Result<Response, Error> {
     validate_content_type_headers::<CollectionJobReq<TimeInterval>>(&headers)?;
@@ -908,10 +900,10 @@ async fn collection_jobs_put<C: Clock>(
 }
 
 /// Axum handler for the "/tasks/.../collection_jobs/..." GET endpoint.
-async fn collection_jobs_get<C: Clock>(
+async fn collection_jobs_get(
     headers: HeaderMap,
     path: CollectionJobPath,
-    AxumState(aggregator): AxumState<Arc<Aggregator<C>>>,
+    AxumState(aggregator): AxumState<Arc<Aggregator>>,
 ) -> Result<Response, Error> {
     let auth_token = parse_auth_token_from_headers(&path.task_id, &headers)?;
     let response_bytes = aggregator
@@ -930,10 +922,10 @@ async fn collection_jobs_get<C: Clock>(
 }
 
 /// Axum handler for the "/tasks/.../collection_jobs/..." DELETE endpoint.
-async fn collection_jobs_delete<C: Clock>(
+async fn collection_jobs_delete(
     headers: HeaderMap,
     path: CollectionJobPath,
-    AxumState(aggregator): AxumState<Arc<Aggregator<C>>>,
+    AxumState(aggregator): AxumState<Arc<Aggregator>>,
 ) -> Result<StatusCode, Error> {
     let auth_token = parse_auth_token_from_headers(&path.task_id, &headers)?;
     aggregator
@@ -943,10 +935,10 @@ async fn collection_jobs_delete<C: Clock>(
 }
 
 /// Axum handler for the "/tasks/.../aggregate_shares/..." PUT endpoint.
-async fn aggregate_shares_put<C: Clock>(
+async fn aggregate_shares_put(
     headers: HeaderMap,
     path: AggregateSharePath,
-    AxumState(aggregator): AxumState<Arc<Aggregator<C>>>,
+    AxumState(aggregator): AxumState<Arc<Aggregator>>,
     body: Bytes,
 ) -> Result<Response, Error> {
     validate_content_type_headers::<AggregateShareReq<TimeInterval>>(&headers)?;
@@ -969,10 +961,10 @@ async fn aggregate_shares_put<C: Clock>(
 }
 
 /// Axum handler for the "/tasks/.../aggregate_shares/..." GET endpoint.
-async fn aggregate_shares_get<C: Clock>(
+async fn aggregate_shares_get(
     headers: HeaderMap,
     path: AggregateSharePath,
-    AxumState(aggregator): AxumState<Arc<Aggregator<C>>>,
+    AxumState(aggregator): AxumState<Arc<Aggregator>>,
 ) -> Result<Response, Error> {
     let task_id = path.task_id;
     let auth_token = parse_auth_token_from_headers(&task_id, &headers)?;
@@ -991,10 +983,10 @@ async fn aggregate_shares_get<C: Clock>(
 }
 
 /// Axum handler for the "/tasks/.../aggregate_shares/..." DELETE endpoint.
-async fn aggregate_shares_delete<C: Clock>(
+async fn aggregate_shares_delete(
     headers: HeaderMap,
     path: AggregateSharePath,
-    AxumState(aggregator): AxumState<Arc<Aggregator<C>>>,
+    AxumState(aggregator): AxumState<Arc<Aggregator>>,
 ) -> Result<StatusCode, Error> {
     let task_id = path.task_id;
     let auth_token = parse_auth_token_from_headers(&task_id, &headers)?;
@@ -1046,8 +1038,8 @@ fn parse_auth_token_from_headers(
 }
 
 /// Parse the taskprov header from an `http::HeaderMap`.
-fn parse_taskprov_header_from_headers<C: Clock>(
-    aggregator: &Aggregator<C>,
+fn parse_taskprov_header_from_headers(
+    aggregator: &Aggregator,
     task_id: &TaskId,
     headers: &HeaderMap,
 ) -> Result<Option<TaskConfiguration>, Error> {
@@ -1158,7 +1150,7 @@ pub mod test_util {
     pub struct HttpHandlerTest {
         pub clock: MockClock,
         pub ephemeral_datastore: EphemeralDatastore,
-        pub datastore: Arc<Datastore<MockClock>>,
+        pub datastore: Arc<Datastore>,
         pub router: Router,
         pub hpke_keypair: HpkeKeypair,
     }
@@ -1176,7 +1168,6 @@ pub mod test_util {
             let meter = noop_meter();
             let router = AggregatorHandlerBuilder::new(
                 datastore.clone(),
-                clock.clone(),
                 TestRuntime::default(),
                 &meter,
                 default_aggregator_config(),

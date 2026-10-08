@@ -11,10 +11,7 @@ use aws_lc_rs::aead::{AES_128_GCM, LessSafeKey, UnboundKey};
 use backon::{BackoffBuilder, ConstantBuilder, Retryable};
 use chrono::{DateTime, Utc};
 use deadpool_postgres::{Manager, Pool, Timeouts};
-use janus_core::{
-    test_util::testcontainers::Postgres,
-    time::{Clock, MockClock},
-};
+use janus_core::{test_util::testcontainers::Postgres, time::Clock};
 use rand::{RngExt, distr::StandardUniform, random, rng};
 use sqlx::{
     Connection, PgConnection,
@@ -216,11 +213,11 @@ pub const TEST_DATASTORE_MAX_TRANSACTION_RETRIES: u64 = 1000;
 impl EphemeralDatastore {
     /// Creates a Datastore instance based on this EphemeralDatastore. All returned Datastore
     /// instances will refer to the same underlying durable state.
-    pub async fn datastore<C: Clock>(&self, clock: C) -> Datastore<C> {
+    pub async fn datastore(&self, clock: impl Clock) -> Datastore {
         Datastore::new(
             self.pool(),
             self.crypter(),
-            clock,
+            Arc::new(clock),
             &noop_meter(),
             TEST_DATASTORE_MAX_TRANSACTION_RETRIES,
         )
@@ -228,15 +225,15 @@ impl EphemeralDatastore {
         .unwrap()
     }
 
-    pub async fn datastore_with_max_transaction_retries<C: Clock>(
+    pub async fn datastore_with_max_transaction_retries(
         &self,
-        clock: C,
+        clock: impl Clock,
         max_transaction_retries: u64,
-    ) -> Datastore<C> {
+    ) -> Datastore {
         Datastore::new(
             self.pool(),
             self.crypter(),
-            clock,
+            Arc::new(clock),
             &noop_meter(),
             max_transaction_retries,
         )
@@ -470,7 +467,7 @@ pub fn generate_aead_key() -> LessSafeKey {
     LessSafeKey::new(unbound_key)
 }
 
-impl Transaction<'_, MockClock> {
+impl Transaction<'_> {
     /// Verify that every row in `table` has the expected `created_at` and `updated_by` columns. The
     /// `created_at` time is checked against the transaction's clock's current time.
     /// If `updated_at` is true, then also check that column. Panics if any column is missing or

@@ -5,7 +5,6 @@ use janus_aggregator_core::{
     datastore::{self, Transaction, models::LeaderStoredReport},
     task::AggregatorTask,
 };
-use janus_core::time::Clock;
 use janus_messages::{
     Role,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
@@ -18,12 +17,8 @@ use super::{
 
 #[async_trait]
 pub trait UploadableBatchMode: BatchMode {
-    async fn validate_uploaded_report<
-        const SEED_SIZE: usize,
-        C: Clock,
-        A: AsyncAggregator<SEED_SIZE>,
-    >(
-        tx: &Transaction<'_, C>,
+    async fn validate_uploaded_report<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>>(
+        tx: &Transaction<'_>,
         vdaf: &A,
         report: &LeaderStoredReport<SEED_SIZE, A>,
     ) -> Result<(), Error>;
@@ -31,12 +26,8 @@ pub trait UploadableBatchMode: BatchMode {
 
 #[async_trait]
 impl UploadableBatchMode for TimeInterval {
-    async fn validate_uploaded_report<
-        const SEED_SIZE: usize,
-        C: Clock,
-        A: AsyncAggregator<SEED_SIZE>,
-    >(
-        tx: &Transaction<'_, C>,
+    async fn validate_uploaded_report<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>>(
+        tx: &Transaction<'_>,
         vdaf: &A,
         report: &LeaderStoredReport<SEED_SIZE, A>,
     ) -> Result<(), Error> {
@@ -64,12 +55,8 @@ impl UploadableBatchMode for TimeInterval {
 
 #[async_trait]
 impl UploadableBatchMode for LeaderSelected {
-    async fn validate_uploaded_report<
-        const SEED_SIZE: usize,
-        C: Clock,
-        A: AsyncAggregator<SEED_SIZE>,
-    >(
-        _: &Transaction<'_, C>,
+    async fn validate_uploaded_report<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>>(
+        _: &Transaction<'_>,
         _: &A,
         _: &LeaderStoredReport<SEED_SIZE, A>,
     ) -> Result<(), Error> {
@@ -86,8 +73,8 @@ impl UploadableBatchMode for LeaderSelected {
 pub trait CollectableBatchMode: CoreCollectableBatchMode + AccumulableBatchMode {
     /// Validates query count for a given batch, per the size checks in
     /// <https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6>.
-    async fn validate_query_count<const SEED_SIZE: usize, C: Clock, A: AsyncAggregator<SEED_SIZE>>(
-        tx: &Transaction<'_, C>,
+    async fn validate_query_count<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>>(
+        tx: &Transaction<'_>,
         vdaf: &A,
         task: &AggregatorTask,
         batch_identifier: &Self::BatchIdentifier,
@@ -97,12 +84,8 @@ pub trait CollectableBatchMode: CoreCollectableBatchMode + AccumulableBatchMode 
 
 #[async_trait]
 impl CollectableBatchMode for TimeInterval {
-    async fn validate_query_count<
-        const SEED_SIZE: usize,
-        C: Clock,
-        A: AsyncAggregator<SEED_SIZE>,
-    >(
-        tx: &Transaction<'_, C>,
+    async fn validate_query_count<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>>(
+        tx: &Transaction<'_>,
         vdaf: &A,
         task: &AggregatorTask,
         collect_interval: &Self::BatchIdentifier,
@@ -172,12 +155,8 @@ impl CollectableBatchMode for TimeInterval {
 
 #[async_trait]
 impl CollectableBatchMode for LeaderSelected {
-    async fn validate_query_count<
-        const SEED_SIZE: usize,
-        C: Clock,
-        A: AsyncAggregator<SEED_SIZE>,
-    >(
-        tx: &Transaction<'_, C>,
+    async fn validate_query_count<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>>(
+        tx: &Transaction<'_>,
         vdaf: &A,
         task: &AggregatorTask,
         batch_id: &Self::BatchIdentifier,

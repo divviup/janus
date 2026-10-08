@@ -2,7 +2,6 @@ use std::{sync::Arc, time::Duration};
 
 use anyhow::Result;
 use clap::Parser;
-use janus_core::time::RealClock;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
@@ -12,7 +11,7 @@ use crate::{
     config::{BinaryConfig, CommonConfig},
 };
 
-pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Result<()> {
+pub async fn main_callback(ctx: BinaryContext<Options, Config>) -> Result<()> {
     // Start creating aggregation jobs.
     let aggregation_job_creator = Arc::new(AggregationJobCreator::new(
         Arc::new(ctx.datastore),

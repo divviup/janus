@@ -45,7 +45,7 @@ const UNPROXYABLE_HEADERS: [HeaderName; 3] = [HOST, TRANSFER_ENCODING, CONNECTIO
 
 #[derive(Clone)]
 struct InteropAggregatorState {
-    datastore: Arc<Datastore<RealClock>>,
+    datastore: Arc<Datastore>,
     proxy_url: String,
     http_client: reqwest::Client,
     dap_serving_prefix: String,
@@ -59,7 +59,7 @@ struct EndpointResponse {
 }
 
 async fn handle_add_task(
-    datastore: &Datastore<RealClock>,
+    datastore: &Datastore,
     request: AggregatorAddTaskRequest,
 ) -> anyhow::Result<()> {
     let (peer_endpoint, own_endpoint) = match request.role {
@@ -284,7 +284,7 @@ async fn proxy_handler(
 }
 
 fn make_handler(
-    datastore: Arc<Datastore<RealClock>>,
+    datastore: Arc<Datastore>,
     dap_serving_prefix: String,
     aggregator_address: SocketAddr,
     health_check_peers: Vec<Url>,
@@ -373,10 +373,10 @@ impl BinaryConfig for Config {
 
 impl Options {
     pub fn run(self) -> anyhow::Result<()> {
-        janus_main::<_, _, Config, _, _>(
+        janus_main::<_, Config, _, _>(
             "janus_interop_aggregator",
             self,
-            RealClock::default(),
+            Arc::new(RealClock::default()),
             true,
             |ctx| async move {
                 ctx.datastore.put_hpke_key().await.unwrap();

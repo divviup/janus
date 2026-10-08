@@ -9,15 +9,9 @@ use chrono::{DateTime, TimeDelta, Utc};
 use janus_messages::{Duration, Error, Interval, Time, TimePrecision};
 
 /// A clock knows what time it currently is.
-pub trait Clock: 'static + Clone + Debug + Sync + Send {
+pub trait Clock: 'static + Debug + Sync + Send {
     /// Get the current time.
     fn now(&self) -> DateTime<Utc>;
-
-    /// Get the [`chrono::TimeDelta`] elapsed since the provided time according to this clock's
-    /// current time.
-    fn elapsed(&self, since: DateTime<Utc>) -> TimeDelta {
-        self.now() - since
-    }
 }
 
 /// A real clock returns the current time relative to the Unix epoch.

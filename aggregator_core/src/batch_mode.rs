@@ -2,7 +2,6 @@ use std::iter;
 
 use async_trait::async_trait;
 use futures::future::try_join_all;
-use janus_core::time::Clock;
 use janus_messages::{
     Interval, Query, TaskId, Time,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
@@ -28,12 +27,8 @@ pub trait AccumulableBatchMode: BatchMode {
     ) -> Result<Self::BatchIdentifier, datastore::Error>;
 
     /// Retrieves collection jobs which include the given batch identifier.
-    async fn get_collection_jobs_including<
-        const SEED_SIZE: usize,
-        C: Clock,
-        A: AsyncAggregator<SEED_SIZE>,
-    >(
-        tx: &Transaction<'_, C>,
+    async fn get_collection_jobs_including<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>>(
+        tx: &Transaction<'_>,
         vdaf: &A,
         task_id: &TaskId,
         batch_identifier: &Self::BatchIdentifier,
@@ -69,10 +64,9 @@ impl AccumulableBatchMode for TimeInterval {
 
     async fn get_collection_jobs_including<
         const SEED_SIZE: usize,
-        C: Clock,
         A: AsyncAggregator<SEED_SIZE>,
     >(
-        tx: &Transaction<'_, C>,
+        tx: &Transaction<'_>,
         vdaf: &A,
         task_id: &TaskId,
         batch_identifier: &Self::BatchIdentifier,
@@ -113,10 +107,9 @@ impl AccumulableBatchMode for LeaderSelected {
 
     async fn get_collection_jobs_including<
         const SEED_SIZE: usize,
-        C: Clock,
         A: AsyncAggregator<SEED_SIZE>,
     >(
-        tx: &Transaction<'_, C>,
+        tx: &Transaction<'_>,
         vdaf: &A,
         task_id: &TaskId,
         batch_id: &Self::BatchIdentifier,
@@ -153,8 +146,8 @@ pub trait CollectableBatchMode: AccumulableBatchMode {
     type Iter: Iterator<Item = Self::BatchIdentifier> + Send + Sync + Clone;
 
     /// Retrieves the batch identifier for a given query.
-    async fn collection_identifier_for_query<C: Clock>(
-        tx: &Transaction<'_, C>,
+    async fn collection_identifier_for_query(
+        tx: &Transaction<'_>,
         task: &AggregatorTask,
         query: &Query<Self>,
     ) -> Result<Option<Self::BatchIdentifier>, datastore::Error>;
@@ -179,8 +172,8 @@ pub trait CollectableBatchMode: AccumulableBatchMode {
 
     /// Returns the number of client reports included in the given collection identifier, whether
     /// they have been aggregated or not.
-    async fn count_client_reports<C: Clock>(
-        tx: &Transaction<'_, C>,
+    async fn count_client_reports(
+        tx: &Transaction,
         task: &AggregatorTask,
         collection_identifier: &Self::BatchIdentifier,
     ) -> Result<u64, datastore::Error>;
@@ -190,9 +183,8 @@ pub trait CollectableBatchMode: AccumulableBatchMode {
     async fn get_batch_aggregations_for_collection_identifier<
         const SEED_SIZE: usize,
         A: AsyncAggregator<SEED_SIZE>,
-        C: Clock,
     >(
-        tx: &Transaction<C>,
+        tx: &Transaction,
         task_id: &TaskId,
         vdaf: &A,
         collection_identifier: &Self::BatchIdentifier,
@@ -227,9 +219,8 @@ pub trait CollectableBatchMode: AccumulableBatchMode {
     async fn get_batch_aggregation_job_count_for_collection_identifier<
         const SEED_SIZE: usize,
         A: AsyncAggregator<SEED_SIZE>,
-        C: Clock,
     >(
-        tx: &Transaction<C>,
+        tx: &Transaction,
         task_id: &TaskId,
         collection_identifier: &Self::BatchIdentifier,
         aggregation_param: &A::AggregationParam,
@@ -261,8 +252,8 @@ pub trait CollectableBatchMode: AccumulableBatchMode {
 impl CollectableBatchMode for TimeInterval {
     type Iter = TimeIntervalBatchIdentifierIter;
 
-    async fn collection_identifier_for_query<C: Clock>(
-        _: &Transaction<'_, C>,
+    async fn collection_identifier_for_query(
+        _: &Transaction<'_>,
         _: &AggregatorTask,
         query: &Query<Self>,
     ) -> Result<Option<Self::BatchIdentifier>, datastore::Error> {
@@ -290,8 +281,8 @@ impl CollectableBatchMode for TimeInterval {
         collection_identifier.duration().as_time_precision_units() >= 1
     }
 
-    async fn count_client_reports<C: Clock>(
-        tx: &Transaction<'_, C>,
+    async fn count_client_reports(
+        tx: &Transaction,
         task: &AggregatorTask,
         batch_interval: &Self::BatchIdentifier,
     ) -> Result<u64, datastore::Error> {
@@ -337,8 +328,8 @@ impl Iterator for TimeIntervalBatchIdentifierIter {
 impl CollectableBatchMode for LeaderSelected {
     type Iter = iter::Once<Self::BatchIdentifier>;
 
-    async fn collection_identifier_for_query<C: Clock>(
-        tx: &Transaction<'_, C>,
+    async fn collection_identifier_for_query(
+        tx: &Transaction<'_>,
         task: &AggregatorTask,
         _: &Query<Self>,
     ) -> Result<Option<Self::BatchIdentifier>, datastore::Error> {
@@ -362,8 +353,8 @@ impl CollectableBatchMode for LeaderSelected {
         true
     }
 
-    async fn count_client_reports<C: Clock>(
-        tx: &Transaction<'_, C>,
+    async fn count_client_reports(
+        tx: &Transaction,
         task: &AggregatorTask,
         batch_id: &Self::BatchIdentifier,
     ) -> Result<u64, datastore::Error> {
