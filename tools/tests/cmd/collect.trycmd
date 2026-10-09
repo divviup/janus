@@ -69,4 +69,10 @@ Collect Request Parameters (Time Interval):
       --batch-interval-duration <BATCH_INTERVAL_DURATION>
           Duration of the collection batch interval, in seconds
 
+Collect Request Parameters (Leader Selected):
+      --idempotency-key <IDEMPOTENCY_KEY>
+          Idempotency key for collection job creation, as base64 encoded bytes.
+          
+          If not set, a random idempotency key is used.
+
 ```

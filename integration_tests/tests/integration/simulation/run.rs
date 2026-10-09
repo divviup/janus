@@ -442,7 +442,6 @@ impl Simulation {
                     .components
                     .collector
                     .collection(query, &())
-                    .with_id(*collection_job_id)
                     .start()
                     .await
                 {
@@ -462,7 +461,6 @@ impl Simulation {
                     .components
                     .collector
                     .collection(query, &())
-                    .with_id(*collection_job_id)
                     .start()
                     .await
                 {
