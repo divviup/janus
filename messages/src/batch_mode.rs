@@ -215,6 +215,12 @@ impl Decode for LeaderSelectedQueryConfig {
     }
 }
 
+impl AsRef<[u8]> for LeaderSelectedQueryConfig {
+    fn as_ref(&self) -> &[u8] {
+        self.idempotency_key.as_ref()
+    }
+}
+
 /// DAP protocol message indicating a batch mode.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, TryFromPrimitive, Serialize, Deserialize)]
 #[repr(u8)]
