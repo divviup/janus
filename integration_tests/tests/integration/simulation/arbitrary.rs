@@ -9,13 +9,15 @@ use std::cmp::max;
 use chrono::TimeDelta;
 use janus_aggregator_core::task::AggregationMode;
 use janus_core::time::{DateTimeExt, TimeDeltaExt, TimeExt};
-use janus_messages::{CollectionJobId, Duration, Interval, Time, TimePrecision};
+use janus_messages::{
+    Duration, Interval, Time, TimePrecision, batch_mode::LeaderSelectedQueryConfig,
+};
 use quickcheck::{Arbitrary, Gen, empty_shrinker};
 use rand::random;
 
 use crate::simulation::{
     START_TIME,
-    model::{Config, Input, Op},
+    model::{Config, Input, Op, Query},
 };
 
 impl Arbitrary for Config {
@@ -86,8 +88,8 @@ pub(super) struct KeyRotatorInput(pub(super) Input);
 struct Context {
     current_time: Time,
     time_precision: TimePrecision,
-    started_collection_job_ids: Vec<CollectionJobId>,
-    polled_collection_job_ids: Vec<CollectionJobId>,
+    started_collection_job_queries: Vec<Query>,
+    polled_collection_job_queries: Vec<Query>,
 }
 
 impl Context {
@@ -95,8 +97,8 @@ impl Context {
         Self {
             current_time: START_TIME.to_time(&config.time_precision),
             time_precision: config.time_precision,
-            started_collection_job_ids: Vec::new(),
-            polled_collection_job_ids: Vec::new(),
+            started_collection_job_queries: Vec::new(),
+            polled_collection_job_queries: Vec::new(),
         }
     }
 
@@ -108,14 +110,9 @@ impl Context {
                     .add_timedelta(amount, &self.time_precision)
                     .unwrap()
             }
-            Op::CollectorStart {
-                collection_job_id,
-                query: _,
-            } => self.started_collection_job_ids.push(*collection_job_id),
-            Op::CollectorPoll { collection_job_id }
-                if !self.polled_collection_job_ids.contains(collection_job_id) =>
-            {
-                self.polled_collection_job_ids.push(*collection_job_id);
+            Op::CollectorStart { query } => self.started_collection_job_queries.push(query.clone()),
+            Op::CollectorPoll { query } if !self.polled_collection_job_queries.contains(query) => {
+                self.polled_collection_job_queries.push(query.clone());
             }
             _ => {}
         }
@@ -187,14 +184,8 @@ fn shrink_op(op: &Op) -> Box<dyn Iterator<Item = Op>> {
         | Op::CollectionJobDriver
         | Op::CollectionJobDriverRequestError
         | Op::CollectionJobDriverResponseError
-        | Op::CollectorStart {
-            collection_job_id: _,
-            query: _,
-        }
-        | Op::CollectorPoll {
-            collection_job_id: _,
-        } => empty_shrinker(),
-
+        | Op::CollectorStart { .. }
+        | Op::CollectorPoll { .. } => empty_shrinker(),
         Op::Upload {
             report_time: _,
             count: 0 | 1,
@@ -297,21 +288,30 @@ fn arbitrary_collector_start_op_time_interval(g: &mut Gen, context: &Context) ->
         ])
         .unwrap();
     Op::CollectorStart {
-        collection_job_id: random(),
-        query: super::model::Query::TimeInterval(
-            Interval::new(start, duration_fn(g, context)).unwrap(),
-        ),
+        query: Query::TimeInterval(Interval::new(start, duration_fn(g, context)).unwrap()),
     }
 }
 
-/// Generate a collect poll operation.
-fn arbitrary_collector_poll_op(g: &mut Gen, context: &Context) -> Op {
+/// Generate a collect poll operation for time interval batch mode.
+fn arbitrary_collector_poll_op_time_interval(g: &mut Gen, context: &Context) -> Op {
     Op::CollectorPoll {
-        collection_job_id: g
-            .choose(&context.started_collection_job_ids)
-            .copied()
+        query: g
+            .choose(&context.started_collection_job_queries)
+            .cloned()
             .unwrap_or_else(|| {
-                CollectionJobId::try_from([0u8; CollectionJobId::LEN].as_slice()).unwrap()
+                Query::TimeInterval(Interval::minimal(Time::from_time_precision_units(0)).unwrap())
+            }),
+    }
+}
+
+/// Generate a collect poll operation for leader selected batch mode.
+fn arbitrary_collector_poll_op_leader_selected(g: &mut Gen, context: &Context) -> Op {
+    Op::CollectorPoll {
+        query: g
+            .choose(&context.started_collection_job_queries)
+            .cloned()
+            .unwrap_or_else(|| {
+                Query::LeaderSelected(LeaderSelectedQueryConfig::new(vec![0u8; 8]).unwrap())
             }),
     }
 }
@@ -438,7 +438,7 @@ fn arbitrary_op_time_interval(g: &mut Gen, context: &Context, choices: &[OpKind]
         OpKind::CollectionJobDriverRequestError => Op::CollectionJobDriverRequestError,
         OpKind::CollectionJobDriverResponseError => Op::CollectionJobDriverResponseError,
         OpKind::CollectorStart => arbitrary_collector_start_op_time_interval(g, context),
-        OpKind::CollectorPoll => arbitrary_collector_poll_op(g, context),
+        OpKind::CollectorPoll => arbitrary_collector_poll_op_time_interval(g, context),
     }
 }
 
@@ -491,10 +491,9 @@ fn arbitrary_op_leader_selected(g: &mut Gen, context: &Context, choices: &[OpKin
         OpKind::CollectionJobDriverRequestError => Op::CollectionJobDriverRequestError,
         OpKind::CollectionJobDriverResponseError => Op::CollectionJobDriverResponseError,
         OpKind::CollectorStart => Op::CollectorStart {
-            collection_job_id: random(),
-            query: super::model::Query::LeaderSelected,
+            query: Query::LeaderSelected(random()),
         },
-        OpKind::CollectorPoll => arbitrary_collector_poll_op(g, context),
+        OpKind::CollectorPoll => arbitrary_collector_poll_op_leader_selected(g, context),
     }
 }
 

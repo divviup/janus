@@ -19,13 +19,13 @@ use janus_core::{
 };
 use janus_messages::{
     BatchConfig, CollectionJobId, Duration, HpkeConfig, Interval, Query, TaskConfiguration, TaskId,
-    Time, batch_mode::BatchMode,
+    Time,
+    batch_mode::{BatchMode, LeaderSelectedQueryConfig},
 };
 use prio::{
     codec::Decode,
     vdaf::{self, Vdaf, VdafError},
 };
-use rand::random;
 use tracing_log::LogTracer;
 use tracing_subscriber::{EnvFilter, Registry, prelude::*};
 
@@ -132,37 +132,6 @@ fn private_collector_credential_parser(
     serde_json::from_str(s)
 }
 
-#[derive(Clone)]
-struct TaskConfigurationValueParser {
-    inner: NonEmptyStringValueParser,
-}
-
-impl TaskConfigurationValueParser {
-    fn new() -> TaskConfigurationValueParser {
-        TaskConfigurationValueParser {
-            inner: NonEmptyStringValueParser::new(),
-        }
-    }
-}
-
-impl TypedValueParser for TaskConfigurationValueParser {
-    type Value = TaskConfiguration;
-
-    fn parse_ref(
-        &self,
-        cmd: &clap::Command,
-        arg: Option<&clap::Arg>,
-        value: &std::ffi::OsStr,
-    ) -> Result<Self::Value, clap::Error> {
-        let input = self.inner.parse_ref(cmd, arg, value)?;
-        let bytes = URL_SAFE_NO_PAD
-            .decode(input)
-            .map_err(|err| clap::Error::raw(ErrorKind::ValueValidation, err))?;
-        TaskConfiguration::get_decoded(&bytes)
-            .map_err(|err| clap::Error::raw(ErrorKind::ValueValidation, err))
-    }
-}
-
 #[derive(Debug, Args, PartialEq, Eq)]
 struct AuthenticationOptions {
     /// Authentication token for the DAP-Auth-Token HTTP header
@@ -194,6 +163,68 @@ struct AuthenticationOptions {
     authorization_bearer_token: Option<AuthenticationToken>,
 }
 
+#[derive(Clone)]
+struct TaskConfigurationValueParser {
+    inner: NonEmptyStringValueParser,
+}
+
+impl TaskConfigurationValueParser {
+    fn new() -> TaskConfigurationValueParser {
+        TaskConfigurationValueParser {
+            inner: NonEmptyStringValueParser::new(),
+        }
+    }
+}
+
+impl TypedValueParser for TaskConfigurationValueParser {
+    type Value = TaskConfiguration;
+
+    fn parse_ref(
+        &self,
+        cmd: &clap::Command,
+        arg: Option<&clap::Arg>,
+        value: &std::ffi::OsStr,
+    ) -> Result<Self::Value, clap::Error> {
+        let input = self.inner.parse_ref(cmd, arg, value)?;
+        let bytes = URL_SAFE_NO_PAD
+            .decode(input)
+            .map_err(|err| clap::Error::raw(ErrorKind::ValueValidation, err))?;
+        TaskConfiguration::get_decoded(&bytes)
+            .map_err(|err| clap::Error::raw(ErrorKind::ValueValidation, err))
+    }
+}
+
+#[derive(Clone)]
+struct IdempotencyKeyValueParser {
+    inner: StringValueParser,
+}
+
+impl IdempotencyKeyValueParser {
+    fn new() -> Self {
+        Self {
+            inner: StringValueParser::new(),
+        }
+    }
+}
+
+impl TypedValueParser for IdempotencyKeyValueParser {
+    type Value = LeaderSelectedQueryConfig;
+
+    fn parse_ref(
+        &self,
+        cmd: &clap::Command,
+        arg: Option<&clap::Arg>,
+        value: &std::ffi::OsStr,
+    ) -> Result<Self::Value, clap::Error> {
+        let input = self.inner.parse_ref(cmd, arg, value)?;
+        let bytes = URL_SAFE_NO_PAD
+            .decode(input)
+            .map_err(|err| clap::Error::raw(ErrorKind::ValueValidation, err))?;
+        Self::Value::get_decoded(&bytes)
+            .map_err(|err| clap::Error::raw(ErrorKind::ValueValidation, err))
+    }
+}
+
 #[derive(Debug, Args, PartialEq, Eq)]
 struct QueryOptions {
     /// Start of the collection batch interval, as the number of seconds since the Unix epoch
@@ -211,6 +242,13 @@ struct QueryOptions {
         help_heading = "Collect Request Parameters (Time Interval)"
     )]
     batch_interval_duration: Option<u64>,
+
+    /// Idempotency key for collection job creation, as base64 encoded bytes.
+    ///
+    /// If not set, a random idempotency key is used.
+    #[clap(long, value_parser = IdempotencyKeyValueParser::new(),
+        help_heading = "Collect Request Parameters (Leader Selected)")]
+    idempotency_key: Option<LeaderSelectedQueryConfig>,
 }
 
 #[derive(Debug, Args, PartialEq, Eq)]
@@ -273,12 +311,7 @@ enum Subcommands {
     /// Initialize a new collection job
     ///
     /// Outputs collection job ID to stdout.
-    NewJob {
-        /// Job ID to use for the new collection job. If absent, an ID is randomly generated
-        ///
-        /// A valid ID consists of 16 randomly selected bytes, encoded with unpadded base64url.
-        collection_job_id: Option<CollectionJobId>,
-    },
+    NewJob,
     /// Poll an existing collection job once
     ///
     /// The supplied query options must exactly match the ones used to create the collection job,
@@ -438,7 +471,7 @@ async fn main() -> anyhow::Result<()> {
 /// The batch to collect, resolved against the task's batch configuration.
 enum ResolvedQuery {
     TimeInterval(Interval),
-    LeaderSelected,
+    LeaderSelected(LeaderSelectedQueryConfig),
 }
 
 /// Resolves the query arguments against the batch configuration in `--task-config`. The batch mode
@@ -450,8 +483,9 @@ fn resolve_query(options: &Options) -> Result<ResolvedQuery, Error> {
         batch_config,
         options.query.batch_interval_start,
         options.query.batch_interval_duration,
+        options.query.idempotency_key.clone(),
     ) {
-        (BatchConfig::TimeInterval, Some(start), Some(duration)) => {
+        (BatchConfig::TimeInterval, Some(start), Some(duration), _) => {
             let time_precision = options.task_config.time_precision();
             Ok(ResolvedQuery::TimeInterval(
                 Interval::new(
@@ -461,23 +495,25 @@ fn resolve_query(options: &Options) -> Result<ResolvedQuery, Error> {
                 .map_err(|err| Error::Anyhow(err.into()))?,
             ))
         }
-        (BatchConfig::TimeInterval, None, None) => Err(clap::Error::raw(
+        (BatchConfig::TimeInterval, None, None, _) => Err(clap::Error::raw(
             ErrorKind::MissingRequiredArgument,
             "the task is a time-interval task, so --batch-interval-start and \
              --batch-interval-duration are required\n",
         )
         .into()),
-        (BatchConfig::TimeInterval, _, _) => {
+        (BatchConfig::TimeInterval, _, _, _) => {
             unreachable!("clap requires both batch interval arguments together")
         }
-        (BatchConfig::LeaderSelected, None, None) => Ok(ResolvedQuery::LeaderSelected),
-        (BatchConfig::LeaderSelected, _, _) => Err(clap::Error::raw(
+        (BatchConfig::LeaderSelected, None, None, Some(idempotency_key)) => {
+            Ok(ResolvedQuery::LeaderSelected(idempotency_key))
+        }
+        (BatchConfig::LeaderSelected, _, _, _) => Err(clap::Error::raw(
             ErrorKind::ArgumentConflict,
             "the task is a leader-selected task, so --batch-interval-start and \
              --batch-interval-duration must not be provided\n",
         )
         .into()),
-        (batch_config, _, _) => Err(clap::Error::raw(
+        (batch_config, _, _, _) => Err(clap::Error::raw(
             ErrorKind::ValueValidation,
             format!(
                 "unsupported batch mode in --task-config: {}\n",
@@ -495,8 +531,8 @@ macro_rules! options_query_dispatch {
                 let $query = Query::new_time_interval(batch_interval);
                 $body
             }
-            ResolvedQuery::LeaderSelected => {
-                let $query = Query::new_leader_selected();
+            ResolvedQuery::LeaderSelected(idempotency_key) => {
+                let $query = Query::new_leader_selected(idempotency_key);
                 $body
             }
         }
@@ -538,9 +574,8 @@ async fn run(options: Options) -> Result<(), Error> {
         // Every VDAF this tool dispatches to has a trivial aggregation parameter.
         let agg_param: &<VdafType as Vdaf>::AggregationParam = &Default::default();
         match options.subcommand {
-            Some(Subcommands::NewJob { collection_job_id }) => {
-                let collection_job_id = collection_job_id.unwrap_or_else(random);
-                run_new_job(options, vdaf, http_client, query, agg_param, collection_job_id).await
+            Some(Subcommands::NewJob) => {
+                run_new_job(options, vdaf, http_client, query, agg_param).await
             }
             Some(Subcommands::PollJob { collection_job_id }) => {
                 run_poll_job(options, vdaf, http_client, query, agg_param, collection_job_id).await
@@ -575,14 +610,12 @@ async fn run_new_job<V: vdaf::Collector, B: BatchMode>(
     http_client: reqwest::Client,
     query: Query<B>,
     agg_param: &V::AggregationParam,
-    collection_job_id: CollectionJobId,
 ) -> Result<(), Error>
 where
     V::AggregateResult: Debug,
 {
     let collection = new_collector(options, vdaf, http_client)?
         .collection(query, agg_param)
-        .with_id(collection_job_id)
         .start()
         .await
         .map_err(|err| Error::Anyhow(err.into()))?;
@@ -699,7 +732,10 @@ mod tests {
         initialize_rustls,
         test_util::install_test_trace_subscriber,
     };
-    use janus_messages::{BatchConfig, TaskConfiguration, TaskId, TimePrecision, VdafConfig};
+    use janus_messages::{
+        BatchConfig, TaskConfiguration, TaskId, TimePrecision, VdafConfig,
+        batch_mode::LeaderSelectedQueryConfig,
+    };
     use prio::{codec::Encode, vdaf::prio3::Prio3};
     use rand::random;
     use tempfile::NamedTempFile;
@@ -778,6 +814,7 @@ mod tests {
             query: QueryOptions {
                 batch_interval_start: Some(1_000_000),
                 batch_interval_duration: Some(1_000),
+                idempotency_key: None,
             },
         };
         let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded().unwrap());
@@ -987,6 +1024,8 @@ mod tests {
         let encoded_hpke_config =
             URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded().unwrap());
         let encoded_private_key = URL_SAFE_NO_PAD.encode(hpke_keypair.private_key().as_ref());
+        let encoded_idempotency_key =
+            URL_SAFE_NO_PAD.encode(LeaderSelectedQueryConfig::default().get_encoded().unwrap());
         let auth_token = AuthenticationToken::DapAuth(random());
         let task_config_argument = task_config_argument(BatchConfig::LeaderSelected);
 
@@ -1008,6 +1047,7 @@ mod tests {
             query: QueryOptions {
                 batch_interval_start: None,
                 batch_interval_duration: None,
+                idempotency_key: Some(LeaderSelectedQueryConfig::default()),
             },
         };
         let correct_arguments = [
@@ -1017,6 +1057,7 @@ mod tests {
             &format!("--dap-auth-token={}", auth_token.as_str()),
             &format!("--hpke-config={encoded_hpke_config}"),
             &format!("--hpke-private-key={encoded_private_key}"),
+            &format!("--idempotency-key={encoded_idempotency_key}"),
         ];
         match Options::try_parse_from(correct_arguments) {
             Ok(got) => assert_eq!(got, expected),
@@ -1311,9 +1352,7 @@ mod tests {
         let task_config_argument = task_config_argument(BatchConfig::TimeInterval);
 
         let mut expected = Options {
-            subcommand: Some(Subcommands::NewJob {
-                collection_job_id: None,
-            }),
+            subcommand: Some(Subcommands::NewJob),
             task_id,
             task_config: task_config(BatchConfig::TimeInterval),
             authentication: AuthenticationOptions {
@@ -1329,6 +1368,7 @@ mod tests {
             query: QueryOptions {
                 batch_interval_start: Some(1_000_000),
                 batch_interval_duration: Some(1_000),
+                idempotency_key: None,
             },
         };
         let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded().unwrap());
@@ -1350,10 +1390,7 @@ mod tests {
             Err(e) => panic!("{e}\narguments were {correct_arguments:?}"),
         }
 
-        let collection_job_id = random();
-        expected.subcommand = Some(Subcommands::NewJob {
-            collection_job_id: Some(collection_job_id),
-        });
+        expected.subcommand = Some(Subcommands::NewJob);
         let correct_arguments = [
             "collect",
             &format!("--task-id={task_id_encoded}"),
@@ -1366,8 +1403,6 @@ mod tests {
             "--batch-interval-duration",
             "1000",
             "new-job",
-            "--", // prevent ID from being interpreted as a flag, in case it starts with a hyphen.
-            &format!("{collection_job_id}"),
         ];
         match Options::try_parse_from(correct_arguments) {
             Ok(got) => assert_eq!(got, expected),
@@ -1403,6 +1438,7 @@ mod tests {
             query: QueryOptions {
                 batch_interval_start: Some(1_000_000),
                 batch_interval_duration: Some(1_000),
+                idempotency_key: None,
             },
         };
         let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded().unwrap());
