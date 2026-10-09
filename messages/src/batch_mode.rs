@@ -6,10 +6,16 @@ use std::{
 
 use anyhow::anyhow;
 use num_enum::TryFromPrimitive;
-use prio::codec::{CodecError, Decode, Encode};
+use prio::codec::{CodecError, Decode, Encode, decode_u8_items, encode_u8_items};
+use rand::{
+    Rng, RngExt,
+    distr::{Distribution, StandardUniform},
+};
 use serde::{Deserialize, Serialize};
 
-use crate::{AggregationJobExtension, AggregationJobExtensionType, BatchId, Interval, Query};
+use crate::{
+    AggregationJobExtension, AggregationJobExtensionType, BatchId, Error, Interval, Query,
+};
 
 /// BatchMode represents a DAP batch mode. This is a task-level configuration setting which
 /// determines how individual client reports are grouped together into batches for collection.
@@ -123,7 +129,7 @@ impl BatchMode for LeaderSelected {
 
     type BatchIdentifier = BatchId;
     type PartialBatchIdentifier = BatchId;
-    type QueryBody = ();
+    type QueryBody = LeaderSelectedQueryConfig;
 
     fn partial_batch_identifier(
         batch_identifier: &Self::BatchIdentifier,
@@ -153,6 +159,59 @@ impl BatchMode for LeaderSelected {
             .ok_or("missing leader_selected_batch_id extension")?;
         BatchId::get_decoded(extension.extension_data())
             .map_err(|_| "malformed leader_selected_batch_id extension")
+    }
+}
+
+/// Query configuration for `leader-selected` batch mode.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct LeaderSelectedQueryConfig {
+    idempotency_key: Vec<u8>,
+}
+
+impl LeaderSelectedQueryConfig {
+    /// Create a query config with the idempotency key.
+    ///
+    /// The idempotency key must be 255 bytes or less.
+    pub fn new(idempotency_key: Vec<u8>) -> Result<Self, Error> {
+        if idempotency_key.len() > u8::MAX as usize {
+            return Err(Error::InvalidParameter("idempotency key too long"));
+        }
+        Ok(Self { idempotency_key })
+    }
+}
+
+impl Default for LeaderSelectedQueryConfig {
+    fn default() -> Self {
+        Self {
+            idempotency_key: b"default idempotency key".to_vec(),
+        }
+    }
+}
+
+impl Distribution<LeaderSelectedQueryConfig> for StandardUniform {
+    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> LeaderSelectedQueryConfig {
+        let key: [u8; 16] = rng.random();
+        LeaderSelectedQueryConfig {
+            idempotency_key: key.to_vec(),
+        }
+    }
+}
+
+impl Encode for LeaderSelectedQueryConfig {
+    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
+        encode_u8_items(bytes, &(), &self.idempotency_key)
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(self.idempotency_key.len() + 1)
+    }
+}
+
+impl Decode for LeaderSelectedQueryConfig {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let idempotency_key = decode_u8_items(&(), bytes)?;
+
+        Ok(Self { idempotency_key })
     }
 }
 

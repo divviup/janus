@@ -3042,6 +3042,61 @@ WHERE collection_jobs.task_id = $1
         .transpose()
     }
 
+    /// Returns the collection job matching the query, if any exists.
+    pub async fn get_collection_job_by_query<
+        const SEED_SIZE: usize,
+        B: BatchMode,
+        A: AsyncAggregator<SEED_SIZE>,
+    >(
+        &self,
+        vdaf: &A,
+        task_id: &TaskId,
+        query: &Query<B>,
+    ) -> Result<Option<CollectionJob<SEED_SIZE, B, A>>, Error> {
+        let task_info = match self.task_info_for(task_id).await? {
+            Some(task_info) => task_info,
+            None => return Ok(None),
+        };
+
+        let stmt = self
+            .prepare_cached(
+                "-- get_collection_job_by_query()
+SELECT
+    collection_job_id, aggregation_param, batch_identifier, state, report_count,
+    client_timestamp_interval, helper_aggregate_share, leader_aggregate_share,
+    aggregate_share_id, query
+FROM collection_jobs
+WHERE collection_jobs.task_id = $1
+  AND collection_jobs.query = $2
+  AND COALESCE(
+          LOWER(collection_jobs.batch_interval),
+          (SELECT MAX(UPPER(client_timestamp_interval))
+           FROM batch_aggregations
+           WHERE batch_aggregations.task_id = collection_jobs.task_id
+             AND batch_aggregations.batch_identifier = collection_jobs.batch_identifier
+             AND batch_aggregations.aggregation_param = collection_jobs.aggregation_param),
+          0) >= $3",
+            )
+            .await?;
+        self.query_opt(
+            &stmt,
+            &[
+                /* task_id */ &task_info.pkey,
+                /* query */ &query.get_encoded()?,
+                /* threshold */
+                &task_info.report_expiry_threshold(self.clock.now())?,
+            ],
+        )
+        .await?
+        .map(|row| {
+            let batch_identifier = B::BatchIdentifier::get_decoded(row.get("batch_identifier"))?;
+            let collection_job_id =
+                row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
+            Self::collection_job_from_row(vdaf, *task_id, batch_identifier, collection_job_id, &row)
+        })
+        .transpose()
+    }
+
     /// Returns a collection job in state FINISHED with the given parameters, or `None` if no such
     /// collection job exists.
     pub async fn get_finished_collection_job<

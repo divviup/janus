@@ -1239,10 +1239,17 @@ pub mod test_util {
             aggregate_share_id: &AggregateShareId,
         ) -> Result<Url, Error> {
             Ok(self.helper_aggregator_endpoint().join(&format!(
-                "{}/aggregate_shares/{}",
-                self.tasks_path(),
-                aggregate_share_id
+                "{}/aggregate_shares/{aggregate_share_id}",
+                self.tasks_path()
             ))?)
+        }
+
+        /// Returns the URI at which the leader resource for collection job creation can be
+        /// accessed.
+        pub fn collection_job_creation_uri(&self) -> Result<Url, Error> {
+            Ok(self
+                .leader_aggregator_endpoint()
+                .join(&format!("{}/collection_jobs", self.tasks_path()))?)
         }
 
         /// Returns the URI at which the leader resource for the specified collection job ID can be
@@ -1251,10 +1258,10 @@ pub mod test_util {
             &self,
             collection_job_id: &CollectionJobId,
         ) -> Result<Url, Error> {
-            Ok(self.leader_aggregator_endpoint().join(&format!(
-                "{}/collection_jobs/{collection_job_id}",
-                self.tasks_path()
-            ))?)
+            Ok(self
+                .collection_job_creation_uri()?
+                .ensure_trailing_slash()
+                .join(&collection_job_id.to_string())?)
         }
 
         /// Render the leader aggregator's view of this task.

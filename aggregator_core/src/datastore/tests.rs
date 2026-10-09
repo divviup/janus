@@ -29,7 +29,7 @@ use janus_messages::{
     Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, Interval, Query, ReportError,
     ReportId, ReportIdChecksum, ReportMetadata, ReportShare, Role, TaskId, Time, TimePrecision,
     VdafConfig, VerifyContinue, VerifyInit, VerifyResp, VerifyStepResult,
-    batch_mode::{BatchMode, LeaderSelected, TimeInterval},
+    batch_mode::{BatchMode, LeaderSelected, LeaderSelectedQueryConfig, TimeInterval},
 };
 use postgres_types::Timestamp;
 use prio::{
@@ -4036,7 +4036,7 @@ async fn get_collection_jobs_by_batch_id(ephemeral_datastore: EphemeralDatastore
                 *task.id(),
                 random(),
                 random(),
-                Query::new_leader_selected(),
+                Query::new_leader_selected(random()),
                 aggregation_param,
                 random(),
                 CollectionJobState::Start,
@@ -4064,7 +4064,7 @@ async fn get_collection_jobs_by_batch_id(ephemeral_datastore: EphemeralDatastore
                 *task.id(),
                 random(),
                 random(),
-                Query::new_leader_selected(),
+                Query::new_leader_selected(random()),
                 aggregation_param,
                 random(),
                 CollectionJobState::Start,
@@ -4116,6 +4116,167 @@ async fn get_collection_jobs_by_batch_id(ephemeral_datastore: EphemeralDatastore
     })
     .await
     .unwrap();
+}
+
+async fn get_collection_jobs_by_query_test<B: CollectableBatchMode>(
+    ephemeral_datastore: EphemeralDatastore,
+    batch_mode: task::BatchMode,
+    queries: [Query<B>; 3],
+    batch_identifiers: [B::BatchIdentifier; 3],
+) {
+    install_test_trace_subscriber();
+
+    let clock = MockClock::new(START_TIMESTAMP);
+    let ds = ephemeral_datastore.datastore(clock.clone()).await;
+    let aggregation_param = dummy::AggregationParam(13);
+
+    ds.run_tx("test-put-collection-job", |tx| {
+        let queries = queries.clone();
+        let batch_identifiers = batch_identifiers.clone();
+        Box::pin(async move {
+            let task = TaskBuilder::new(
+                batch_mode,
+                AggregationMode::Synchronous,
+                VdafInstance::Fake { rounds: 1 },
+            )
+            .with_report_expiry_age(Some(REPORT_EXPIRY_AGE_DURATION))
+            .with_time_precision(TIME_PRECISION)
+            .build()
+            .leader_view()
+            .unwrap();
+            tx.put_aggregator_task(&task).await.unwrap();
+
+            let first_collection_job = CollectionJob::<0, B, dummy::Vdaf>::new(
+                *task.id(),
+                random(),
+                random(),
+                queries[0].clone(),
+                aggregation_param,
+                batch_identifiers[0].clone(),
+                CollectionJobState::Start,
+            );
+            tx.put_collection_job(&first_collection_job).await.unwrap();
+            // We must insert a batch aggregation so that the query can work out a client timestamp
+            // interval to check report expiry against. It doesn't matter what its
+            // BatchAggregationState is.
+            tx.put_batch_aggregation(&BatchAggregation::<0, B, dummy::Vdaf>::new(
+                *task.id(),
+                first_collection_job.batch_identifier().clone(),
+                aggregation_param,
+                0,
+                Interval::new(
+                    START_TIME,
+                    Duration::from_seconds(TIME_PRECISION_SECONDS, &TIME_PRECISION),
+                )
+                .unwrap(),
+                BatchAggregationState::Scrubbed,
+            ))
+            .await
+            .unwrap();
+
+            let second_collection_job = CollectionJob::<0, B, dummy::Vdaf>::new(
+                *task.id(),
+                random(),
+                random(),
+                queries[1].clone(),
+                aggregation_param,
+                batch_identifiers[1].clone(),
+                CollectionJobState::Start,
+            );
+            tx.put_collection_job(&second_collection_job).await.unwrap();
+            tx.put_batch_aggregation(&BatchAggregation::<0, B, dummy::Vdaf>::new(
+                *task.id(),
+                second_collection_job.batch_identifier().clone(),
+                aggregation_param,
+                0,
+                Interval::new(
+                    START_TIME,
+                    Duration::from_seconds(TIME_PRECISION_SECONDS, &TIME_PRECISION),
+                )
+                .unwrap(),
+                BatchAggregationState::Scrubbed,
+            ))
+            .await
+            .unwrap();
+
+            let check_jobs =
+                async |want_first_job: bool, want_second_job: bool, query: &Query<_>| {
+                    let job = tx
+                        .get_collection_job_by_query(&dummy::Vdaf::default(), task.id(), query)
+                        .await
+                        .unwrap();
+
+                    if want_first_job {
+                        assert_eq!(job.unwrap().id(), first_collection_job.id());
+                    } else if want_second_job {
+                        assert_eq!(job.unwrap().id(), second_collection_job.id());
+                    } else {
+                        assert!(job.is_none());
+                    }
+                };
+
+            check_jobs(true, false, &queries[0]).await;
+            check_jobs(false, true, &queries[1]).await;
+            check_jobs(false, false, &queries[2]).await;
+
+            Ok(())
+        })
+    })
+    .await
+    .unwrap();
+}
+
+#[rstest_reuse::apply(schema_versions_template)]
+#[tokio::test]
+async fn get_collection_jobs_by_query_time_interval(ephemeral_datastore: EphemeralDatastore) {
+    let first_batch_interval =
+        Interval::minimal(START_TIME.add_duration(&Duration::ONE).unwrap()).unwrap();
+    let second_batch_interval = Interval::minimal(
+        START_TIME
+            .add_duration(&Duration::from_time_precision_units(2))
+            .unwrap(),
+    )
+    .unwrap();
+    let third_batch_interval = Interval::minimal(
+        START_TIME
+            .add_duration(&Duration::from_time_precision_units(3))
+            .unwrap(),
+    )
+    .unwrap();
+
+    get_collection_jobs_by_query_test(
+        ephemeral_datastore,
+        task::BatchMode::TimeInterval,
+        [
+            Query::new_time_interval(first_batch_interval),
+            Query::new_time_interval(second_batch_interval),
+            Query::new_time_interval(third_batch_interval),
+        ],
+        [
+            first_batch_interval,
+            second_batch_interval,
+            third_batch_interval,
+        ],
+    )
+    .await;
+}
+
+#[rstest_reuse::apply(schema_versions_template)]
+#[tokio::test]
+async fn get_collection_jobs_by_query_leader_selected(ephemeral_datastore: EphemeralDatastore) {
+    get_collection_jobs_by_query_test(
+        ephemeral_datastore,
+        task::BatchMode::LeaderSelected {
+            batch_time_window_size: None,
+        },
+        [
+            Query::new_leader_selected(random()),
+            Query::new_leader_selected(random()),
+            Query::new_leader_selected(random()),
+        ],
+        [random(), random(), random()],
+    )
+    .await
 }
 
 #[rstest_reuse::apply(schema_versions_template)]
@@ -4309,7 +4470,9 @@ impl TestBatchModeExt for TimeInterval {
 #[async_trait]
 impl TestBatchModeExt for LeaderSelected {
     fn query_for_batch_identifier(_: &Self::BatchIdentifier) -> Query<Self> {
-        Query::new_leader_selected()
+        // Assuming we're always using the default idempotency key is a hack, but works for the
+        // tests we currently define.
+        Query::new_leader_selected(LeaderSelectedQueryConfig::default())
     }
 
     fn batch_identifier_for_client_timestamps(_: &[Time]) -> Self::BatchIdentifier {
@@ -6443,7 +6606,7 @@ async fn roundtrip_aggregate_share_job_leader_selected(ephemeral_datastore: Ephe
                     10,
                     ReportIdChecksum::get_decoded(&[1; 32]).unwrap(),
                     CollectionJobReq::new(
-                        Query::new_leader_selected(),
+                        Query::new_leader_selected(random()),
                         dummy::AggregationParam(11).get_encoded().unwrap(),
                     )
                     .with_extensions(Vec::from([CollectionJobExtension::new(
