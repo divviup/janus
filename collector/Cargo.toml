@@ -26,7 +26,6 @@ janus_core.workspace = true
 janus_messages.workspace = true
 mime.workspace = true
 prio.workspace = true
-rand = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
 retry-after = { workspace = true }
 serde = { workspace = true }
@@ -42,3 +41,4 @@ base64.workspace = true
 janus_collector = { workspace = true, features = ["test-util"] }
 janus_core = { workspace = true, features = ["test-util"] }
 mockito = { workspace = true }
+rand = { workspace = true }
