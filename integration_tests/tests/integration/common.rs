@@ -15,7 +15,7 @@ use janus_integration_tests::{
 };
 use janus_messages::{
     Duration, Interval, Query, Time, TimePrecision,
-    batch_mode::{self, LeaderSelected},
+    batch_mode::{self, LeaderSelected, LeaderSelectedQueryConfig},
     problem_type::DapProblemType,
 };
 use prio::{
@@ -325,13 +325,12 @@ where
 
         BatchMode::LeaderSelected { .. } => {
             let mut requests = 0;
+            let idempotency_key: LeaderSelectedQueryConfig = random();
             let collection = loop {
                 requests += 1;
                 let collection_res = collect_generic::<_, LeaderSelected>(
                     &collector,
-                    Query::new_leader_selected(
-                        janus_messages::batch_mode::LeaderSelectedQueryConfig::test_default(),
-                    ),
+                    Query::new_leader_selected(idempotency_key.clone()),
                     aggregation_parameter,
                 )
                 .await;
