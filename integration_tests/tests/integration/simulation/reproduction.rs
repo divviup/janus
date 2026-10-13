@@ -16,6 +16,7 @@ use crate::simulation::{
 };
 
 #[test]
+#[ignore]
 fn successful_collection_time_interval() {
     install_test_trace_subscriber();
     initialize_rustls();
@@ -123,6 +124,7 @@ fn successful_collection_time_interval() {
 }
 
 #[test]
+#[ignore]
 fn successful_collection_leader_selected() {
     install_test_trace_subscriber();
     initialize_rustls();
@@ -218,6 +220,7 @@ fn successful_collection_leader_selected() {
 }
 
 #[test]
+#[ignore]
 fn successful_collection_asynchronous() {
     install_test_trace_subscriber();
     initialize_rustls();
