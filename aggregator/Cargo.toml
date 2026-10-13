@@ -82,7 +82,6 @@ sec1.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_urlencoded = { workspace = true }
-serde_yaml.workspace = true
 signal-hook = { workspace = true }
 signal-hook-tokio = { workspace = true, features = ["futures-v0_3"] }
 testcontainers = { workspace = true, optional = true }
@@ -108,6 +107,7 @@ trillium-testing = { workspace = true, optional = true }
 trillium-tokio.workspace = true
 url.workspace = true
 uuid = { workspace = true, features = ["serde"] }
+yaml_serde.workspace = true
 
 [dev-dependencies]
 hpke-dispatch = { workspace = true }

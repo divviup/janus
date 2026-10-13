@@ -2420,7 +2420,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.4",
  "tokio",
  "tower-service",
  "tracing",
@@ -2716,7 +2716,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_urlencoded",
- "serde_yaml",
  "signal-hook 0.4.5",
  "signal-hook-tokio 0.4.0",
  "tempfile",
@@ -2745,6 +2744,7 @@ dependencies = [
  "url",
  "uuid",
  "wait-timeout",
+ "yaml_serde",
 ]
 
 [[package]]
@@ -2818,7 +2818,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_test",
- "serde_yaml",
  "sqlx",
  "tempfile",
  "testcontainers",
@@ -2831,6 +2830,7 @@ dependencies = [
  "trillium-macros 0.0.6",
  "trillium-router",
  "url",
+ "yaml_serde",
 ]
 
 [[package]]
@@ -2920,7 +2920,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_test",
- "serde_yaml",
  "stopper",
  "tempfile",
  "testcontainers",
@@ -2933,6 +2932,7 @@ dependencies = [
  "trillium",
  "trillium-testing",
  "url",
+ "yaml_serde",
 ]
 
 [[package]]
@@ -3072,7 +3072,6 @@ dependencies = [
  "rand 0.8.8",
  "reqwest",
  "serde_json",
- "serde_yaml",
  "tempfile",
  "tokio",
  "tracing",
@@ -3080,6 +3079,7 @@ dependencies = [
  "tracing-subscriber",
  "trycmd",
  "url",
+ "yaml_serde",
 ]
 
 [[package]]
@@ -3359,6 +3359,12 @@ dependencies = [
  "pkg-config",
  "vcpkg",
 ]
+
+[[package]]
+name = "libyaml-rs"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e126dda6f34391ab7b444f9922055facc83c07a910da3eb16f1e4d9c45dc777"
 
 [[package]]
 name = "linux-raw-sys"
@@ -3857,7 +3863,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
- "windows-sys 0.45.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4422,7 +4428,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.4",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -4459,7 +4465,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.4",
  "tracing",
  "windows-sys 0.60.2",
 ]
@@ -5045,7 +5051,7 @@ checksum = "7bd22781911de0ca6debda95f073c8f18bec65d1a94f1fa9573f3102e514cea4"
 dependencies = [
  "ahash",
  "annotate-snippets",
- "base64 0.21.7",
+ "base64 0.22.1",
  "encoding_rs_io",
  "getrandom 0.3.4",
  "granit-parser",
@@ -5181,19 +5187,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.118",
-]
-
-[[package]]
-name = "serde_yaml"
-version = "0.9.34+deprecated"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
-dependencies = [
- "indexmap 2.14.0",
- "itoa",
- "ryu",
- "serde",
- "unsafe-libyaml",
 ]
 
 [[package]]
@@ -5835,7 +5828,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand 2.4.1",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -6789,12 +6782,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "unsafe-libyaml"
-version = "0.2.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
-
-[[package]]
 name = "untrusted"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7464,6 +7451,19 @@ name = "xxhash-rust"
 version = "0.8.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fdd20c5420375476fbd4394763288da7eb0cc0b8c11deed431a91562af7335d3"
+
+[[package]]
+name = "yaml_serde"
+version = "0.10.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33b729a08a9a6be689bbad3e2bf8015926db54b6622cc89c3a5f7dc174b9e918"
+dependencies = [
+ "indexmap 2.14.0",
+ "itoa",
+ "libyaml-rs",
+ "ryu",
+ "serde",
+]
 
 [[package]]
 name = "yansi"

@@ -25,7 +25,7 @@ use url::Url;
 ///   url: postgres://postgres:postgres@localhost:5432/postgres
 /// "#;
 ///
-/// let _decoded: CommonConfig = serde_yaml::from_str(yaml_config).unwrap();
+/// let _decoded: CommonConfig = yaml_serde::from_str(yaml_config).unwrap();
 /// ```
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -180,7 +180,7 @@ pub struct TaskprovConfig {
 /// retry_max_elapsed_time_ms: 300000
 /// "#;
 ///
-/// let _decoded: JobDriverConfig = serde_yaml::from_str(yaml_config).unwrap();
+/// let _decoded: JobDriverConfig = yaml_serde::from_str(yaml_config).unwrap();
 /// ```
 // TODO(#3293): remove aliases during next breaking changes window.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -348,7 +348,7 @@ mod tests {
     #[test]
     fn db_config_default_timeout() {
         let db_config: DbConfig =
-            serde_yaml::from_str("url: \"postgres://postgres:postgres@localhost:5432/postgres\"")
+            yaml_serde::from_str("url: \"postgres://postgres:postgres@localhost:5432/postgres\"")
                 .unwrap();
         assert_eq!(db_config.connection_pool_timeouts_s, 60);
     }
@@ -356,11 +356,11 @@ mod tests {
     #[test]
     fn db_config_max_retries() {
         let db_config: DbConfig =
-            serde_yaml::from_str("url: \"postgres://postgres:postgres@localhost:5432/postgres\"")
+            yaml_serde::from_str("url: \"postgres://postgres:postgres@localhost:5432/postgres\"")
                 .unwrap();
         assert_eq!(db_config.connection_pool_max_size, None);
 
-        let db_config: DbConfig = serde_yaml::from_str(
+        let db_config: DbConfig = yaml_serde::from_str(
             "url: \"postgres://postgres:postgres@localhost:5432/postgres\"
 connection_pool_max_size: 42",
         )
@@ -410,7 +410,7 @@ connection_pool_max_size: 42",
             "    otlp:\n",
             "      endpoint: \"https://example.com/\"\n",
         );
-        let config: CommonConfig = serde_yaml::from_str(input).unwrap();
+        let config: CommonConfig = yaml_serde::from_str(input).unwrap();
         assert_matches!(
             config.logging_config.open_telemetry_config.unwrap(),
             OpenTelemetryTraceConfiguration::Otlp(otlp_config) => {
@@ -443,7 +443,7 @@ metrics_config:
       max_value_us: 3000000
       max_relative_error: 0.25
 ";
-        let config: CommonConfig = serde_yaml::from_str(input).unwrap();
+        let config: CommonConfig = yaml_serde::from_str(input).unwrap();
         let tokio_config = config.metrics_config.tokio.unwrap();
         assert!(tokio_config.enabled);
         assert!(tokio_config.enable_poll_time_histogram);
