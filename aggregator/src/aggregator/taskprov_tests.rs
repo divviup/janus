@@ -1131,9 +1131,7 @@ async fn taskprov_aggregate_continue() {
                         0,
                         ReportIdChecksum::default(),
                         CollectionJobReq::new(
-                            Query::new_leader_selected(
-                                janus_messages::batch_mode::LeaderSelectedQueryConfig::default(),
-                            ),
+                            Query::new_leader_selected(random()),
                             aggregation_param.get_encoded().unwrap(),
                         ),
                     ),
@@ -1273,9 +1271,7 @@ async fn taskprov_aggregate_share() {
 
     let request = AggregateShareReq::new(
         CollectionJobReq::new(
-            Query::new_leader_selected(
-                janus_messages::batch_mode::LeaderSelectedQueryConfig::default(),
-            ),
+            Query::new_leader_selected(random()),
             aggregation_param.get_encoded().unwrap(),
         ),
         BatchSelector::new_leader_selected(batch_id),
@@ -1490,9 +1486,7 @@ async fn end_to_end() {
     let checksum = ReportIdChecksum::for_report_id(report_share.metadata().id());
     let aggregate_share_request = AggregateShareReq::new(
         CollectionJobReq::new(
-            Query::new_leader_selected(
-                janus_messages::batch_mode::LeaderSelectedQueryConfig::default(),
-            ),
+            Query::new_leader_selected(random()),
             aggregation_param.get_encoded().unwrap(),
         ),
         BatchSelector::new_leader_selected(batch_id),
@@ -1636,9 +1630,7 @@ async fn end_to_end_sumvec_hmac() {
     let checksum = ReportIdChecksum::for_report_id(report_share.metadata().id());
     let aggregate_share_request = AggregateShareReq::new(
         CollectionJobReq::new(
-            Query::new_leader_selected(
-                janus_messages::batch_mode::LeaderSelectedQueryConfig::default(),
-            ),
+            Query::new_leader_selected(random()),
             aggregation_param.get_encoded().unwrap(),
         ),
         BatchSelector::new_leader_selected(batch_id),

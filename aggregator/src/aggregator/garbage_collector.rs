@@ -677,9 +677,7 @@ mod tests {
                         *task.id(),
                         random(),
                         random(),
-                        Query::new_leader_selected(
-                            janus_messages::batch_mode::LeaderSelectedQueryConfig::default(),
-                        ),
+                        Query::new_leader_selected(random()),
                         dummy::AggregationParam(0),
                         batch_id,
                         CollectionJobState::Start,
@@ -895,10 +893,7 @@ mod tests {
                             0,
                             ReportIdChecksum::default(),
                             CollectionJobReq::new(
-                                Query::new_leader_selected(
-                                    janus_messages::batch_mode::LeaderSelectedQueryConfig::default(
-                                    ),
-                                ),
+                                Query::new_leader_selected(random()),
                                 dummy::AggregationParam(0).get_encoded().unwrap(),
                             ),
                         ),

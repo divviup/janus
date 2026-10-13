@@ -636,10 +636,9 @@ impl Aggregator {
     async fn handle_create_collection_job(
         &self,
         task_id: &TaskId,
-        collection_job_id: &CollectionJobId,
         req_bytes: &[u8],
         auth_token: Option<AuthenticationToken>,
-    ) -> Result<Vec<u8>, Error> {
+    ) -> Result<CollectionJobId, Error> {
         let task_aggregator = self
             .task_aggregators
             .get(task_id)
@@ -656,7 +655,7 @@ impl Aggregator {
         }
 
         task_aggregator
-            .handle_create_collection_job(&self.datastore, collection_job_id, req_bytes)
+            .handle_create_collection_job(&self.datastore, req_bytes)
             .await
     }
 
@@ -669,7 +668,7 @@ impl Aggregator {
         task_id: &TaskId,
         collection_job_id: &CollectionJobId,
         auth_token: Option<AuthenticationToken>,
-    ) -> Result<Vec<u8>, Error> {
+    ) -> Result<Option<Vec<u8>>, Error> {
         let task_aggregator = self
             .task_aggregators
             .get(task_id)
@@ -1206,16 +1205,10 @@ impl TaskAggregator {
     async fn handle_create_collection_job(
         &self,
         datastore: &Datastore,
-        collection_job_id: &CollectionJobId,
         req_bytes: &[u8],
-    ) -> Result<Vec<u8>, Error> {
+    ) -> Result<CollectionJobId, Error> {
         self.vdaf_ops
-            .handle_create_collection_job(
-                datastore,
-                Arc::clone(&self.task),
-                collection_job_id,
-                req_bytes,
-            )
+            .handle_create_collection_job(datastore, Arc::clone(&self.task), req_bytes)
             .await
     }
 
@@ -1223,7 +1216,7 @@ impl TaskAggregator {
         &self,
         datastore: &Datastore,
         collection_job_id: &CollectionJobId,
-    ) -> Result<Vec<u8>, Error> {
+    ) -> Result<Option<Vec<u8>>, Error> {
         self.vdaf_ops
             .handle_get_collection_job(datastore, Arc::clone(&self.task), collection_job_id)
             .await
@@ -3136,9 +3129,8 @@ impl VdafOps {
         &self,
         datastore: &Datastore,
         task: Arc<AggregatorTask>,
-        collection_job_id: &CollectionJobId,
         collection_req_bytes: &[u8],
-    ) -> Result<Vec<u8>, Error> {
+    ) -> Result<CollectionJobId, Error> {
         match task.batch_mode() {
             task::BatchMode::TimeInterval => {
                 vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
@@ -3146,7 +3138,7 @@ impl VdafOps {
                         VERIFY_KEY_LENGTH,
                         TimeInterval,
                         VdafType,
-                    >(datastore, task, Arc::clone(vdaf), collection_job_id, collection_req_bytes)
+                    >(datastore, task, Arc::clone(vdaf),  collection_req_bytes)
                     .await
                 })
             }
@@ -3156,7 +3148,7 @@ impl VdafOps {
                         VERIFY_KEY_LENGTH,
                         LeaderSelected,
                         VdafType,
-                    >(datastore, task, Arc::clone(vdaf), collection_job_id, collection_req_bytes)
+                    >(datastore, task, Arc::clone(vdaf), collection_req_bytes)
                     .await
                 })
             }
@@ -3171,14 +3163,12 @@ impl VdafOps {
         datastore: &Datastore,
         task: Arc<AggregatorTask>,
         vdaf: Arc<A>,
-        collection_job_id: &CollectionJobId,
         req_bytes: &[u8],
-    ) -> Result<Vec<u8>, Error> {
+    ) -> Result<CollectionJobId, Error> {
         let req =
             Arc::new(CollectionJobReq::<B>::get_decoded(req_bytes).map_err(Error::MessageDecode)?);
 
-        Self::handle_create_collection_job_inner(datastore, task, vdaf, collection_job_id, req)
-            .await
+        Self::handle_create_collection_job_inner(datastore, task, vdaf, req).await
     }
 
     #[tracing::instrument(
@@ -3194,9 +3184,8 @@ impl VdafOps {
         datastore: &Datastore,
         task: Arc<AggregatorTask>,
         vdaf: Arc<A>,
-        collection_job_id: &CollectionJobId,
         req: Arc<CollectionJobReq<B>>,
-    ) -> Result<Vec<u8>, Error> {
+    ) -> Result<CollectionJobId, Error> {
         validate_collection_job_extensions(task.id(), req.extensions())?;
 
         let aggregation_param = Arc::new(
@@ -3204,12 +3193,11 @@ impl VdafOps {
                 .map_err(Error::MessageDecode)?,
         );
 
-        datastore
+        let collection_job_id = datastore
             .run_tx("collect", move |tx| {
-                let (task, vdaf, collection_job_id, req, aggregation_param) = (
+                let (task, vdaf, req, aggregation_param) = (
                     Arc::clone(&task),
                     Arc::clone(&vdaf),
-                    *collection_job_id,
                     Arc::clone(&req),
                     Arc::clone(&aggregation_param),
                 );
@@ -3217,23 +3205,25 @@ impl VdafOps {
                     // Check if this collection job already exists, ensuring that all parameters
                     // match.
                     if let Some(collection_job) = tx
-                        .get_collection_job::<SEED_SIZE, B, A>(&vdaf, task.id(), &collection_job_id)
+                        .get_collection_job_by_query::<SEED_SIZE, B, A>(
+                            &vdaf,
+                            task.id(),
+                            req.query(),
+                        )
                         .await?
                     {
-                        if collection_job.query() == req.query()
-                            && collection_job.aggregation_parameter() == aggregation_param.as_ref()
-                        {
+                        if collection_job.aggregation_parameter() == aggregation_param.as_ref() {
                             debug!(
-                                collection_job_id = %collection_job_id,
+                                collection_job_id = %collection_job.id(),
                                 collect_request = ?req,
                                 "collection job already exists"
                             );
-                            return Ok(());
+                            return Ok(*collection_job.id());
                         } else {
                             return Err(datastore::Error::User(
                                 Error::ForbiddenMutation {
                                     resource_type: "collection job",
-                                    identifier: collection_job_id.to_string(),
+                                    identifier: collection_job.id().to_string(),
                                 }
                                 .into(),
                             ));
@@ -3283,6 +3273,8 @@ impl VdafOps {
                         ));
                     }
 
+                    // Generate an ID for the new collection job
+                    let collection_job_id: CollectionJobId = random();
                     tx.put_collection_job(&CollectionJob::<SEED_SIZE, B, A>::new(
                         *task.id(),
                         collection_job_id,
@@ -3294,12 +3286,12 @@ impl VdafOps {
                     ))
                     .await?;
 
-                    Ok(())
+                    Ok(collection_job_id)
                 })
             })
             .await?;
 
-        Ok(vec![0; 0])
+        Ok(collection_job_id)
     }
 
     /// Handle GET requests to the leader's `tasks/{task-id}/collection_jobs/{collection-job-id}`
@@ -3315,7 +3307,7 @@ impl VdafOps {
         datastore: &Datastore,
         task: Arc<AggregatorTask>,
         collection_job_id: &CollectionJobId,
-    ) -> Result<Vec<u8>, Error> {
+    ) -> Result<Option<Vec<u8>>, Error> {
         match task.batch_mode() {
             task::BatchMode::TimeInterval => {
                 vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
@@ -3350,7 +3342,7 @@ impl VdafOps {
         task: Arc<AggregatorTask>,
         vdaf: Arc<A>,
         collection_job_id: &CollectionJobId,
-    ) -> Result<Vec<u8>, Error> {
+    ) -> Result<Option<Vec<u8>>, Error> {
         let collection_job = datastore
             .run_tx("get_collection_job", |tx| {
                 let (task, vdaf, collection_job_id) =
@@ -3375,7 +3367,7 @@ impl VdafOps {
                     task_id = %task.id(),
                     "collection job has not run yet"
                 );
-                Ok(vec![0; 0])
+                Ok(None)
             }
 
             CollectionJobState::Poll => {
@@ -3384,7 +3376,7 @@ impl VdafOps {
                     task_id = %task.id(),
                     "collection job has not completed yet"
                 );
-                Ok(vec![0; 0])
+                Ok(None)
             }
 
             CollectionJobState::Finished {
@@ -3439,6 +3431,7 @@ impl VdafOps {
                     helper_encrypted_agg_share: encrypted_helper_aggregate_share.clone(),
                 }
                 .get_encoded()
+                .map(Some)
                 .map_err(Error::MessageEncode)
             }
 

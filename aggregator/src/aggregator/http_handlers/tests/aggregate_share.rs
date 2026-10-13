@@ -31,6 +31,7 @@ use prio::{
     codec::{Decode, Encode},
     vdaf::dummy,
 };
+use rand::random;
 use serde_json::json;
 use tower::ServiceExt;
 
@@ -1057,9 +1058,7 @@ async fn aggregate_share_request_get_poll_after_put_leader_selected() {
 
     let request = AggregateShareReq::new(
         CollectionJobReq::new(
-            Query::new_leader_selected(
-                janus_messages::batch_mode::LeaderSelectedQueryConfig::default(),
-            ),
+            Query::new_leader_selected(random()),
             aggregation_param.get_encoded().unwrap(),
         ),
         BatchSelector::new_leader_selected(batch_id),
