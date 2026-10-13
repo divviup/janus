@@ -1057,7 +1057,9 @@ async fn aggregate_share_request_get_poll_after_put_leader_selected() {
 
     let request = AggregateShareReq::new(
         CollectionJobReq::new(
-            Query::new_leader_selected(),
+            Query::new_leader_selected(
+                janus_messages::batch_mode::LeaderSelectedQueryConfig::test_default(),
+            ),
             aggregation_param.get_encoded().unwrap(),
         ),
         BatchSelector::new_leader_selected(batch_id),

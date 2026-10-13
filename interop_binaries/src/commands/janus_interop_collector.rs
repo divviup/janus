@@ -437,7 +437,9 @@ async fn handle_collection_start(
                 handle_collect_generic(
                     http_client,
                     task_state,
-                    Query::new_leader_selected(),
+                    Query::new_leader_selected(
+                        janus_messages::batch_mode::LeaderSelectedQueryConfig::test_default(),
+                    ),
                     vdaf,
                     &agg_param,
                     |result| AggregationResult::Number(NumberAsString((*result).into())),
@@ -451,7 +453,9 @@ async fn handle_collection_start(
                 handle_collect_generic(
                     http_client,
                     task_state,
-                    Query::new_leader_selected(),
+                    Query::new_leader_selected(
+                        janus_messages::batch_mode::LeaderSelectedQueryConfig::test_default(),
+                    ),
                     vdaf,
                     &agg_param,
                     |result| AggregationResult::Number(NumberAsString(u128::from(*result))),
@@ -473,7 +477,9 @@ async fn handle_collection_start(
                 handle_collect_generic(
                     http_client,
                     task_state,
-                    Query::new_leader_selected(),
+                    Query::new_leader_selected(
+                        janus_messages::batch_mode::LeaderSelectedQueryConfig::test_default(),
+                    ),
                     vdaf,
                     &agg_param,
                     |result| {
@@ -501,7 +507,9 @@ async fn handle_collection_start(
                 handle_collect_generic(
                     http_client,
                     task_state,
-                    Query::new_leader_selected(),
+                    Query::new_leader_selected(
+                        janus_messages::batch_mode::LeaderSelectedQueryConfig::test_default(),
+                    ),
                     vdaf,
                     &agg_param,
                     |result: &Vec<u64>| {
@@ -530,7 +538,9 @@ async fn handle_collection_start(
                 handle_collect_generic(
                     http_client,
                     task_state,
-                    Query::new_leader_selected(),
+                    Query::new_leader_selected(
+                        janus_messages::batch_mode::LeaderSelectedQueryConfig::test_default(),
+                    ),
                     vdaf,
                     &agg_param,
                     |result| {

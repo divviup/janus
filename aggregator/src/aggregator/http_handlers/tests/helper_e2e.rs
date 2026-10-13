@@ -87,7 +87,9 @@ async fn helper_aggregation_report_share_replay() {
             .updated_with(other_report_1.report_share().metadata().id());
     let agg_share_req_1 = AggregateShareReq::<LeaderSelected>::new(
         CollectionJobReq::new(
-            Query::new_leader_selected(),
+            Query::new_leader_selected(
+                janus_messages::batch_mode::LeaderSelectedQueryConfig::test_default(),
+            ),
             agg_param.get_encoded().unwrap(),
         ),
         BatchSelector::new(batch_id_1),
@@ -97,7 +99,9 @@ async fn helper_aggregation_report_share_replay() {
     let checksum_2 = ReportIdChecksum::for_report_id(other_report_2.report_share().metadata().id());
     let agg_share_req_2 = AggregateShareReq::<LeaderSelected>::new(
         CollectionJobReq::new(
-            Query::new_leader_selected(),
+            Query::new_leader_selected(
+                janus_messages::batch_mode::LeaderSelectedQueryConfig::test_default(),
+            ),
             agg_param.get_encoded().unwrap(),
         ),
         BatchSelector::new(batch_id_2),
