@@ -2,11 +2,14 @@ use async_trait::async_trait;
 use janus_aggregator_core::{
     AsyncAggregator,
     batch_mode::{AccumulableBatchMode, CollectableBatchMode as CoreCollectableBatchMode},
-    datastore::{self, Transaction, models::LeaderStoredReport},
+    datastore::{
+        self, Transaction,
+        models::{CollectionJob, LeaderStoredReport},
+    },
     task::AggregatorTask,
 };
 use janus_messages::{
-    Role,
+    CollectionJobReq, Role,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
 };
 
@@ -73,6 +76,11 @@ impl UploadableBatchMode for LeaderSelected {
 pub trait CollectableBatchMode: CoreCollectableBatchMode + AccumulableBatchMode {
     /// Validates query count for a given batch, per the size checks in
     /// <https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6>.
+    ///
+    /// This method is exclusively used in the Helper's aggregate share handler. Once that moves to
+    /// draft-ietf-ppm-dap-20 style, server selected identifier handling, usage of this method will
+    /// be replaced with calls to a new method aggregate_share_jobs_intersecting_query and this
+    /// method will be deleted.
     async fn validate_query_count<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>>(
         tx: &Transaction<'_>,
         vdaf: &A,
@@ -80,6 +88,24 @@ pub trait CollectableBatchMode: CoreCollectableBatchMode + AccumulableBatchMode 
         batch_identifier: &Self::BatchIdentifier,
         aggregation_param: &A::AggregationParam,
     ) -> Result<(), datastore::Error>;
+
+    /// Find any collection jobs that intersect with the request's query.
+    ///
+    /// For time interval batch mode, multiple collection jobs could have queries that overlap with
+    /// the query's time interval. For leader selected batch mode, the query is a batch ID, so only
+    /// zero or one collection job will ever be returned.
+    async fn collection_jobs_intersecting_query<
+        const SEED_SIZE: usize,
+        A: AsyncAggregator<SEED_SIZE>,
+    >(
+        tx: &Transaction<'_>,
+        vdaf: &A,
+        task: &AggregatorTask,
+        request: &CollectionJobReq<Self>,
+    ) -> Result<
+        impl Iterator<Item = CollectionJob<SEED_SIZE, Self, A>> + Send + Sync,
+        datastore::Error,
+    >;
 }
 
 #[async_trait]
@@ -132,7 +158,7 @@ impl CollectableBatchMode for TimeInterval {
         // Check that all intersecting collect intervals are equal to this collect interval.
         if found_overlapping_nonequal_interval {
             return Err(datastore::Error::User(
-                Error::BatchOverlap(*task.id(), *collect_interval).into(),
+                Error::BatchOverlap(*task.id()).into(),
             ));
         }
 
@@ -150,6 +176,28 @@ impl CollectableBatchMode for TimeInterval {
             ));
         }
         Ok(())
+    }
+
+    async fn collection_jobs_intersecting_query<
+        const SEED_SIZE: usize,
+        A: AsyncAggregator<SEED_SIZE>,
+    >(
+        tx: &Transaction<'_>,
+        vdaf: &A,
+        task: &AggregatorTask,
+        request: &CollectionJobReq<Self>,
+    ) -> Result<
+        impl Iterator<Item = CollectionJob<SEED_SIZE, Self, A>> + Send + Sync,
+        datastore::Error,
+    > {
+        Ok(tx
+            .get_collection_jobs_intersecting_interval::<SEED_SIZE, A>(
+                vdaf,
+                task.id(),
+                request.query().query_body(),
+            )
+            .await?
+            .into_iter())
     }
 }
 
@@ -195,5 +243,23 @@ impl CollectableBatchMode for LeaderSelected {
             ));
         }
         Ok(())
+    }
+
+    async fn collection_jobs_intersecting_query<
+        const SEED_SIZE: usize,
+        A: AsyncAggregator<SEED_SIZE>,
+    >(
+        tx: &Transaction<'_>,
+        vdaf: &A,
+        task: &AggregatorTask,
+        request: &CollectionJobReq<Self>,
+    ) -> Result<
+        impl Iterator<Item = CollectionJob<SEED_SIZE, Self, A>> + Send + Sync,
+        datastore::Error,
+    > {
+        Ok(tx
+            .get_collection_job_by_query(vdaf, task.id(), request.query())
+            .await?
+            .into_iter())
     }
 }
