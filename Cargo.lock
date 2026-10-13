@@ -1428,9 +1428,9 @@ dependencies = [
 
 [[package]]
 name = "divviup-client"
-version = "0.5.5"
+version = "0.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "53c9ba681efd6ebca0a291c7460e2cec922a59de018f7c198809f8f99b28b11f"
+checksum = "7eaeb430cdf6dd79132c024b5a22cfbc917a67f119e4dbd4ff6555f7285da9d3"
 dependencies = [
  "base64 0.23.1",
  "email_address",
@@ -2420,7 +2420,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.4",
  "tokio",
  "tower-service",
  "tracing",
@@ -4422,7 +4422,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.4",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -4459,7 +4459,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.4",
  "tracing",
  "windows-sys 0.60.2",
 ]
