@@ -329,7 +329,9 @@ where
                 requests += 1;
                 let collection_res = collect_generic::<_, LeaderSelected>(
                     &collector,
-                    Query::new_leader_selected(),
+                    Query::new_leader_selected(
+                        janus_messages::batch_mode::LeaderSelectedQueryConfig::default(),
+                    ),
                     aggregation_parameter,
                 )
                 .await;

@@ -1526,7 +1526,12 @@ async fn aggregate_init_partially_replayed_aggregation_init() {
     }
 
     let request = AggregateShareReq::new(
-        CollectionJobReq::new(Query::new_leader_selected(), agg_param.clone()),
+        CollectionJobReq::new(
+            Query::new_leader_selected(
+                janus_messages::batch_mode::LeaderSelectedQueryConfig::default(),
+            ),
+            agg_param.clone(),
+        ),
         BatchSelector::new_leader_selected(batch_id),
         5,
         ReportIdChecksum::from_report_ids(&report_ids),

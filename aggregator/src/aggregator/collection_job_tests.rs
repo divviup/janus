@@ -346,7 +346,9 @@ async fn collection_job_success_leader_selected() {
     let helper_aggregate_share = dummy::AggregateShare(1);
     let aggregation_param = dummy::AggregationParam::default();
     let request = CollectionJobReq::new(
-        Query::new_leader_selected(),
+        Query::new_leader_selected(
+            janus_messages::batch_mode::LeaderSelectedQueryConfig::default(),
+        ),
         aggregation_param.get_encoded().unwrap(),
     );
 
@@ -395,7 +397,10 @@ async fn collection_job_success_leader_selected() {
                             *task.id(),
                             task.task_configuration(),
                             CollectionJobReq::new(
-                                Query::new_leader_selected(),
+                                Query::new_leader_selected(
+                                    janus_messages::batch_mode::LeaderSelectedQueryConfig::default(
+                                    ),
+                                ),
                                 aggregation_param.get_encoded().unwrap(),
                             ),
                         )
@@ -468,7 +473,9 @@ async fn collection_job_success_leader_selected() {
                 *test_case.task.id(),
                 test_case.task.task_configuration(),
                 CollectionJobReq::new(
-                    Query::new_leader_selected(),
+                    Query::new_leader_selected(
+                        janus_messages::batch_mode::LeaderSelectedQueryConfig::default(),
+                    ),
                     aggregation_param.get_encoded().unwrap(),
                 ),
             )
@@ -489,7 +496,9 @@ async fn collection_job_success_leader_selected() {
                 *test_case.task.id(),
                 test_case.task.task_configuration(),
                 CollectionJobReq::new(
-                    Query::new_leader_selected(),
+                    Query::new_leader_selected(
+                        janus_messages::batch_mode::LeaderSelectedQueryConfig::default(),
+                    ),
                     aggregation_param.get_encoded().unwrap(),
                 ),
             )
@@ -710,7 +719,9 @@ async fn collection_job_put_idempotence_leader_selected() {
 
     let collection_job_id = random();
     let request = CollectionJobReq::new(
-        Query::new_leader_selected(),
+        Query::new_leader_selected(
+            janus_messages::batch_mode::LeaderSelectedQueryConfig::default(),
+        ),
         dummy::AggregationParam(0).get_encoded().unwrap(),
     );
     let mut seen_batch_id = None;
@@ -761,7 +772,9 @@ async fn collection_job_put_idempotence_leader_selected_mutate_aggregation_param
 
     let collection_job_id = random();
     let request = CollectionJobReq::new(
-        Query::new_leader_selected(),
+        Query::new_leader_selected(
+            janus_messages::batch_mode::LeaderSelectedQueryConfig::default(),
+        ),
         dummy::AggregationParam(0).get_encoded().unwrap(),
     );
 
@@ -772,7 +785,9 @@ async fn collection_job_put_idempotence_leader_selected_mutate_aggregation_param
     assert_eq!(response.status(), StatusCode::CREATED);
 
     let mutated_request = CollectionJobReq::new(
-        Query::new_leader_selected(),
+        Query::new_leader_selected(
+            janus_messages::batch_mode::LeaderSelectedQueryConfig::default(),
+        ),
         dummy::AggregationParam(1).get_encoded().unwrap(),
     );
 
@@ -790,7 +805,9 @@ async fn collection_job_put_idempotence_leader_selected_no_extra_reports() {
     let collection_job_id_1 = random();
     let collection_job_id_2 = random();
     let request = CollectionJobReq::new(
-        Query::new_leader_selected(),
+        Query::new_leader_selected(
+            janus_messages::batch_mode::LeaderSelectedQueryConfig::default(),
+        ),
         dummy::AggregationParam(0).get_encoded().unwrap(),
     );
 
@@ -839,7 +856,9 @@ async fn collection_job_batch_mode_misaligned() {
     // LeaderSelected != TimeInterval
     let collection_job_id = random();
     let request = CollectionJobReq::new(
-        Query::new_leader_selected(),
+        Query::new_leader_selected(
+            janus_messages::batch_mode::LeaderSelectedQueryConfig::default(),
+        ),
         dummy::AggregationParam(0).get_encoded().unwrap(),
     );
 

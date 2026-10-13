@@ -63,7 +63,7 @@
 //!     .unwrap();
 //!
 //! // Or if this is a leader-selected task, make a leader-selected query.
-//! let query = Query::new_leader_selected();
+//! let query = Query::new_leader_selected(todo!("idempotency key"));
 //! let aggregation_result = collector.collection(query, &()).collect().await.unwrap();
 //! # }
 //! ```
@@ -985,7 +985,7 @@ mod tests {
         AggregateShareAad, BatchConfig, CollectionJobId, CollectionJobReq, CollectionJobResp,
         Duration, HpkeCiphertext, Interval, MediaType, Query, Role, TaskConfiguration,
         TaskExtension, TaskExtensionType, TaskId, Time, TimePrecision, Url as DapUrl, VdafConfig,
-        batch_mode::{LeaderSelected, TimeInterval},
+        batch_mode::{LeaderSelected, LeaderSelectedQueryConfig, TimeInterval},
         problem_type::DapProblemType,
     };
     use mockito::Matcher;
@@ -1088,7 +1088,7 @@ mod tests {
             collector.task_id,
             collector.task_configuration().clone(),
             CollectionJobReq::new(
-                Query::new_leader_selected(),
+                Query::new_leader_selected(LeaderSelectedQueryConfig::default()),
                 aggregation_parameter.get_encoded().unwrap(),
             ),
         );
@@ -1576,7 +1576,10 @@ mod tests {
             .await;
 
         let job = collector
-            .collection(Query::new_leader_selected(), &())
+            .collection(
+                Query::new_leader_selected(LeaderSelectedQueryConfig::default()),
+                &(),
+            )
             .start()
             .await
             .unwrap();
@@ -2252,7 +2255,7 @@ mod tests {
         let collection_job_id = random();
         let collection_job = CollectionJob::new(
             collection_job_id,
-            Query::new_leader_selected(),
+            Query::new_leader_selected(LeaderSelectedQueryConfig::default()),
             dummy::AggregationParam(1),
         );
         let matcher = collection_uri_regex_matcher(&collector.task_id);
@@ -2290,7 +2293,7 @@ mod tests {
         let collection_job_id = random();
         let collection_job = CollectionJob::new(
             collection_job_id,
-            Query::new_leader_selected(),
+            Query::new_leader_selected(LeaderSelectedQueryConfig::default()),
             dummy::AggregationParam(1),
         );
         let matcher = collection_uri_regex_matcher(&collector.task_id);

@@ -433,14 +433,18 @@ mod tests {
 
         let batch_id = BatchId::from([5u8; 32]);
         let collector_request = CollectionJobReq::<LeaderSelected>::new(
-            Query::new_leader_selected(),
+            Query::new_leader_selected(
+                janus_messages::batch_mode::LeaderSelectedQueryConfig::default(),
+            ),
             encoded_aggregation_parameter,
         );
         let leader_job = CollectionJob::<0, LeaderSelected, Vdaf>::new(
             random(),
             random(),
             random(),
-            Query::new_leader_selected(),
+            Query::new_leader_selected(
+                janus_messages::batch_mode::LeaderSelectedQueryConfig::default(),
+            ),
             aggregation_parameter,
             batch_id,
             CollectionJobState::Start,

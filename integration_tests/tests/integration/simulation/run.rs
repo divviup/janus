@@ -455,7 +455,9 @@ impl Simulation {
                 }
             }
             Query::LeaderSelected => {
-                let query = janus_messages::Query::new_leader_selected();
+                let query = janus_messages::Query::new_leader_selected(
+                    janus_messages::batch_mode::LeaderSelectedQueryConfig::default(),
+                );
                 match self
                     .components
                     .collector
