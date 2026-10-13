@@ -4036,7 +4036,9 @@ async fn get_collection_jobs_by_batch_id(ephemeral_datastore: EphemeralDatastore
                 *task.id(),
                 random(),
                 random(),
-                Query::new_leader_selected(),
+                Query::new_leader_selected(
+                    janus_messages::batch_mode::LeaderSelectedQueryConfig::test_default(),
+                ),
                 aggregation_param,
                 random(),
                 CollectionJobState::Start,
@@ -4064,7 +4066,9 @@ async fn get_collection_jobs_by_batch_id(ephemeral_datastore: EphemeralDatastore
                 *task.id(),
                 random(),
                 random(),
-                Query::new_leader_selected(),
+                Query::new_leader_selected(
+                    janus_messages::batch_mode::LeaderSelectedQueryConfig::test_default(),
+                ),
                 aggregation_param,
                 random(),
                 CollectionJobState::Start,
@@ -4309,7 +4313,9 @@ impl TestBatchModeExt for TimeInterval {
 #[async_trait]
 impl TestBatchModeExt for LeaderSelected {
     fn query_for_batch_identifier(_: &Self::BatchIdentifier) -> Query<Self> {
-        Query::new_leader_selected()
+        Query::new_leader_selected(
+            janus_messages::batch_mode::LeaderSelectedQueryConfig::test_default(),
+        )
     }
 
     fn batch_identifier_for_client_timestamps(_: &[Time]) -> Self::BatchIdentifier {
@@ -6443,7 +6449,9 @@ async fn roundtrip_aggregate_share_job_leader_selected(ephemeral_datastore: Ephe
                     10,
                     ReportIdChecksum::get_decoded(&[1; 32]).unwrap(),
                     CollectionJobReq::new(
-                        Query::new_leader_selected(),
+                        Query::new_leader_selected(
+                            janus_messages::batch_mode::LeaderSelectedQueryConfig::test_default(),
+                        ),
                         dummy::AggregationParam(11).get_encoded().unwrap(),
                     )
                     .with_extensions(Vec::from([CollectionJobExtension::new(

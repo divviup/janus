@@ -496,7 +496,9 @@ macro_rules! options_query_dispatch {
                 $body
             }
             ResolvedQuery::LeaderSelected => {
-                let $query = Query::new_leader_selected();
+                let $query = Query::new_leader_selected(
+                    janus_messages::batch_mode::LeaderSelectedQueryConfig::test_default(),
+                );
                 $body
             }
         }
