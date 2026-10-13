@@ -38,6 +38,8 @@ pub use task::TaskConfigurationBuilder;
 pub use task::{BatchConfig, TaskConfiguration, TaskExtension, TaskExtensionType, VdafConfig};
 pub use time::{Duration, Interval, Time, TimePrecision};
 
+use crate::batch_mode::LeaderSelectedQueryConfig;
+
 pub mod batch_mode;
 pub mod problem_type;
 pub mod task;
@@ -1707,8 +1709,8 @@ impl Query<TimeInterval> {
 
 impl Query<LeaderSelected> {
     /// Constructs a new query for a leader-selected task.
-    pub fn new_leader_selected() -> Self {
-        Self::new(())
+    pub fn new_leader_selected(idempotency_key: LeaderSelectedQueryConfig) -> Self {
+        Self::new(idempotency_key)
     }
 }
 
