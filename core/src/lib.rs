@@ -10,6 +10,7 @@ pub mod cli;
 pub mod dp;
 pub mod hpke;
 pub mod http;
+pub mod messages;
 pub mod report_id;
 pub mod retries;
 pub mod task_config;

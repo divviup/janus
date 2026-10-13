@@ -196,7 +196,7 @@ mod tests {
     use janus_messages::{
         AggregationJobStep, CollectionJobReq, Duration, HpkeCiphertext, HpkeConfigId, Interval,
         Query, ReportIdChecksum, ReportMetadata, ReportShare, Role, TimePrecision,
-        batch_mode::{LeaderSelected, LeaderSelectedQueryConfig, TimeInterval},
+        batch_mode::{LeaderSelected, TimeInterval},
     };
     use prio::{codec::Encode, vdaf::dummy};
     use rand::random;
@@ -677,9 +677,7 @@ mod tests {
                         *task.id(),
                         random(),
                         random(),
-                        Query::new_leader_selected(
-                            janus_messages::batch_mode::LeaderSelectedQueryConfig::test_default(),
-                        ),
+                        Query::new_leader_selected(random()),
                         dummy::AggregationParam(0),
                         batch_id,
                         CollectionJobState::Start,
@@ -895,9 +893,7 @@ mod tests {
                             0,
                             ReportIdChecksum::default(),
                             CollectionJobReq::new(
-                                Query::new_leader_selected(
-                                    LeaderSelectedQueryConfig::test_default(),
-                                ),
+                                Query::new_leader_selected(random()),
                                 dummy::AggregationParam(0).get_encoded().unwrap(),
                             ),
                         ),

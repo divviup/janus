@@ -4,9 +4,9 @@ use std::{
 };
 
 use anyhow::{Context, anyhow};
-use http::{StatusCode, header::RETRY_AFTER};
+use http::{HeaderName, StatusCode, header::RETRY_AFTER};
 use http_api_problem::{HttpApiProblem, PROBLEM_JSON_MEDIA_TYPE};
-use janus_messages::{MediaType, problem_type::DapProblemType};
+use janus_messages::{CollectionJobId, MediaType, TaskId, problem_type::DapProblemType};
 use mime::Mime;
 use reqwest::{Response, header::CONTENT_TYPE};
 use retry_after::RetryAfter;
@@ -218,6 +218,14 @@ impl ReqwestAuthenticationToken for reqwest::RequestBuilder {
             .expect("auth token should produce a valid header");
         self.header(header, value)
     }
+}
+
+/// Construct an HTTP Location header for the collection job.
+pub fn collection_job_location(task_id: &TaskId, job_id: &CollectionJobId) -> (HeaderName, String) {
+    (
+        http::header::LOCATION,
+        format!("/tasks/{task_id}/collection_jobs/{job_id}"),
+    )
 }
 
 #[cfg(test)]

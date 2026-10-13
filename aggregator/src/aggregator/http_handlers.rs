@@ -6,7 +6,7 @@ use axum::{
     extract::{FromRequestParts, Path, State as AxumState},
     middleware,
     response::{IntoResponse, Response},
-    routing::{post, put},
+    routing::{get, post, put},
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use bytes::Bytes;
@@ -24,7 +24,7 @@ use janus_aggregator_core::{
 use janus_core::{
     Runtime,
     auth_tokens::{AuthenticationToken, DAP_AUTH_HEADER},
-    http::{check_content_type, extract_bearer_token},
+    http::{check_content_type, collection_job_location, extract_bearer_token},
     taskprov::TASKPROV_HEADER,
 };
 use janus_messages::{
@@ -157,7 +157,7 @@ impl Error {
                     .with_task_id(task_id)
                     .into_response()
             }
-            Error::BatchOverlap(task_id, _) => {
+            Error::BatchOverlap(task_id) => {
                 ProblemDocument::new_dap(DapProblemType::BatchOverlap)
                     .with_task_id(task_id)
                     .into_response()
@@ -318,7 +318,7 @@ impl<T: Encode> IntoResponse for EncodedBody<T> {
 /// An empty body with retry-after and location headers.
 #[derive(Clone)]
 struct EmptyBody {
-    location: String,
+    location: (HeaderName, String),
 }
 
 impl EmptyBody {
@@ -330,7 +330,17 @@ impl EmptyBody {
         step: u16,
     ) -> Self {
         Self {
-            location: format!("/tasks/{task_id}/aggregation_jobs/{aggregation_job_id}?step={step}"),
+            location: (
+                http::header::LOCATION,
+                format!("/tasks/{task_id}/aggregation_jobs/{aggregation_job_id}?step={step}"),
+            ),
+        }
+    }
+
+    /// Construct an `EmptyBody` for a collection job.
+    fn for_collection_job(task_id: &TaskId, collection_job_id: &CollectionJobId) -> Self {
+        Self {
+            location: collection_job_location(task_id, collection_job_id),
         }
     }
 }
@@ -342,7 +352,7 @@ impl IntoResponse for EmptyBody {
             [
                 // TODO(#3921): make Retry-After configurable instead of hardcoding.
                 (http::header::RETRY_AFTER, "2".to_string()),
-                (http::header::LOCATION, self.location),
+                self.location,
             ],
         )
             .into_response()
@@ -351,8 +361,6 @@ impl IntoResponse for EmptyBody {
 
 pub(crate) static AGGREGATION_JOB_ROUTE: &str =
     "/tasks/{task_id}/aggregation_jobs/{aggregation_job_id}";
-pub(crate) static COLLECTION_JOB_ROUTE: &str =
-    "/tasks/{task_id}/collection_jobs/{collection_job_id}";
 pub(crate) static AGGREGATE_SHARES_ROUTE: &str =
     "/tasks/{task_id}/aggregate_shares/{aggregate_share_id}";
 
@@ -585,10 +593,12 @@ impl<'a> AggregatorHandlerBuilder<'a> {
             )
             .merge(aggregation_job_routes)
             .route(
-                COLLECTION_JOB_ROUTE,
-                put(collection_jobs_put)
-                    .get(collection_jobs_get)
-                    .delete(collection_jobs_delete),
+                "/tasks/{task_id}/collection_jobs",
+                post(collection_jobs_post),
+            )
+            .route(
+                "/tasks/{task_id}/collection_jobs/{collection_job_id}",
+                get(collection_jobs_get).delete(collection_jobs_delete),
             )
             .route(
                 AGGREGATE_SHARES_ROUTE,
@@ -874,29 +884,38 @@ async fn aggregation_jobs_delete(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Axum handler for the "/tasks/.../collection_jobs/..." PUT endpoint.
-async fn collection_jobs_put(
+/// Axum handler for the "/tasks/.../collection_jobs" POST endpoint.
+async fn collection_jobs_post(
     headers: HeaderMap,
-    path: CollectionJobPath,
+    Path(task_id): Path<String>,
     AxumState(aggregator): AxumState<Arc<Aggregator>>,
     body: Bytes,
 ) -> Result<Response, Error> {
     validate_content_type_headers::<CollectionJobReq<TimeInterval>>(&headers)?;
 
-    let auth_token = parse_auth_token_from_headers(&path.task_id, &headers)?;
-    let response_bytes = aggregator
-        .handle_create_collection_job(&path.task_id, &path.collection_job_id, &body, auth_token)
+    let task_id: TaskId = task_id
+        .parse()
+        .map_err(|_| Error::BadRequest("invalid TaskId".into()))?;
+
+    let auth_token = parse_auth_token_from_headers(&task_id, &headers)?;
+    let (collection_job_id, collection_job_resp) = aggregator
+        .handle_create_collection_job(&task_id, &body, auth_token)
         .await?;
 
-    Ok((
-        StatusCode::CREATED,
-        [(
-            CONTENT_TYPE,
-            HeaderValue::from_static(CollectionJobResp::MEDIA_TYPE),
-        )],
-        response_bytes,
-    )
-        .into_response())
+    let resp = match collection_job_resp {
+        Some(response_bytes) => (
+            StatusCode::OK,
+            [
+                (CONTENT_TYPE, CollectionJobResp::MEDIA_TYPE.to_owned()),
+                collection_job_location(&task_id, &collection_job_id),
+            ],
+            response_bytes,
+        )
+            .into_response(),
+        None => EmptyBody::for_collection_job(&task_id, &collection_job_id).into_response(),
+    };
+
+    Ok(resp)
 }
 
 /// Axum handler for the "/tasks/.../collection_jobs/..." GET endpoint.
@@ -906,19 +925,24 @@ async fn collection_jobs_get(
     AxumState(aggregator): AxumState<Arc<Aggregator>>,
 ) -> Result<Response, Error> {
     let auth_token = parse_auth_token_from_headers(&path.task_id, &headers)?;
-    let response_bytes = aggregator
+    let resp = match aggregator
         .handle_get_collection_job(&path.task_id, &path.collection_job_id, auth_token)
-        .await?;
-
-    Ok((
-        StatusCode::OK,
-        [(
-            CONTENT_TYPE,
-            HeaderValue::from_static(CollectionJobResp::MEDIA_TYPE),
-        )],
-        response_bytes,
-    )
-        .into_response())
+        .await?
+    {
+        Some(response_bytes) => (
+            StatusCode::OK,
+            [(
+                CONTENT_TYPE,
+                HeaderValue::from_static(CollectionJobResp::MEDIA_TYPE),
+            )],
+            response_bytes,
+        )
+            .into_response(),
+        None => {
+            EmptyBody::for_collection_job(&path.task_id, &path.collection_job_id).into_response()
+        }
+    };
+    Ok(resp)
 }
 
 /// Axum handler for the "/tasks/.../collection_jobs/..." DELETE endpoint.

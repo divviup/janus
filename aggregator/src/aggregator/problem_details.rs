@@ -301,18 +301,7 @@ mod tests {
                 )
                 .expect_task_id(),
                 TestCase::new(
-                    Box::new(|| {
-                        Error::BatchOverlap(
-                            random(),
-                            Interval::new(
-                                RealClock::default()
-                                    .now()
-                                    .to_time(&TimePrecision::from_seconds(1)),
-                                Duration::from_seconds(3600, &TimePrecision::from_seconds(1)),
-                            )
-                            .unwrap(),
-                        )
-                    }),
+                    Box::new(|| Error::BatchOverlap(random())),
                     Some(DapProblemType::BatchOverlap),
                 )
                 .expect_task_id(),
