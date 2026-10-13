@@ -1,6 +1,8 @@
 use chrono::TimeDelta;
 use janus_aggregator_core::task::AggregationMode;
-use janus_messages::{CollectionJobId, Duration, Interval, Time, TimePrecision};
+use janus_messages::{
+    Duration, Interval, Time, TimePrecision, batch_mode::LeaderSelectedQueryConfig,
+};
 
 #[derive(Debug, Clone)]
 pub(super) struct Input {
@@ -121,21 +123,22 @@ pub(super) enum Op {
     /// Forward all requests, but drop the responses, and return some sort of error.
     CollectionJobDriverResponseError,
 
-    /// The collector sends a collection request to the leader. It remembers the collection job ID.
-    CollectorStart {
-        collection_job_id: CollectionJobId,
-        query: Query,
-    },
+    /// The collector sends a collection request to the leader.
+    ///
+    /// It remembers a mapping of queries to the collection job IDs.
+    CollectorStart { query: Query },
 
     /// The collector sends a request to the leader to poll an existing collection job.
-    CollectorPoll { collection_job_id: CollectionJobId },
+    ///
+    /// The collection job matching the query is looked up in the collector state.
+    CollectorPoll { query: Query },
 }
 
 /// Representation of a DAP query used in a collection job.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) enum Query {
     /// A time interval query, parameterized with a batch interval.
     TimeInterval(Interval),
     /// A leader-selected query.
-    LeaderSelected,
+    LeaderSelected(LeaderSelectedQueryConfig),
 }

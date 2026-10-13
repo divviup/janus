@@ -150,16 +150,11 @@ impl Simulation {
                                 .execute_collection_job_driver_response_error()
                                 .await
                         }
-                        Op::CollectorStart {
-                            collection_job_id,
-                            query,
-                        } => {
-                            simulation
-                                .execute_collector_start(collection_job_id, query)
-                                .await
+                        Op::CollectorStart { query } => {
+                            simulation.execute_collector_start(query).await
                         }
-                        Op::CollectorPoll { collection_job_id } => {
-                            simulation.execute_collector_poll(collection_job_id).await
+                        Op::CollectorPoll { query } => {
+                            simulation.execute_collector_poll(query).await
                         }
                     };
                     info!(elapsed = ?start.elapsed(), "finished operation");
@@ -430,44 +425,39 @@ impl Simulation {
         result
     }
 
-    async fn execute_collector_start(
-        &mut self,
-        collection_job_id: &CollectionJobId,
-        query: &Query,
-    ) -> ControlFlow<TestResult> {
+    async fn execute_collector_start(&mut self, query: &Query) -> ControlFlow<TestResult> {
         match query {
             Query::TimeInterval(interval) => {
-                let query = janus_messages::Query::new_time_interval(*interval);
                 match self
                     .components
                     .collector
-                    .collection(query, &())
-                    .with_id(*collection_job_id)
+                    .collection(janus_messages::Query::new_time_interval(*interval), &())
                     .start()
                     .await
                 {
                     Ok(collection_job) => {
                         self.state
                             .collection_jobs_time_interval
-                            .insert(*collection_job_id, collection_job);
+                            .insert(query.clone(), collection_job);
                     }
                     Err(error) => info!(?error, "collector error"),
                 }
             }
-            Query::LeaderSelected => {
-                let query = janus_messages::Query::new_leader_selected();
+            Query::LeaderSelected(idempotency_key) => {
                 match self
                     .components
                     .collector
-                    .collection(query, &())
-                    .with_id(*collection_job_id)
+                    .collection(
+                        janus_messages::Query::new_leader_selected(idempotency_key.clone()),
+                        &(),
+                    )
                     .start()
                     .await
                 {
                     Ok(collection_job) => {
                         self.state
                             .collection_jobs_leader_selected
-                            .insert(*collection_job_id, collection_job);
+                            .insert(query.clone(), collection_job);
                     }
                     Err(error) => info!(?error, "collector error"),
                 }
@@ -476,15 +466,8 @@ impl Simulation {
         ControlFlow::Continue(())
     }
 
-    async fn execute_collector_poll(
-        &mut self,
-        collection_job_id: &CollectionJobId,
-    ) -> ControlFlow<TestResult> {
-        if let Some(collection_job) = self
-            .state
-            .collection_jobs_time_interval
-            .get(collection_job_id)
-        {
+    async fn execute_collector_poll(&mut self, query: &Query) -> ControlFlow<TestResult> {
+        if let Some(collection_job) = self.state.collection_jobs_time_interval.get(query) {
             let result = self.components.collector.poll_once(collection_job).await;
             match result {
                 Ok(PollResult::CollectionResult(collection)) => {
@@ -494,7 +477,7 @@ impl Simulation {
                     let old_opt = self
                         .state
                         .aggregate_results_time_interval
-                        .insert(*collection_job_id, collection);
+                        .insert(*collection_job.collection_job_id(), collection);
                     if let Some(old_collection) = old_opt {
                         if report_count != old_collection.report_count()
                             || &interval != old_collection.interval()
@@ -508,11 +491,7 @@ impl Simulation {
                 Ok(PollResult::NotReady(_)) => {}
                 Err(error) => info!(?error, "collector error"),
             }
-        } else if let Some(collection_job) = self
-            .state
-            .collection_jobs_leader_selected
-            .get(collection_job_id)
-        {
+        } else if let Some(collection_job) = self.state.collection_jobs_leader_selected.get(query) {
             let result = self.components.collector.poll_once(collection_job).await;
             match result {
                 Ok(PollResult::CollectionResult(collection)) => {
@@ -522,7 +501,7 @@ impl Simulation {
                     let old_opt = self
                         .state
                         .aggregate_results_leader_selected
-                        .insert(*collection_job_id, collection);
+                        .insert(*collection_job.collection_job_id(), collection);
                     if let Some(old_collection) = old_opt {
                         if report_count != old_collection.report_count()
                             || &interval != old_collection.interval()
@@ -566,10 +545,8 @@ pub(super) struct State {
     pub(super) runtime_manager: TestRuntimeManager<&'static str>,
     pub(super) vdaf_instance: VdafInstance,
     pub(super) vdaf: Prio3Histogram,
-    pub(super) collection_jobs_time_interval:
-        HashMap<CollectionJobId, CollectionJob<(), TimeInterval>>,
-    pub(super) collection_jobs_leader_selected:
-        HashMap<CollectionJobId, CollectionJob<(), LeaderSelected>>,
+    pub(super) collection_jobs_time_interval: HashMap<Query, CollectionJob<(), TimeInterval>>,
+    pub(super) collection_jobs_leader_selected: HashMap<Query, CollectionJob<(), LeaderSelected>>,
     pub(super) aggregate_results_time_interval: HashMap<CollectionJobId, Collection<Vec<u128>>>,
     pub(super) aggregate_results_leader_selected: HashMap<CollectionJobId, Collection<Vec<u128>>>,
     pub(super) next_measurement: usize,

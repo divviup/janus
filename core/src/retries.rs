@@ -1,11 +1,12 @@
 //! Provides a simple interface for retrying fallible HTTP requests.
 
-use std::{error::Error as StdError, time::Duration};
+use std::{error::Error as StdError, str::FromStr, time::Duration};
 
 use backon::{Backoff, BackoffBuilder, ExponentialBackoff, ExponentialBuilder, Retryable};
 use bytes::Bytes;
 use futures::Future;
-use http::HeaderMap;
+use http::{HeaderMap, HeaderValue};
+use janus_messages::{CollectionJobId, TaskId};
 use reqwest::StatusCode;
 use tracing::{debug, warn};
 
@@ -133,6 +134,87 @@ impl HttpResponse {
     /// Returns the body of the HTTP response.
     pub fn body(&self) -> &Bytes {
         &self.body
+    }
+}
+
+/// Errors from handling `HeaderMap`.
+#[derive(Debug, thiserror::Error)]
+pub enum HeaderMapExtError {
+    /// An HTTP location header was malformed.
+    #[error("malformed location header {1:?}: {0}")]
+    MalformedLocationHeader(&'static str, HeaderValue),
+    /// Response contains multiple HTTP location headers.
+    #[error("multiple location headers in response")]
+    MultipleLocationHeaders,
+    /// Error from `janus_messages` crate.
+    #[error("{0}: {1}")]
+    Messages(&'static str, janus_messages::Error),
+}
+
+/// Extension trait for [`HeaderMap`].
+pub trait HeaderMapExt {
+    /// Parse task and collection job ID from HTTP "Location" header.
+    ///
+    /// Returns `Ok(None)` if the header is absent, or an error if the header is present but
+    /// malformed.
+    fn ids_from_collection_job_location(
+        &self,
+    ) -> Result<Option<(TaskId, CollectionJobId)>, HeaderMapExtError>;
+}
+
+impl HeaderMapExt for HeaderMap {
+    fn ids_from_collection_job_location(
+        &self,
+    ) -> Result<Option<(TaskId, CollectionJobId)>, HeaderMapExtError> {
+        let mut location_headers = self.get_all(http::header::LOCATION).iter();
+        let location_header = match location_headers.next() {
+            Some(l) => l,
+            None => return Ok(None),
+        };
+
+        if !location_headers.next().is_none() {
+            return Err(HeaderMapExtError::MultipleLocationHeaders);
+        }
+
+        let location = location_header.to_str().map_err(|_| {
+            HeaderMapExtError::MalformedLocationHeader(
+                "location header contains unprintable characters",
+                location_header.clone(),
+            )
+        })?;
+
+        let mut components = location.split("/").collect::<Vec<_>>().into_iter().rev();
+
+        let mut next_component = || {
+            components
+                .next()
+                .ok_or(HeaderMapExtError::MalformedLocationHeader(
+                    "insufficient path components in location header",
+                    location_header.clone(),
+                ))
+        };
+
+        let collection_job_id = CollectionJobId::from_str(next_component()?)
+            .map_err(|e| HeaderMapExtError::Messages("malformed collection job ID", e))?;
+
+        if !next_component()?.eq("collection_jobs") {
+            return Err(HeaderMapExtError::MalformedLocationHeader(
+                "location header missing collection_jobs component",
+                location_header.clone(),
+            ));
+        }
+
+        let task_id = TaskId::from_str(next_component()?)
+            .map_err(|e| HeaderMapExtError::Messages("malformed task ID", e))?;
+
+        if !next_component()?.eq("tasks") {
+            return Err(HeaderMapExtError::MalformedLocationHeader(
+                "location header missing tasks component",
+                location_header.clone(),
+            ));
+        }
+
+        Ok(Some((task_id, collection_job_id)))
     }
 }
 
@@ -346,10 +428,12 @@ pub mod test_util {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{assert_matches, str::FromStr, time::Duration};
 
     use backon::BackoffBuilder;
+    use http::{HeaderMap, HeaderName, HeaderValue};
     use http_api_problem::PROBLEM_JSON_MEDIA_TYPE;
+    use janus_messages::{CollectionJobId, TaskId};
     use reqwest::StatusCode;
     use tokio::net::TcpListener;
     use url::Url;
@@ -357,8 +441,8 @@ mod tests {
     use crate::{
         initialize_rustls,
         retries::{
-            ExponentialWithTotalDelayBuilder, retry_http_request, retry_http_request_notify,
-            test_util::LimitedRetryer,
+            ExponentialWithTotalDelayBuilder, HeaderMapExt, HeaderMapExtError, retry_http_request,
+            retry_http_request_notify, test_util::LimitedRetryer,
         },
         test_util::install_test_trace_subscriber,
     };
@@ -694,5 +778,104 @@ mod tests {
         assert_eq!(no_deadline.next(), Some(Duration::from_nanos(30)));
         // Going to hit the max_times
         assert_eq!(no_deadline.next(), None);
+    }
+
+    #[test]
+    fn collection_job_ids_from_location_header() {
+        const COLLECTION_JOB_PATH: &str = "/tasks/ii_NZYRUHjMI9YCQMmD2ZJNUpLiVz1KHEg-ANpWWnG4/collection_jobs/_Ruk_njErWlidLK2YtFxPA";
+        let task_id = TaskId::from_str("ii_NZYRUHjMI9YCQMmD2ZJNUpLiVz1KHEg-ANpWWnG4").unwrap();
+        let collection_job_id = CollectionJobId::from_str("_Ruk_njErWlidLK2YtFxPA").unwrap();
+
+        let header_map = |h: &[(HeaderName, &'static str)]| {
+            let map: HeaderMap<HeaderValue> = HeaderMap::from_iter(
+                h.iter()
+                    .map(|(k, v)| (k.clone(), HeaderValue::from_static(v))),
+            );
+            map
+        };
+
+        // Valid location header
+        assert_eq!(
+            header_map(&[(http::header::LOCATION, COLLECTION_JOB_PATH)])
+                .ids_from_collection_job_location()
+                .unwrap()
+                .unwrap(),
+            (task_id, collection_job_id),
+        );
+
+        // Valid location header with prefix
+        assert_eq!(
+            header_map(&[(
+                http::header::LOCATION,
+                "/some/path/prefix/tasks/ii_NZYRUHjMI9YCQMmD2ZJNUpLiVz1KHEg-ANpWWnG4/collection_jobs/_Ruk_njErWlidLK2YtFxPA",
+            )])
+            .ids_from_collection_job_location()
+            .unwrap()
+            .unwrap(),
+            (task_id, collection_job_id),
+        );
+
+        // Two valid location headers
+        assert_matches!(
+            header_map(&[
+                (http::header::LOCATION, COLLECTION_JOB_PATH),
+                (http::header::LOCATION, COLLECTION_JOB_PATH),
+            ])
+            .ids_from_collection_job_location()
+            .unwrap_err(),
+            HeaderMapExtError::MultipleLocationHeaders,
+        );
+
+        // No location header
+        assert!(
+            header_map(&[(http::header::RETRY_AFTER, COLLECTION_JOB_PATH)])
+                .ids_from_collection_job_location()
+                .unwrap()
+                .is_none(),
+        );
+
+        // Insufficient path components
+        for missing_component in [
+            "/ii_NZYRUHjMI9YCQMmD2ZJNUpLiVz1KHEg-ANpWWnG4/collection_jobs/_Ruk_njErWlidLK2YtFxPA",
+            "/collection_jobs/_Ruk_njErWlidLK2YtFxPA",
+            "/_Ruk_njErWlidLK2YtFxPA",
+        ] {
+            header_map(&[(http::header::LOCATION, missing_component)])
+                .ids_from_collection_job_location()
+                .expect_err(missing_component);
+        }
+
+        // Malformed collection job ID
+        assert_matches!(
+            header_map(&[(
+                http::header::LOCATION,
+                "/tasks/ii_NZYRUHjMI9YCQMmD2ZJNUpLiVz1KHEg-ANpWWnG4/collection_jobs/TooShort"
+            )])
+            .ids_from_collection_job_location()
+            .unwrap_err(),
+            HeaderMapExtError::Messages(..)
+        );
+
+        // Malformed middle component
+        assert_matches!(
+            header_map(&[(
+                http::header::LOCATION,
+                "/tasks/ii_NZYRUHjMI9YCQMmD2ZJNUpLiVz1KHEg-ANpWWnG4/malformed/_Ruk_njErWlidLK2YtFxPA"
+            )])
+            .ids_from_collection_job_location()
+            .unwrap_err(),
+            HeaderMapExtError::MalformedLocationHeader(..)
+        );
+
+        // Malformed task ID
+        assert_matches!(
+            header_map(&[(
+                http::header::LOCATION,
+                "/tasks/TooShort/collection_jobs/_Ruk_njErWlidLK2YtFxPA"
+            )])
+            .ids_from_collection_job_location()
+            .unwrap_err(),
+            HeaderMapExtError::Messages(..)
+        );
     }
 }

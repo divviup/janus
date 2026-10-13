@@ -1,6 +1,7 @@
 use crate::{
     BatchId, Duration, Interval, LeaderSelected, Query, TaskId, Time, TimeInterval, TimePrecision,
-    batch_mode, roundtrip_encoding,
+    batch_mode::{self, LeaderSelectedQueryConfig},
+    roundtrip_encoding,
 };
 
 const TEST_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(1);
@@ -70,11 +71,15 @@ fn roundtrip_query() {
 
     // LeaderSelected.
     roundtrip_encoding(&[(
-        Query::<LeaderSelected> { query_body: () },
+        Query::<LeaderSelected> {
+            query_body: LeaderSelectedQueryConfig::default(),
+        },
         concat!(
             "02",   // batch_mode
-            "0000", // length
-            "",     // opaque data
+            "0018", // opaque query body length
+            "17",   // idempotency key length
+            // opaque data
+            "64656661756C74206964656D706F74656E6379206B6579",
         ),
     )])
 }

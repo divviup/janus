@@ -5,7 +5,8 @@ use crate::{
     AggregateShare, AggregateShareAad, AggregateShareReq, BatchId, BatchSelector,
     CollectionJobExtension, CollectionJobExtensionType, CollectionJobReq, CollectionJobResp,
     Duration, HpkeCiphertext, HpkeConfigId, Interval, LeaderSelected, Query, ReportIdChecksum,
-    TaskId, Time, TimeInterval, TimePrecision, roundtrip_encoding,
+    TaskId, Time, TimeInterval, TimePrecision, batch_mode::LeaderSelectedQueryConfig,
+    roundtrip_encoding,
 };
 
 const TEST_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(1);
@@ -82,15 +83,20 @@ fn roundtrip_collection_job_req() {
     roundtrip_encoding(&[
         (
             CollectionJobReq::<LeaderSelected> {
-                query: Query { query_body: () },
+                query: Query {
+                    query_body: LeaderSelectedQueryConfig::default(),
+                },
                 aggregation_parameter: Vec::new(),
                 extensions: Vec::new(),
             },
             concat!(
+                // query
                 concat!(
                     "02",   // batch_mode
-                    "0000", // length
-                    "",     // opaque data
+                    "0018", // opaque query body length
+                    "17",   // idempotency key length
+                    // opaque data
+                    "64656661756C74206964656D706F74656E6379206B6579",
                 ),
                 concat!(
                     // aggregation_parameter
@@ -102,15 +108,20 @@ fn roundtrip_collection_job_req() {
         ),
         (
             CollectionJobReq::<LeaderSelected> {
-                query: Query { query_body: () },
+                query: Query {
+                    query_body: LeaderSelectedQueryConfig::default(),
+                },
                 aggregation_parameter: Vec::from("012345"),
                 extensions: Vec::new(),
             },
             concat!(
+                // query
                 concat!(
                     "02",   // batch_mode
-                    "0000", // length
-                    "",     // opaque data
+                    "0018", // opaque query body length
+                    "17",   // idempotency key length
+                    // opaque data
+                    "64656661756C74206964656D706F74656E6379206B6579",
                 ),
                 concat!(
                     // aggregation_parameter
@@ -123,7 +134,9 @@ fn roundtrip_collection_job_req() {
         (
             // Two extensions, in strictly increasing order of extension_type.
             CollectionJobReq::<LeaderSelected> {
-                query: Query { query_body: () },
+                query: Query {
+                    query_body: LeaderSelectedQueryConfig::default(),
+                },
                 aggregation_parameter: Vec::new(),
                 extensions: Vec::from([
                     CollectionJobExtension::new(CollectionJobExtensionType::Reserved, Vec::new()),
@@ -134,10 +147,13 @@ fn roundtrip_collection_job_req() {
                 ]),
             },
             concat!(
+                // query
                 concat!(
                     "02",   // batch_mode
-                    "0000", // length
-                    "",     // opaque data
+                    "0018", // opaque query body length
+                    "17",   // idempotency key length
+                    // opaque data
+                    "64656661756C74206964656D706F74656E6379206B6579",
                 ),
                 concat!(
                     // aggregation_parameter
@@ -168,9 +184,13 @@ fn collection_job_req_decode_is_lenient_about_extension_order() {
     // Unsorted extension_types (0x0002 before 0x0001) must still decode; ordering is enforced by
     // the Leader, not here.
     let encoded = hex::decode(concat!(
+        // query
         concat!(
-            "02",   // batch_mode (LeaderSelected)
-            "0000", // length
+            "02",   // batch_mode
+            "0018", // opaque query body length
+            "17",   // idempotency key length
+            // opaque data
+            "64656661756C74206964656D706F74656E6379206B6579",
         ),
         "00000000", // aggregation_parameter length
         concat!(
@@ -497,7 +517,9 @@ fn roundtrip_aggregate_share_req() {
         (
             AggregateShareReq::<LeaderSelected> {
                 collection_job_req: CollectionJobReq {
-                    query: Query { query_body: () },
+                    query: Query {
+                        query_body: LeaderSelectedQueryConfig::default(),
+                    },
                     aggregation_parameter: Vec::new(),
                     extensions: Vec::new(),
                 },
@@ -508,12 +530,15 @@ fn roundtrip_aggregate_share_req() {
                 checksum: ReportIdChecksum::get_decoded(&[u8::MIN; 32]).unwrap(),
             },
             concat!(
+                // collection_job_req
                 concat!(
-                    // collection_job_req
+                    // query
                     concat!(
-                        // query
                         "02",   // batch_mode
-                        "0000", // length (empty body)
+                        "0018", // opaque query body length
+                        "17",   // idempotency key length
+                        // opaque data
+                        "64656661756C74206964656D706F74656E6379206B6579",
                     ),
                     concat!(
                         // aggregation_parameter
@@ -536,7 +561,9 @@ fn roundtrip_aggregate_share_req() {
         (
             AggregateShareReq::<LeaderSelected> {
                 collection_job_req: CollectionJobReq {
-                    query: Query { query_body: () },
+                    query: Query {
+                        query_body: LeaderSelectedQueryConfig::default(),
+                    },
                     aggregation_parameter: Vec::from("012345"),
                     extensions: Vec::new(),
                 },
@@ -547,12 +574,15 @@ fn roundtrip_aggregate_share_req() {
                 checksum: ReportIdChecksum::get_decoded(&[u8::MAX; 32]).unwrap(),
             },
             concat!(
+                // collection_job_req
                 concat!(
-                    // collection_job_req
+                    // query
                     concat!(
-                        // query
                         "02",   // batch_mode
-                        "0000", // length (empty body)
+                        "0018", // opaque query body length
+                        "17",   // idempotency key length
+                        // opaque data
+                        "64656661756C74206964656D706F74656E6379206B6579",
                     ),
                     concat!(
                         // aggregation_parameter
@@ -681,10 +711,13 @@ fn roundtrip_aggregate_share_aad() {
         task_configuration_hex!(),
         // collection_job_req
         concat!(
+            // query
             concat!(
-                // query
                 "02",   // batch_mode
-                "0000", // length (empty body)
+                "0018", // opaque query body length
+                "17",   // idempotency key length
+                // opaque data
+                "64656661756C74206964656D706F74656E6379206B6579",
             ),
             concat!(
                 // aggregation_parameter
@@ -699,7 +732,9 @@ fn roundtrip_aggregate_share_aad() {
             task_id: TaskId::from([u8::MIN; 32]),
             task_configuration: test_task_configuration(),
             collection_job_req: CollectionJobReq {
-                query: Query { query_body: () },
+                query: Query {
+                    query_body: LeaderSelectedQueryConfig::default(),
+                },
                 aggregation_parameter: Vec::from([3, 2, 1, 0]),
                 extensions: Vec::new(),
             },

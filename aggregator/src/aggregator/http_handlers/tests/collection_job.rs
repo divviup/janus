@@ -25,14 +25,14 @@ use serde_json::json;
 use tower::ServiceExt;
 
 use crate::aggregator::{
-    collection_job_tests::setup_collection_job_test_case,
+    collection_job_tests::{ids_from_collection_job_response, setup_collection_job_test_case},
     http_handlers::test_util::{
         HttpHandlerTest, decode_response_body, take_problem_details, take_response_body,
     },
 };
 
 #[tokio::test]
-async fn collection_job_put_request_to_helper() {
+async fn collection_job_post_request_to_helper() {
     let test_case = setup_collection_job_test_case(Role::Helper, BatchMode::TimeInterval).await;
     test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(
@@ -41,7 +41,6 @@ async fn collection_job_put_request_to_helper() {
         ))
         .await;
 
-    let collection_job_id: CollectionJobId = random();
     let request = CollectionJobReq::new(
         Query::new_time_interval(
             Interval::minimal(Time::from_seconds_since_epoch(
@@ -54,7 +53,7 @@ async fn collection_job_put_request_to_helper() {
     );
 
     let mut response = test_case
-        .put_collection_job_with_auth_token(&collection_job_id, &request, Some(&random()))
+        .post_collection_job_with_auth_token(&request, Some(&random()))
         .await;
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
@@ -70,7 +69,7 @@ async fn collection_job_put_request_to_helper() {
 }
 
 #[tokio::test]
-async fn collection_job_put_request_invalid_batch_interval() {
+async fn collection_job_post_request_invalid_batch_interval() {
     let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
     test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(
@@ -79,7 +78,6 @@ async fn collection_job_put_request_invalid_batch_interval() {
         ))
         .await;
 
-    let collection_job_id: CollectionJobId = random();
     let request = CollectionJobReq::new(
         Query::new_time_interval(
             Interval::new(
@@ -95,9 +93,7 @@ async fn collection_job_put_request_invalid_batch_interval() {
         dummy::AggregationParam::default().get_encoded().unwrap(),
     );
 
-    let mut response = test_case
-        .put_collection_job(&collection_job_id, &request)
-        .await;
+    let mut response = test_case.post_collection_job(&request).await;
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert_eq!(
@@ -112,7 +108,7 @@ async fn collection_job_put_request_invalid_batch_interval() {
 }
 
 #[tokio::test]
-async fn collection_job_put_request_invalid_aggregation_parameter() {
+async fn collection_job_post_request_invalid_aggregation_parameter() {
     let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
     test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(
@@ -121,7 +117,6 @@ async fn collection_job_put_request_invalid_aggregation_parameter() {
         ))
         .await;
 
-    let collection_job_id: CollectionJobId = random();
     let request = CollectionJobReq::new(
         Query::new_time_interval(
             Interval::minimal(Time::from_seconds_since_epoch(
@@ -135,9 +130,7 @@ async fn collection_job_put_request_invalid_aggregation_parameter() {
         Vec::from([0u8, 0u8]),
     );
 
-    let mut response = test_case
-        .put_collection_job(&collection_job_id, &request)
-        .await;
+    let mut response = test_case.post_collection_job(&request).await;
 
     // Collect request will be rejected because the aggregation parameter can't be decoded
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
@@ -152,7 +145,7 @@ async fn collection_job_put_request_invalid_aggregation_parameter() {
 }
 
 #[tokio::test]
-async fn collection_job_put_request_unsupported_extension() {
+async fn collection_job_post_request_unsupported_extension() {
     let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
 
     // No collection job extension types are defined, so any extension is unsupported.
@@ -171,7 +164,7 @@ async fn collection_job_put_request_unsupported_extension() {
         Vec::new(),
     )]));
 
-    let mut response = test_case.put_collection_job(&random(), &request).await;
+    let mut response = test_case.post_collection_job(&request).await;
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert_eq!(
@@ -187,7 +180,7 @@ async fn collection_job_put_request_unsupported_extension() {
 }
 
 #[tokio::test]
-async fn collection_job_put_request_invalid_extension_order() {
+async fn collection_job_post_request_invalid_extension_order() {
     let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
 
     // Extension types 0x0002 then 0x0001 are not in strictly increasing order.
@@ -206,7 +199,7 @@ async fn collection_job_put_request_invalid_extension_order() {
         CollectionJobExtension::new(CollectionJobExtensionType::Unknown(0x0001), Vec::new()),
     ]));
 
-    let mut response = test_case.put_collection_job(&random(), &request).await;
+    let mut response = test_case.post_collection_job(&request).await;
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert_eq!(
@@ -222,7 +215,7 @@ async fn collection_job_put_request_invalid_extension_order() {
 }
 
 #[tokio::test]
-async fn collection_job_put_request_invalid_batch_size() {
+async fn collection_job_post_request_invalid_batch_size() {
     let HttpHandlerTest {
         router,
         ephemeral_datastore: _ephemeral_datastore,
@@ -241,7 +234,6 @@ async fn collection_job_put_request_invalid_batch_size() {
     let leader_task = task.leader_view().unwrap();
     datastore.put_aggregator_task(&leader_task).await.unwrap();
 
-    let collection_job_id: CollectionJobId = random();
     let request = CollectionJobReq::new(
         Query::new_time_interval(Interval::minimal(Time::from_time_precision_units(0)).unwrap()),
         dummy::AggregationParam::default().get_encoded().unwrap(),
@@ -251,8 +243,8 @@ async fn collection_job_put_request_invalid_batch_size() {
         .clone()
         .oneshot(
             Request::builder()
-                .method("PUT")
-                .uri(task.collection_job_uri(&collection_job_id).unwrap().path())
+                .method("POST")
+                .uri(task.collection_job_creation_uri().unwrap().path())
                 .with_authentication_token(task.collector_auth_token())
                 .header(
                     http::header::CONTENT_TYPE,
@@ -278,7 +270,7 @@ async fn collection_job_put_request_invalid_batch_size() {
 }
 
 #[tokio::test]
-async fn collection_job_put_request_unauthenticated() {
+async fn collection_job_post_request_unauthenticated() {
     let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
     test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(
@@ -292,7 +284,6 @@ async fn collection_job_put_request_unauthenticated() {
         test_case.task.time_precision(),
     ))
     .unwrap();
-    let collection_job_id: CollectionJobId = random();
     let req = CollectionJobReq::new(
         Query::new_time_interval(batch_interval),
         dummy::AggregationParam::default().get_encoded().unwrap(),
@@ -300,23 +291,19 @@ async fn collection_job_put_request_unauthenticated() {
 
     // Incorrect authentication token.
     let response = test_case
-        .put_collection_job_with_auth_token(&collection_job_id, &req, Some(&random()))
+        .post_collection_job_with_auth_token(&req, Some(&random()))
         .await;
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
 
     // Aggregator authentication token.
     let response = test_case
-        .put_collection_job_with_auth_token(
-            &collection_job_id,
-            &req,
-            Some(test_case.task.aggregator_auth_token()),
-        )
+        .post_collection_job_with_auth_token(&req, Some(test_case.task.aggregator_auth_token()))
         .await;
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
 
     // Missing authentication token.
     let response = test_case
-        .put_collection_job_with_auth_token(&collection_job_id, &req, None)
+        .post_collection_job_with_auth_token(&req, None)
         .await;
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }
@@ -337,17 +324,15 @@ async fn collection_job_get_request_unauthenticated_collection_jobs() {
     ))
     .unwrap();
 
-    let collection_job_id: CollectionJobId = random();
     let request = CollectionJobReq::new(
         Query::new_time_interval(batch_interval),
         dummy::AggregationParam::default().get_encoded().unwrap(),
     );
 
-    let response = test_case
-        .put_collection_job(&collection_job_id, &request)
-        .await;
+    let response = test_case.post_collection_job(&request).await;
 
-    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_, collection_job_id) = ids_from_collection_job_response(&response);
 
     // Incorrect authentication token.
     let response = test_case
@@ -388,15 +373,15 @@ async fn collection_job_success_time_interval() {
     let leader_aggregate_share = dummy::AggregateShare(0);
     let helper_aggregate_share = dummy::AggregateShare(1);
 
-    let collection_job_id: CollectionJobId = random();
     let request = CollectionJobReq::new(
         Query::new_time_interval(batch_interval),
         aggregation_param.get_encoded().unwrap(),
     );
 
-    let mut response = test_case
-        .put_collection_job(&collection_job_id, &request)
-        .await;
+    let mut response = test_case.post_collection_job(&request).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let (task_id, collection_job_id) = ids_from_collection_job_response(&response);
+    assert_eq!(&task_id, test_case.task.id());
 
     let got_collection_job = test_case
         .datastore
@@ -426,11 +411,11 @@ async fn collection_job_success_time_interval() {
     );
 
     assert_eq!(want_collection_job, got_collection_job);
-    assert_eq!(response.status(), StatusCode::CREATED);
     assert!(take_response_body(&mut response).await.is_empty());
 
     let mut response = test_case.get_collection_job(&collection_job_id).await;
     assert_eq!(response.status(), StatusCode::OK);
+    assert!(response.headers().get(http::header::CONTENT_TYPE).is_none());
     assert!(take_response_body(&mut response).await.is_empty());
 
     // Update the collection job with the aggregate shares and some aggregation jobs. collection
@@ -576,7 +561,7 @@ async fn collection_job_get_request_no_such_collection_job() {
 }
 
 #[tokio::test]
-async fn collection_job_put_request_batch_queried_multiple_times() {
+async fn collection_job_post_request_batch_queried_multiple_times() {
     let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
     let interval = test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(
@@ -591,9 +576,9 @@ async fn collection_job_put_request_batch_queried_multiple_times() {
         dummy::AggregationParam(0).get_encoded().unwrap(),
     );
 
-    let response = test_case.put_collection_job(&random(), &request).await;
-
-    assert_eq!(response.status(), StatusCode::CREATED);
+    let response = test_case.post_collection_job(&request).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_, collection_job_id) = ids_from_collection_job_response(&response);
 
     // This request will not be allowed due to the query count already being consumed.
     let invalid_request = CollectionJobReq::new(
@@ -601,24 +586,23 @@ async fn collection_job_put_request_batch_queried_multiple_times() {
         dummy::AggregationParam(1).get_encoded().unwrap(),
     );
 
-    let mut response = test_case
-        .put_collection_job(&random(), &invalid_request)
-        .await;
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let mut response = test_case.post_collection_job(&invalid_request).await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
     assert_eq!(
         take_problem_details(&mut response).await,
         json!({
-            "status": StatusCode::BAD_REQUEST.as_u16(),
-            "type": "urn:ietf:params:ppm:dap:error:invalidMessage",
-            "title": "The message type for a response was incorrect or the payload was malformed.",
-            "detail": "batch has already been collected with another aggregation parameter",
-            "taskid": format!("{}", test_case.task.id()),
+            "status": StatusCode::CONFLICT.as_u16(),
+            "type": "https://docs.divviup.org/references/janus-errors#forbidden-mutation",
+            "title": "Forbidden mutation of an immutable resource.",
+            "detail": format!("The collection job {collection_job_id} already exists and cannot be \
+                modified. Use a new identifier instead of re-sending this one with changed \
+                parameters."),
         })
     );
 }
 
 #[tokio::test]
-async fn collection_job_put_request_batch_overlap() {
+async fn collection_job_post_request_batch_overlap() {
     let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
     let interval = test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(
@@ -639,9 +623,9 @@ async fn collection_job_put_request_batch_overlap() {
         dummy::AggregationParam(0).get_encoded().unwrap(),
     );
 
-    let response = test_case.put_collection_job(&random(), &request).await;
+    let response = test_case.post_collection_job(&request).await;
 
-    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(response.status(), StatusCode::OK);
 
     // This request will not be allowed due to overlapping with the previous request.
     let invalid_request = CollectionJobReq::new(
@@ -649,9 +633,7 @@ async fn collection_job_put_request_batch_overlap() {
         dummy::AggregationParam(1).get_encoded().unwrap(),
     );
 
-    let mut response = test_case
-        .put_collection_job(&random(), &invalid_request)
-        .await;
+    let mut response = test_case.post_collection_job(&invalid_request).await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert_eq!(
         take_problem_details(&mut response).await,
@@ -674,8 +656,6 @@ async fn delete_collection_job() {
         ))
         .await;
 
-    let collection_job_id: CollectionJobId = random();
-
     // Try to delete a collection job that doesn't exist
     let response = test_case
         .router
@@ -683,13 +663,7 @@ async fn delete_collection_job() {
         .oneshot(
             Request::builder()
                 .method("DELETE")
-                .uri(
-                    test_case
-                        .task
-                        .collection_job_uri(&collection_job_id)
-                        .unwrap()
-                        .path(),
-                )
+                .uri(test_case.task.collection_job_uri(&random()).unwrap().path())
                 .with_authentication_token(test_case.task.collector_auth_token())
                 .body(Body::empty())
                 .unwrap(),
@@ -704,11 +678,9 @@ async fn delete_collection_job() {
         dummy::AggregationParam::default().get_encoded().unwrap(),
     );
 
-    let response = test_case
-        .put_collection_job(&collection_job_id, &request)
-        .await;
-
-    assert_eq!(response.status(), StatusCode::CREATED);
+    let response = test_case.post_collection_job(&request).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_, collection_job_id) = ids_from_collection_job_response(&response);
 
     // Cancel the job
     let response = test_case

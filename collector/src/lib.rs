@@ -12,7 +12,10 @@
 //! use std::{fs::File, str::FromStr};
 //!
 //! use janus_collector::{Collector, ConfiguredVdaf, PrivateCollectorCredential};
-//! use janus_messages::{BatchConfig, Duration, Interval, Query, TaskId, Time, TimePrecision, Url};
+//! use janus_messages::{
+//!     BatchConfig, Duration, Interval, Query, TaskId, Time, TimePrecision, Url,
+//!     batch_mode::LeaderSelectedQueryConfig,
+//! };
 //!
 //! # async fn run() {
 //! # const TIME_PRECISION: u64 = 3600;
@@ -62,8 +65,12 @@
 //!     .await
 //!     .unwrap();
 //!
-//! // Or if this is a leader-selected task, make a leader-selected query.
-//! let query = Query::new_leader_selected();
+//! // Or if this is a leader-selected task, make a leader-selected query. You must choose an
+//! // idempotency key to use as the query configuration. The idempotency key allows collection job
+//! // creation to be safely retried, so you may wish to persist their values before sending
+//! // requests.
+//! let idempotency_key = LeaderSelectedQueryConfig::new(vec![0x00, 0x01, 0x02, 0x03]).unwrap();
+//! let query = Query::new_leader_selected(idempotency_key);
 //! let aggregation_result = collector.collection(query, &()).collect().await.unwrap();
 //! # }
 //! ```
@@ -81,17 +88,19 @@ pub use backon::{BackoffBuilder, ExponentialBackoff, ExponentialBuilder};
 use chrono::{DateTime, Duration, Utc};
 pub use credential::PrivateCollectorCredential;
 use educe::Educe;
-pub use janus_core::{auth_tokens::AuthenticationToken, hpke::HpkeKeypair, vdaf::ConfiguredVdaf};
 use janus_core::{
+    UrlExt,
     hpke::{self, HpkeApplicationInfo},
     http::{HttpErrorResponse, ReqwestAuthenticationToken, check_content_type},
     retries::{
-        ExponentialWithTotalDelayBuilder, http_request_exponential_backoff, retry_http_request,
+        ExponentialWithTotalDelayBuilder, HeaderMapExt, HeaderMapExtError,
+        http_request_exponential_backoff, retry_http_request,
     },
     task_config::build_task_configuration,
     time::TimeExt,
     url_for_join,
 };
+pub use janus_core::{auth_tokens::AuthenticationToken, hpke::HpkeKeypair, vdaf::ConfiguredVdaf};
 use janus_messages::{
     AggregateShareAad, BatchConfig, CollectionJobExtension, CollectionJobId, CollectionJobReq,
     CollectionJobResp, Interval, MediaType, Query, Role, TaskConfiguration, TaskId, TimePrecision,
@@ -102,10 +111,9 @@ use prio::{
     codec::{Decode, Encode, ParameterizedDecode},
     vdaf,
 };
-use rand::random;
 use reqwest::{
     StatusCode,
-    header::{CONTENT_LENGTH, CONTENT_TYPE, HeaderValue, RETRY_AFTER, ToStrError},
+    header::{CONTENT_LENGTH, CONTENT_TYPE, RETRY_AFTER},
 };
 pub use retry_after;
 use retry_after::{FromHeaderValueError, RetryAfter};
@@ -124,10 +132,8 @@ pub enum Error {
     Url(#[from] url::ParseError),
     #[error("missing Location header in See Other response")]
     MissingLocationHeader,
-    #[error("invalid bytes in header")]
-    InvalidHeader(#[from] ToStrError),
-    #[error("wrong Content-Type header: {0:?}")]
-    BadContentType(Option<HeaderValue>),
+    #[error("invalid header")]
+    InvalidHeader(#[from] HeaderMapExtError),
     #[error("invalid Retry-After header value: {0}")]
     InvalidRetryAfterHeader(#[from] FromHeaderValueError),
     #[error("codec error: {0}")]
@@ -223,23 +229,16 @@ impl<P, B: BatchMode> CollectionJob<P, B> {
 
 /// A builder for a collection request, returned by [`Collector::collection`].
 ///
-/// Configure the optional collection job ID ([`Self::with_id`]) and extensions
-/// ([`Self::with_extensions`]), then send the request with [`Self::start`] or [`Self::collect`].
+/// Configure the optional extensions ([`Self::with_extensions`]), then send the request with
+/// [`Self::start`] or [`Self::collect`].
 pub struct CollectionRequestBuilder<'a, V: vdaf::Collector, B: BatchMode> {
     collector: &'a Collector<V>,
     query: Query<B>,
     aggregation_parameter: &'a V::AggregationParam,
-    collection_job_id: Option<CollectionJobId>,
     extensions: Vec<CollectionJobExtension>,
 }
 
 impl<'a, V: vdaf::Collector, B: BatchMode> CollectionRequestBuilder<'a, V, B> {
-    /// Use a caller-chosen collection job ID instead of a randomly generated one.
-    pub fn with_id(mut self, collection_job_id: CollectionJobId) -> Self {
-        self.collection_job_id = Some(collection_job_id);
-        self
-    }
-
     /// Set the collection job extensions.
     pub fn with_extensions(mut self, extensions: Vec<CollectionJobExtension>) -> Self {
         self.extensions = extensions;
@@ -250,14 +249,8 @@ impl<'a, V: vdaf::Collector, B: BatchMode> CollectionRequestBuilder<'a, V, B> {
     /// [`CollectionJob`] that must be polled separately using [`Collector::poll_once`] or
     /// [`Collector::poll_until_complete`].
     pub async fn start(self) -> Result<CollectionJob<V::AggregationParam, B>, Error> {
-        let collection_job_id = self.collection_job_id.unwrap_or_else(random);
         self.collector
-            .send_collection_request(
-                collection_job_id,
-                self.query,
-                self.aggregation_parameter,
-                self.extensions,
-            )
+            .send_collection_request(self.query, self.aggregation_parameter, self.extensions)
             .await
     }
 
@@ -649,22 +642,27 @@ impl<V: vdaf::Collector> Collector<V> {
         &self.task_configuration
     }
 
+    /// Construct a URI for collection job creation.
+    fn collection_job_creation_uri(&self) -> Result<Url, Error> {
+        Ok(
+            url_for_join(self.task_configuration.leader_aggregator_endpoint())?
+                .join(&format!("tasks/{}/collection_jobs", self.task_id))?,
+        )
+    }
+
     /// Construct a URI for a collection.
     fn collection_job_uri(&self, collection_job_id: CollectionJobId) -> Result<Url, Error> {
         // Joined at request time so the endpoint bytes bound into HPKE AADs stay verbatim
         // (DAP §4.1).
-        Ok(
-            url_for_join(self.task_configuration.leader_aggregator_endpoint())?.join(&format!(
-                "tasks/{}/collection_jobs/{collection_job_id}",
-                self.task_id
-            ))?,
-        )
+        Ok(self
+            .collection_job_creation_uri()?
+            .ensure_trailing_slash()
+            .join(&collection_job_id.to_string())?)
     }
 
     /// Construct a collection request to send to the leader aggregator.
     ///
-    /// Returns a [`CollectionRequestBuilder`]; configure the optional collection job ID
-    /// ([`CollectionRequestBuilder::with_id`]) and extensions
+    /// Returns a [`CollectionRequestBuilder`]; configure the optional extensions
     /// ([`CollectionRequestBuilder::with_extensions`]), then send the request with
     /// [`CollectionRequestBuilder::start`] (returns a [`CollectionJob`] to poll) or
     /// [`CollectionRequestBuilder::collect`] (sends and waits for the result).
@@ -677,7 +675,6 @@ impl<V: vdaf::Collector> Collector<V> {
             collector: self,
             query,
             aggregation_parameter,
-            collection_job_id: None,
             extensions: Vec::new(),
         }
     }
@@ -687,7 +684,6 @@ impl<V: vdaf::Collector> Collector<V> {
     #[tracing::instrument(skip(self, aggregation_parameter, extensions), err)]
     async fn send_collection_request<B: BatchMode>(
         &self,
-        collection_job_id: CollectionJobId,
         query: Query<B>,
         aggregation_parameter: &V::AggregationParam,
         extensions: Vec<CollectionJobExtension>,
@@ -696,12 +692,12 @@ impl<V: vdaf::Collector> Collector<V> {
             CollectionJobReq::new(query.clone(), aggregation_parameter.get_encoded()?)
                 .with_extensions(extensions)
                 .get_encoded()?;
-        let collection_job_url = self.collection_job_uri(collection_job_id)?;
+        let collection_job_url = self.collection_job_creation_uri()?;
 
         let response_res =
             retry_http_request(self.http_request_retry_parameters.build(), || async {
                 self.http_client
-                    .put(collection_job_url.clone())
+                    .post(collection_job_url.clone())
                     .header(CONTENT_TYPE, CollectionJobReq::<TimeInterval>::MEDIA_TYPE)
                     .body(collect_request.clone())
                     .authentication_token(&self.authentication)
@@ -710,14 +706,20 @@ impl<V: vdaf::Collector> Collector<V> {
             })
             .await;
 
-        match response_res {
+        let collection_job_id = match response_res {
             // Successful response.
             Ok(response) => {
                 let status = response.status();
-                if status != StatusCode::CREATED {
+                if status != StatusCode::OK {
                     // Incorrect success status code.
                     return Err(Error::Http(Box::new(status.into())));
                 }
+
+                let (_, collection_job_id) = response
+                    .headers()
+                    .ids_from_collection_job_location()?
+                    .ok_or_else(|| Error::MissingLocationHeader)?;
+                collection_job_id
             }
 
             // HTTP-level error.
@@ -985,7 +987,7 @@ mod tests {
         AggregateShareAad, BatchConfig, CollectionJobId, CollectionJobReq, CollectionJobResp,
         Duration, HpkeCiphertext, Interval, MediaType, Query, Role, TaskConfiguration,
         TaskExtension, TaskExtensionType, TaskId, Time, TimePrecision, Url as DapUrl, VdafConfig,
-        batch_mode::{LeaderSelected, TimeInterval},
+        batch_mode::{LeaderSelected, LeaderSelectedQueryConfig, TimeInterval},
         problem_type::DapProblemType,
     };
     use mockito::Matcher;
@@ -997,7 +999,7 @@ mod tests {
     use rand::random;
     use reqwest::{
         StatusCode,
-        header::{AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE},
+        header::{AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, LOCATION},
     };
     use retry_after::RetryAfter;
 
@@ -1029,15 +1031,20 @@ mod tests {
         .unwrap()
     }
 
+    /// Matches on the relative path for collection job creation.
+    fn collection_creation_uri_matcher(task_id: &TaskId) -> Matcher {
+        Matcher::Regex(format!("^/tasks/{task_id}/collection_jobs"))
+    }
+
+    /// Matches on the relative path for a collection job resource.
     fn collection_uri_regex_matcher(task_id: &TaskId) -> Matcher {
-        // Matches on the relative path for a collection job resource. The Base64 URL-safe encoding
-        // of a collection ID is always 22 characters.
+        // The Base64 URL-safe encoding of a collection ID is always 22 characters.
         Matcher::Regex(format!(
             "^/tasks/{task_id}/collection_jobs/[A-Za-z0-9-_]{{22}}$"
         ))
     }
 
-    fn build_collect_response_time<const SEED_SIZE: usize, V>(
+    fn build_collect_response_time_interval<const SEED_SIZE: usize, V>(
         transcript: &VdafTranscript<SEED_SIZE, V>,
         collector: &Collector<V>,
         aggregation_parameter: &V::AggregationParam,
@@ -1075,9 +1082,10 @@ mod tests {
         }
     }
 
-    fn build_collect_response_fixed<const SEED_SIZE: usize, V>(
+    fn build_collect_response_leader_selected<const SEED_SIZE: usize, V>(
         transcript: &VdafTranscript<SEED_SIZE, V>,
         collector: &Collector<V>,
+        idempotency_key: &LeaderSelectedQueryConfig,
         aggregation_parameter: &V::AggregationParam,
     ) -> CollectionJobResp
     where
@@ -1088,7 +1096,7 @@ mod tests {
             collector.task_id,
             collector.task_configuration().clone(),
             CollectionJobReq::new(
-                Query::new_leader_selected(),
+                Query::new_leader_selected(idempotency_key.clone()),
                 aggregation_parameter.get_encoded().unwrap(),
             ),
         );
@@ -1281,6 +1289,10 @@ mod tests {
                 endpoint
             );
             assert_eq!(
+                collector.collection_job_creation_uri().unwrap().as_str(),
+                format!("{joined_base}tasks/{}/collection_jobs", collector.task_id)
+            );
+            assert_eq!(
                 collector
                     .collection_job_uri(collection_job_id)
                     .unwrap()
@@ -1307,7 +1319,12 @@ mod tests {
             &random(),
             &true,
         );
+        let collection_job_id: CollectionJobId = random();
         let collector = setup_collector(&mut server, configured_vdaf);
+        let collection_job_path = format!(
+            "/tasks/{}/collection_jobs/{}",
+            collector.task_id, collection_job_id
+        );
 
         let batch_interval = Interval::new(
             Time::from_seconds_since_epoch(1_000_000, &TEST_TIME_PRECISION),
@@ -1315,11 +1332,11 @@ mod tests {
         )
         .unwrap();
         let collect_resp =
-            build_collect_response_time(&transcript, &collector, &(), batch_interval);
-        let matcher = collection_uri_regex_matcher(&collector.task_id);
+            build_collect_response_time_interval(&transcript, &collector, &(), batch_interval);
+        let matcher = collection_creation_uri_matcher(&collector.task_id);
 
         let mocked_collect_start_error = server
-            .mock("PUT", matcher.clone())
+            .mock("POST", matcher.clone())
             .match_header(
                 CONTENT_TYPE.as_str(),
                 CollectionJobReq::<TimeInterval>::MEDIA_TYPE,
@@ -1329,13 +1346,14 @@ mod tests {
             .create_async()
             .await;
         let mocked_collect_start_success = server
-            .mock("PUT", matcher)
+            .mock("POST", matcher)
             .match_header(
                 CONTENT_TYPE.as_str(),
                 CollectionJobReq::<TimeInterval>::MEDIA_TYPE,
             )
             .match_authentication_token(&collector.authentication)
-            .with_status(201)
+            .with_status(200)
+            .with_header(LOCATION.as_str(), collection_job_path.as_str())
             .expect(1)
             .create_async()
             .await;
@@ -1350,11 +1368,8 @@ mod tests {
 
         let job = job.unwrap();
         assert_eq!(job.query.batch_interval(), &batch_interval);
+        assert_eq!(job.collection_job_id, collection_job_id);
 
-        let collection_job_path = format!(
-            "/tasks/{}/collection_jobs/{}",
-            collector.task_id, job.collection_job_id
-        );
         let mocked_collect_error = server
             .mock("GET", collection_job_path.as_str())
             .with_status(500)
@@ -1412,7 +1427,12 @@ mod tests {
             &random(),
             &144,
         );
+        let collection_job_id: CollectionJobId = random();
         let collector = setup_collector(&mut server, configured_vdaf);
+        let collection_job_path = format!(
+            "/tasks/{}/collection_jobs/{}",
+            collector.task_id, collection_job_id
+        );
 
         let batch_interval = Interval::new(
             Time::from_seconds_since_epoch(1_000_000, &TEST_TIME_PRECISION),
@@ -1420,16 +1440,17 @@ mod tests {
         )
         .unwrap();
         let collect_resp =
-            build_collect_response_time(&transcript, &collector, &(), batch_interval);
-        let matcher = collection_uri_regex_matcher(&collector.task_id);
+            build_collect_response_time_interval(&transcript, &collector, &(), batch_interval);
+        let matcher = collection_creation_uri_matcher(&collector.task_id);
 
         let mocked_collect_start_success = server
-            .mock("PUT", matcher)
+            .mock("POST", matcher)
             .match_header(
                 CONTENT_TYPE.as_str(),
                 CollectionJobReq::<TimeInterval>::MEDIA_TYPE,
             )
-            .with_status(201)
+            .with_status(200)
+            .with_header(LOCATION.as_str(), collection_job_path.as_str())
             .expect(1)
             .create_async()
             .await;
@@ -1440,12 +1461,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(job.query.batch_interval(), &batch_interval);
+        assert_eq!(job.collection_job_id, collection_job_id);
         mocked_collect_start_success.assert_async().await;
 
-        let collection_job_path = format!(
-            "/tasks/{}/collection_jobs/{}",
-            collector.task_id, job.collection_job_id
-        );
         let mocked_collect_complete = server
             .mock("GET", collection_job_path.as_str())
             .with_status(200)
@@ -1485,7 +1503,12 @@ mod tests {
             &random(),
             &3,
         );
+        let collection_job_id: CollectionJobId = random();
         let collector = setup_collector(&mut server, configured_vdaf);
+        let collection_job_path = format!(
+            "/tasks/{}/collection_jobs/{}",
+            collector.task_id, collection_job_id
+        );
 
         let batch_interval = Interval::new(
             Time::from_seconds_since_epoch(1_000_000, &TEST_TIME_PRECISION),
@@ -1493,16 +1516,17 @@ mod tests {
         )
         .unwrap();
         let collect_resp =
-            build_collect_response_time(&transcript, &collector, &(), batch_interval);
-        let matcher = collection_uri_regex_matcher(&collector.task_id);
+            build_collect_response_time_interval(&transcript, &collector, &(), batch_interval);
+        let matcher = collection_creation_uri_matcher(&collector.task_id);
 
         let mocked_collect_start_success = server
-            .mock("PUT", matcher)
+            .mock("POST", matcher)
             .match_header(
                 CONTENT_TYPE.as_str(),
                 CollectionJobReq::<TimeInterval>::MEDIA_TYPE,
             )
-            .with_status(201)
+            .with_status(200)
+            .with_header(LOCATION.as_str(), collection_job_path.as_str())
             .expect(1)
             .create_async()
             .await;
@@ -1513,13 +1537,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(job.query.batch_interval(), &batch_interval);
+        assert_eq!(job.collection_job_id, collection_job_id);
 
         mocked_collect_start_success.assert_async().await;
 
-        let collection_job_path = format!(
-            "/tasks/{}/collection_jobs/{}",
-            collector.task_id, job.collection_job_id
-        );
         let mocked_collect_complete = server
             .mock("GET", collection_job_path.as_str())
             .with_status(200)
@@ -1559,34 +1580,39 @@ mod tests {
             &random(),
             &true,
         );
+        let idempotency_key = random();
+        let collection_job_id: CollectionJobId = random();
         let collector = setup_collector(&mut server, configured_vdaf);
+        let collection_job_path = format!(
+            "/tasks/{}/collection_jobs/{}",
+            collector.task_id, collection_job_id
+        );
 
-        let collect_resp = build_collect_response_fixed(&transcript, &collector, &());
-        let matcher = collection_uri_regex_matcher(&collector.task_id);
+        let collect_resp =
+            build_collect_response_leader_selected(&transcript, &collector, &idempotency_key, &());
+        let matcher = collection_creation_uri_matcher(&collector.task_id);
 
         let mocked_collect_start_success = server
-            .mock("PUT", matcher)
+            .mock("POST", matcher)
             .match_header(
                 CONTENT_TYPE.as_str(),
                 CollectionJobReq::<LeaderSelected>::MEDIA_TYPE,
             )
-            .with_status(201)
+            .with_status(200)
+            .with_header(LOCATION.as_str(), collection_job_path.as_str())
             .expect(1)
             .create_async()
             .await;
 
         let job = collector
-            .collection(Query::new_leader_selected(), &())
+            .collection(Query::new_leader_selected(idempotency_key), &())
             .start()
             .await
             .unwrap();
+        assert_eq!(job.collection_job_id, collection_job_id);
 
         mocked_collect_start_success.assert_async().await;
 
-        let collection_job_path = format!(
-            "/tasks/{}/collection_jobs/{}",
-            collector.task_id, job.collection_job_id
-        );
         let mocked_collect_complete = server
             .mock("GET", collection_job_path.as_str())
             .with_status(200)
@@ -1644,6 +1670,11 @@ mod tests {
         .with_collect_poll_backoff(test_http_request_exponential_backoff())
         .build()
         .unwrap();
+        let collection_job_id: CollectionJobId = random();
+        let collection_job_path = format!(
+            "/tasks/{}/collection_jobs/{}",
+            collector.task_id, collection_job_id
+        );
 
         let batch_interval = Interval::new(
             Time::from_seconds_since_epoch(1_000_000, &TEST_TIME_PRECISION),
@@ -1651,17 +1682,18 @@ mod tests {
         )
         .unwrap();
         let collect_resp =
-            build_collect_response_time(&transcript, &collector, &(), batch_interval);
-        let matcher = collection_uri_regex_matcher(&collector.task_id);
+            build_collect_response_time_interval(&transcript, &collector, &(), batch_interval);
+        let matcher = collection_creation_uri_matcher(&collector.task_id);
 
         let mocked_collect_start_success = server
-            .mock("PUT", matcher)
+            .mock("POST", matcher)
             .match_header(
                 CONTENT_TYPE.as_str(),
                 CollectionJobReq::<TimeInterval>::MEDIA_TYPE,
             )
             .match_header(AUTHORIZATION.as_str(), "Bearer AAAAAAAAAAAAAAAA")
-            .with_status(201)
+            .with_status(200)
+            .with_header(LOCATION.as_str(), collection_job_path.as_str())
             .expect(1)
             .create_async()
             .await;
@@ -1674,11 +1706,8 @@ mod tests {
         mocked_collect_start_success.assert_async().await;
         let job = job.unwrap();
         assert_eq!(job.query.batch_interval(), &batch_interval);
+        assert_eq!(job.collection_job_id, collection_job_id);
 
-        let collection_job_path = format!(
-            "/tasks/{}/collection_jobs/{}",
-            collector.task_id, job.collection_job_id
-        );
         let mocked_collect_complete = server
             .mock("GET", collection_job_path.as_str())
             .match_header(AUTHORIZATION.as_str(), "Bearer AAAAAAAAAAAAAAAA")
@@ -1712,10 +1741,10 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let configured_vdaf = ConfiguredVdaf::prio3_count().unwrap();
         let collector = setup_collector(&mut server, configured_vdaf);
-        let matcher = collection_uri_regex_matcher(&collector.task_id);
+        let matcher = collection_creation_uri_matcher(&collector.task_id);
 
         let mock_server_error = server
-            .mock("PUT", matcher.clone())
+            .mock("POST", matcher.clone())
             .match_header(
                 CONTENT_TYPE.as_str(),
                 CollectionJobReq::<TimeInterval>::MEDIA_TYPE,
@@ -1743,7 +1772,7 @@ mod tests {
         mock_server_error.assert_async().await;
 
         let mock_server_error_details = server
-            .mock("PUT", matcher.clone())
+            .mock("POST", matcher.clone())
             .match_header(
                 CONTENT_TYPE.as_str(),
                 CollectionJobReq::<TimeInterval>::MEDIA_TYPE,
@@ -1769,7 +1798,7 @@ mod tests {
         mock_server_error_details.assert_async().await;
 
         let mock_bad_request = server
-            .mock("PUT", matcher)
+            .mock("POST", matcher)
             .match_header(
                 CONTENT_TYPE.as_str(),
                 CollectionJobReq::<TimeInterval>::MEDIA_TYPE,
@@ -1806,16 +1835,22 @@ mod tests {
         initialize_rustls();
         let mut server = mockito::Server::new_async().await;
         let configured_vdaf = ConfiguredVdaf::prio3_count().unwrap();
+        let collection_job_id: CollectionJobId = random();
         let collector = setup_collector(&mut server, configured_vdaf);
-        let matcher = collection_uri_regex_matcher(&collector.task_id);
+        let collection_job_path = format!(
+            "/tasks/{}/collection_jobs/{}",
+            collector.task_id, collection_job_id
+        );
+        let matcher = collection_creation_uri_matcher(&collector.task_id);
 
         let mock_collect_start = server
-            .mock("PUT", matcher.clone())
+            .mock("POST", matcher.clone())
             .match_header(
                 CONTENT_TYPE.as_str(),
                 CollectionJobReq::<TimeInterval>::MEDIA_TYPE,
             )
-            .with_status(201)
+            .with_status(200)
+            .with_header(LOCATION.as_str(), collection_job_path.as_str())
             .expect(1)
             .create_async()
             .await;
@@ -1836,6 +1871,7 @@ mod tests {
             .start()
             .await
             .unwrap();
+        assert_eq!(job.collection_job_id, collection_job_id);
         let error = collector.poll_once(&job).await.unwrap_err();
         assert_matches!(error, Error::Http(error_response) => {
             assert_eq!(error_response.status(), StatusCode::INTERNAL_SERVER_ERROR);
@@ -1845,10 +1881,6 @@ mod tests {
         mock_collect_start.assert_async().await;
         mock_collection_job_server_error.assert_async().await;
 
-        let collection_job_path = format!(
-            "/tasks/{}/collection_jobs/{}",
-            collector.task_id, job.collection_job_id
-        );
         let mock_collection_job_server_error_details = server
             .mock("GET", collection_job_path.as_str())
             .with_status(500)
@@ -2054,16 +2086,22 @@ mod tests {
         initialize_rustls();
         let mut server = mockito::Server::new_async().await;
         let configured_vdaf = ConfiguredVdaf::prio3_count().unwrap();
+        let collection_job_id = random();
         let collector = setup_collector(&mut server, configured_vdaf);
-        let matcher = collection_uri_regex_matcher(&collector.task_id);
+        let collection_job_path = format!(
+            "/tasks/{}/collection_jobs/{}",
+            collector.task_id, collection_job_id
+        );
+        let matcher = collection_creation_uri_matcher(&collector.task_id);
 
         let mock_collect_start = server
-            .mock("PUT", matcher.clone())
+            .mock("POST", matcher.clone())
             .match_header(
                 CONTENT_TYPE.as_str(),
                 CollectionJobReq::<TimeInterval>::MEDIA_TYPE,
             )
-            .with_status(201)
+            .with_status(200)
+            .with_header(LOCATION.as_str(), collection_job_path.as_str())
             .expect(1)
             .create_async()
             .await;
@@ -2077,12 +2115,8 @@ mod tests {
             .start()
             .await
             .unwrap();
+        assert_eq!(job.collection_job_id, collection_job_id);
         mock_collect_start.assert_async().await;
-
-        let collection_job_path = format!(
-            "/tasks/{}/collection_jobs/{}",
-            collector.task_id, job.collection_job_id
-        );
 
         let mock_collect_poll_no_retry_after = server
             .mock("GET", collection_job_path.as_str())
@@ -2252,7 +2286,7 @@ mod tests {
         let collection_job_id = random();
         let collection_job = CollectionJob::new(
             collection_job_id,
-            Query::new_leader_selected(),
+            Query::new_leader_selected(random()),
             dummy::AggregationParam(1),
         );
         let matcher = collection_uri_regex_matcher(&collector.task_id);
@@ -2290,7 +2324,7 @@ mod tests {
         let collection_job_id = random();
         let collection_job = CollectionJob::new(
             collection_job_id,
-            Query::new_leader_selected(),
+            Query::new_leader_selected(random()),
             dummy::AggregationParam(1),
         );
         let matcher = collection_uri_regex_matcher(&collector.task_id);
@@ -2335,7 +2369,7 @@ mod tests {
         )
         .unwrap();
         let collect_resp =
-            build_collect_response_time(&transcript, &collector, &(), batch_interval);
+            build_collect_response_time_interval(&transcript, &collector, &(), batch_interval);
 
         let job = CollectionJob {
             collection_job_id: random(),
