@@ -36,7 +36,9 @@ use tower::ServiceExt;
 
 use crate::aggregator::{
     error::BatchMismatch,
-    http_handlers::test_util::{HttpHandlerTest, decode_response_body, take_problem_details},
+    http_handlers::test_util::{
+        HttpHandlerTest, decode_response_body, take_problem_details, take_response_body,
+    },
 };
 
 pub(crate) async fn put_aggregate_share_request<B: batch_mode::BatchMode>(
@@ -1764,6 +1766,85 @@ async fn aggregate_share_request_unsupported_extension() {
             "type": "urn:ietf:params:ppm:dap:error:unsupportedExtension",
             "title": "The message includes an unsupported extension.",
             "detail": "collection job contains an unsupported extension type",
+            "taskid": format!("{}", task.id()),
+        })
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn recreate_deleted_aggregate_share() {
+    let HttpHandlerTest {
+        clock: _,
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        router,
+        ..
+    } = HttpHandlerTest::new().await;
+
+    let selected_interval = Interval::minimal(Time::from_time_precision_units(3)).unwrap();
+    let queried_interval = Interval::new(
+        Time::from_time_precision_units(0),
+        Duration::from_time_precision_units(10),
+    )
+    .unwrap();
+    let aggregation_param = dummy::AggregationParam(0);
+    let report_count = 5;
+    let checksum = ReportIdChecksum::get_decoded(&[3; 32]).unwrap();
+
+    let task = setup_time_interval_task_with_batch_aggregation(
+        &datastore,
+        selected_interval,
+        aggregation_param,
+        report_count,
+        checksum,
+    )
+    .await;
+
+    // Drive aggregate share request to successful completion.
+    let request = AggregateShareReq::new(
+        CollectionJobReq::new(
+            Query::new_time_interval(queried_interval),
+            aggregation_param.get_encoded().unwrap(),
+        ),
+        BatchSelector::new_time_interval(selected_interval),
+        report_count,
+        checksum,
+    );
+
+    let aggregate_share_id = AggregateShareId::from([42u8; 16]);
+    let mut response =
+        put_aggregate_share_request(&task, &request, &aggregate_share_id, &router).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    decode_response_body::<AggregateShareMessage>(&mut response).await;
+
+    let mut response = router
+        .clone()
+        .oneshot(
+            Request::delete(
+                task.aggregate_shares_uri(&aggregate_share_id)
+                    .unwrap()
+                    .path(),
+            )
+            .with_authentication_token(task.aggregator_auth_token())
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert!(!take_response_body(&mut response).await.is_empty());
+
+    // Re-create the deleted aggregate share
+    let mut response =
+        put_aggregate_share_request(&task, &request, &aggregate_share_id, &router).await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        take_problem_details(&mut response).await,
+        json!({
+            "status": StatusCode::BAD_REQUEST.as_u16(),
+            "type": "urn:ietf:params:ppm:dap:error:batchOverlap",
+            "title": "The queried batch overlaps with a previously queried batch.",
             "taskid": format!("{}", task.id()),
         })
     );

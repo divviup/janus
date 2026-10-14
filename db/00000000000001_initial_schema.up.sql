@@ -375,23 +375,40 @@ CREATE TYPE BATCH_AGGREGATION_STATE AS ENUM(
 -- Information on aggregation for a single batch. This information may be incremental if the VDAF
 -- supports incremental aggregation. Each batch's aggregation is sharded via the `ord` column.
 CREATE TABLE batch_aggregations(
-    id                          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
-    task_id                     BIGINT NOT NULL,                   -- the task ID
-    batch_identifier            BYTEA NOT NULL,                    -- encoded batch mode-specific batch identifier (corresponds to identifier in BatchSelector)
+    -- artificial ID, internal-only
+    id                          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    -- the task ID
+    task_id                     BIGINT NOT NULL,
+    -- encoded batch mode-specific batch identifier (corresponds to identifier in BatchSelector)
+    batch_identifier            BYTEA NOT NULL,
     -- batch interval, as an INT8RANGE, in time precision units.
     -- Populated only for time-interval tasks. Will always match batch_identifier.
     batch_interval              INT8RANGE,
-    aggregation_param           BYTEA NOT NULL,                    -- the aggregation parameter (opaque VDAF message)
-    ord                         BIGINT NOT NULL,                   -- the index of this batch aggregation shard, over (task ID, batch_identifier, aggregation_param).
+    -- the aggregation parameter (opaque VDAF message)
+    aggregation_param           BYTEA NOT NULL,
+    -- the index of this batch aggregation shard, over (task ID, batch_identifier,
+    -- aggregation_param).
+    ord                         BIGINT NOT NULL,
     -- The minimal interval, in time precision units, containing all of client timestamps included
     -- in this batch aggregation.
     client_timestamp_interval   INT8RANGE NOT NULL,
-    state                       BATCH_AGGREGATION_STATE NOT NULL,  -- the current state of this batch aggregation
-    aggregate_share             BYTEA,                             -- the (possibly-incremental) aggregate share; populated unless report_count is 0 or the batch aggregation has been scrubbed.
-    report_count                BIGINT,                            -- the (possibly-incremental) client report count; populated unless the batch aggregation has been scrubbed.
-    checksum                    BYTEA,                             -- the (possibly-incremental) checksum; populated unless the batch aggregation has been scrubbed.
-    aggregation_jobs_created    BIGINT,                            -- the number of aggregation jobs that have been created for this batch; populated unless the batch aggregation has been scrubbed.
-    aggregation_jobs_terminated BIGINT,                            -- the number of aggregation jobs that have been terminated (finished or abandoned) for this batch; populated unless the batch aggregation has been scrubbed.
+    -- the current state of this batch aggregation
+    state                       BATCH_AGGREGATION_STATE NOT NULL,
+    -- the (possibly-incremental) aggregate share; populated unless report_count is 0 or the batch
+    -- aggregation has been scrubbed.
+    aggregate_share             BYTEA,
+    -- the (possibly-incremental) client report count; populated unless the batch aggregation has
+    -- been scrubbed.
+    report_count                BIGINT,
+    -- the (possibly-incremental) checksum; populated unless the batch aggregation has been
+    -- scrubbed.
+    checksum                    BYTEA,
+    -- the number of aggregation jobs that have been created for this batch; populated unless the
+    -- batch aggregation has been scrubbed.
+    aggregation_jobs_created    BIGINT,
+    -- the number of aggregation jobs that have been terminated (finished or abandoned) for this
+    -- batch; populated unless the batch aggregation has been scrubbed.
+    aggregation_jobs_terminated BIGINT,
 
     -- creation/update records
     created_at TIMESTAMP WITH TIME ZONE NOT NULL,  -- when the row was created
