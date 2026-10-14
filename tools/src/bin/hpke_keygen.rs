@@ -7,8 +7,8 @@ use janus_core::{
 };
 use janus_messages::HpkeConfigId;
 use prio::codec::Encode;
-use serde_yaml::to_writer;
 use std::io::{stdout, Write};
+use yaml_serde::to_writer;
 
 fn main() -> Result<()> {
     let options = Options::parse();

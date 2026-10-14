@@ -92,7 +92,6 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 serde_test = "1.0.177"
 serde_urlencoded = "0.7.1"
-serde_yaml = "0.9.34"
 signal-hook = "0.4.4"
 signal-hook-tokio = "0.4.0"
 # Disable default features to avoid pulling in drivers for databases we don't use, such as
@@ -129,6 +128,7 @@ trycmd = "1.2.0"
 url = { version = "2.5.8", features = ["serde"] }
 uuid = { version = "1.23.3", features = ["v4"] }
 wait-timeout = "0.2.1"
+yaml_serde = "0.10.7"
 
 [profile.ci]
 # Disabling debug info improves build speeds & reduces build artifact sizes, which helps CI caching.

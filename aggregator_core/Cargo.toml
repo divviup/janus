@@ -50,7 +50,6 @@ regex = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
 serde.workspace = true
 serde_json.workspace = true
-serde_yaml.workspace = true
 sqlx = { workspace = true, features = ["runtime-tokio", "tls-rustls-aws-lc-rs", "migrate", "postgres"], optional = true }
 testcontainers = { workspace = true, optional = true }
 thiserror.workspace = true
@@ -62,6 +61,7 @@ trillium.workspace = true
 trillium-macros = { workspace = true }
 trillium-router.workspace = true
 url.workspace = true
+yaml_serde.workspace = true
 
 [dev-dependencies]
 assert_matches.workspace = true
