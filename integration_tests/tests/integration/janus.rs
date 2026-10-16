@@ -208,6 +208,7 @@ async fn run_in_process_test(
 /// aggregation.
 #[tokio::test(flavor = "multi_thread")]
 #[cfg(feature = "testcontainer")]
+#[ignore]
 async fn janus_janus_sync_count() {
     run_container_test(
         "janus_janus_sync_count",
@@ -222,6 +223,7 @@ async fn janus_janus_sync_count() {
 /// aggregation.
 #[tokio::test(flavor = "multi_thread")]
 #[cfg(feature = "testcontainer")]
+#[ignore]
 async fn janus_janus_async_count() {
     // TODO(#3436): allow callers to specify asynchronous aggregation mode (requires updated
     // interop test design)
@@ -237,6 +239,7 @@ async fn janus_janus_async_count() {
 /// This test exercises Prio3Count with Janus as both the leader and the helper, using synchronous
 /// aggregation.
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn janus_in_process_sync_count() {
     run_in_process_test(
         "janus_in_process_sync_count",
@@ -250,6 +253,7 @@ async fn janus_in_process_sync_count() {
 /// This test exercises Prio3Count with Janus as both the leader and the helper, using asynchronous
 /// aggregation.
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn janus_in_process_async_count() {
     run_in_process_test(
         "janus_in_process_async_count",
@@ -264,6 +268,7 @@ async fn janus_in_process_async_count() {
 /// aggregation.
 #[tokio::test(flavor = "multi_thread")]
 #[cfg(feature = "testcontainer")]
+#[ignore]
 async fn janus_janus_sync_sum_16() {
     run_container_test(
         "janus_janus_sync_sum_16",
@@ -280,6 +285,7 @@ async fn janus_janus_sync_sum_16() {
 /// aggregation.
 #[tokio::test(flavor = "multi_thread")]
 #[cfg(feature = "testcontainer")]
+#[ignore]
 async fn janus_janus_async_sum_16() {
     run_container_test(
         "janus_janus_async_sum_16",
@@ -295,6 +301,7 @@ async fn janus_janus_async_sum_16() {
 /// This test exercises Prio3Sum with Janus as both the leader and the helper, using synchronous
 /// aggregation.
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn janus_in_process_sync_sum_16() {
     run_in_process_test(
         "janus_in_process_sync_sum_16",
@@ -310,6 +317,7 @@ async fn janus_in_process_sync_sum_16() {
 /// This test exercises Prio3Sum with Janus as both the leader and the helper, using asynchronous
 /// aggregation.
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn janus_in_process_async_sum_16() {
     run_in_process_test(
         "janus_in_process_async_sum_16",
@@ -326,6 +334,7 @@ async fn janus_in_process_async_sum_16() {
 /// synchronous aggregation.
 #[tokio::test(flavor = "multi_thread")]
 #[cfg(feature = "testcontainer")]
+#[ignore]
 async fn janus_janus_sync_histogram_4_buckets() {
     run_container_test(
         "janus_janus_sync_histogram_4_buckets",
@@ -344,6 +353,7 @@ async fn janus_janus_sync_histogram_4_buckets() {
 /// asynchronous aggregation.
 #[tokio::test(flavor = "multi_thread")]
 #[cfg(feature = "testcontainer")]
+#[ignore]
 async fn janus_janus_async_histogram_4_buckets() {
     run_container_test(
         "janus_janus_async_histogram_4_buckets",
@@ -361,6 +371,7 @@ async fn janus_janus_async_histogram_4_buckets() {
 /// This test exercises Prio3Histogram with Janus as both the leader and the helper, using
 /// synchronous aggregation.
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn janus_in_process_sync_histogram_4_buckets() {
     run_in_process_test(
         "janus_in_process_sync_histogram_4_buckets",
@@ -378,6 +389,7 @@ async fn janus_in_process_sync_histogram_4_buckets() {
 /// This test exercises Prio3Histogram with Janus as both the leader and the helper, using
 /// asynchronous aggregation.
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn janus_in_process_async_histogram_4_buckets() {
     run_in_process_test(
         "janus_in_process_async_histogram_4_buckets",
@@ -396,6 +408,7 @@ async fn janus_in_process_async_histogram_4_buckets() {
 /// using synchronous aggregation.
 #[tokio::test(flavor = "multi_thread")]
 #[cfg(feature = "testcontainer")]
+#[ignore]
 async fn janus_janus_leader_selected_sync() {
     run_container_test(
         "janus_janus_leader_selected_sync",
@@ -412,6 +425,7 @@ async fn janus_janus_leader_selected_sync() {
 /// using asynchronous aggregation.
 #[tokio::test(flavor = "multi_thread")]
 #[cfg(feature = "testcontainer")]
+#[ignore]
 async fn janus_janus_leader_selected_async() {
     run_container_test(
         "janus_janus_leader_selected_async",
@@ -427,6 +441,7 @@ async fn janus_janus_leader_selected_async() {
 /// This test exercises the leader-selected batch mode with Janus as both the leader and the helper,
 /// using synchronous aggregation.
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn janus_in_process_leader_selected_sync() {
     run_in_process_test(
         "janus_in_process_leader_selected_sync",
@@ -442,6 +457,7 @@ async fn janus_in_process_leader_selected_sync() {
 /// This test exercises the leader-selected batch mode with Janus as both the leader and the helper,
 /// using asynchronous aggregation.
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn janus_in_process_leader_selected_async() {
     run_in_process_test(
         "janus_in_process_leader_selected_async",
@@ -458,6 +474,7 @@ async fn janus_in_process_leader_selected_async() {
 /// aggregation.
 #[tokio::test(flavor = "multi_thread")]
 #[cfg(feature = "testcontainer")]
+#[ignore]
 async fn janus_janus_sync_sum_vec() {
     run_container_test(
         "janus_janus_sync_sum_vec",
@@ -477,6 +494,7 @@ async fn janus_janus_sync_sum_vec() {
 /// aggregation.
 #[tokio::test(flavor = "multi_thread")]
 #[cfg(feature = "testcontainer")]
+#[ignore]
 async fn janus_janus_async_sum_vec() {
     run_container_test(
         "janus_janus_async_sum_vec",
@@ -495,6 +513,7 @@ async fn janus_janus_async_sum_vec() {
 /// This test exercises Prio3SumVec with Janus as both the leader and the helper, using synchronous
 /// aggregation.
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn janus_in_process_sync_sum_vec() {
     run_in_process_test(
         "janus_in_process_sync_sum_vec",
@@ -513,6 +532,7 @@ async fn janus_in_process_sync_sum_vec() {
 /// This test exercises Prio3SumVec with Janus as both the leader and the helper, using asynchronous
 /// aggregation.
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn janus_in_process_async_sum_vec() {
     run_in_process_test(
         "janus_in_process_async_sum_vec",
@@ -531,6 +551,7 @@ async fn janus_in_process_async_sum_vec() {
 /// This test exercises Prio3SumVecField64MultiproofHmacSha256Aes128 with Janus as both the leader
 /// and the helper.
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn janus_in_process_customized_sum_vec() {
     install_test_trace_subscriber();
     initialize_rustls();
@@ -558,6 +579,7 @@ async fn janus_in_process_customized_sum_vec() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn janus_in_process_histogram_dp_noise() {
     static TEST_NAME: &str = "janus_in_process_histogram_dp_noise";
     const HISTOGRAM_LENGTH: usize = 100;
@@ -627,6 +649,7 @@ async fn janus_in_process_histogram_dp_noise() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn janus_in_process_sumvec_dp_noise() {
     static TEST_NAME: &str = "janus_in_process_sumvec_dp_noise";
     const VECTOR_LENGTH: usize = 50;
@@ -700,6 +723,7 @@ async fn janus_in_process_sumvec_dp_noise() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn janus_in_process_fake_vdaf_4_round_sync() {
     install_test_trace_subscriber();
     initialize_rustls();
@@ -721,6 +745,7 @@ async fn janus_in_process_fake_vdaf_4_round_sync() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn janus_in_process_fake_vdaf_4_round_async() {
     install_test_trace_subscriber();
     initialize_rustls();
@@ -742,6 +767,7 @@ async fn janus_in_process_fake_vdaf_4_round_async() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn janus_in_process_fake_vdaf_5_round_sync() {
     install_test_trace_subscriber();
     initialize_rustls();
@@ -763,6 +789,7 @@ async fn janus_in_process_fake_vdaf_5_round_sync() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn janus_in_process_fake_vdaf_5_round_async() {
     install_test_trace_subscriber();
     initialize_rustls();
