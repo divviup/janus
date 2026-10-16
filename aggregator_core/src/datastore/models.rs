@@ -1717,18 +1717,30 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> Eq
 {
 }
 
-// ReportAggregationStateCode exists alongside the public ReportAggregationState because there is no
-// apparent way to denote a Postgres enum literal without deriving FromSql/ToSql on a Rust enum
-// type, but it is not possible to derive FromSql/ToSql on a non-C-style enum.
+/// ReportAggregationStateCode corresponds to the `batch_aggregation_state` enum.
+///
+/// It exists alongside the public ReportAggregationState because there is no apparent way to denote
+/// a Postgres enum literal without deriving FromSql/ToSql on a Rust enum type, but it is not
+/// possible to derive FromSql/ToSql on a non-C-style enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, FromSql, ToSql)]
 #[postgres(name = "batch_aggregation_state")]
 pub(super) enum BatchAggregationStateCode {
-    /// This batch aggregation has not been collected & permits further aggregation.
+    /// This batch aggregation has not been collected.
+    ///
+    /// Report shares may still be aggregated into it.
     #[postgres(name = "AGGREGATING")]
     Aggregating,
-    /// This batch aggregation has been collected & no longer permits aggregation.
+    /// This batch aggregation has been collected.
+    ///
+    /// It contains a batch aggregate share which may be merged into an aggregate share to service a
+    /// collection job or aggregate share request. No more report shares may be aggregated into it.
     #[postgres(name = "COLLECTED")]
     Collected,
+    /// This batch aggregation has been scrubbed.
+    ///
+    /// Report shares have been aggregated into it and its batch aggregate has been merged into an
+    /// aggregate share. It has been scrubbed of data to save space. No more report shares may be
+    /// aggregated into it.
     #[postgres(name = "SCRUBBED")]
     Scrubbed,
 }
