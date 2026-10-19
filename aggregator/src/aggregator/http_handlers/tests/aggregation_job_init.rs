@@ -42,7 +42,7 @@ use crate::aggregator::{
         test_util::{
             HttpHandlerTest, decode_response_body, take_problem_details, take_response_body,
         },
-        tests::aggregate_share::put_aggregate_share_request,
+        tests::aggregate_share::AggregateShareTestCase,
     },
     test_util::{
         BATCH_AGGREGATION_SHARD_COUNT, assert_task_aggregation_counter,
@@ -1407,39 +1407,29 @@ async fn aggregate_init_partially_replayed_aggregation_init() {
     //   - the VerifyResps for reports 3-5 indicate success
     // We then send an aggregate share request for the batch ID. It should succeed and all five
     // reports should be included.
-    let HttpHandlerTest {
-        clock,
-        ephemeral_datastore: _ephemeral_datastore,
-        datastore,
-        router,
-        hpke_keypair,
-        ..
-    } = HttpHandlerTest::new().await;
-
-    let task = TaskBuilder::new(
-        BatchMode::LeaderSelected {
-            batch_time_window_size: None,
-        },
-        AggregationMode::Synchronous,
-        VdafInstance::Fake { rounds: 1 },
-    )
-    .with_min_batch_size(1)
-    .build();
+    let mut test_case = AggregateShareTestCase::builder()
+        .build_task(|task_builder| {
+            task_builder
+                .with_batch_mode(BatchMode::LeaderSelected {
+                    batch_time_window_size: None,
+                })
+                .with_min_batch_size(1)
+        })
+        .build()
+        .await;
 
     let batch_id = BatchId::from([12; 32]);
     let agg_param = dummy::AggregationParam(0).get_encoded().unwrap();
     let extensions = Vec::from([AggregationJobExtension::leader_selected_batch_id(&batch_id)]);
 
-    let helper_task = task.helper_view().unwrap();
+    let helper_task = test_case.task.helper_view().unwrap();
     let verify_init_generator = VerifyInitGenerator::new(
-        clock.clone(),
+        test_case.test.clock.clone(),
         helper_task.clone(),
-        hpke_keypair.config().clone(),
+        test_case.test.hpke_keypair.config().clone(),
         dummy::Vdaf::new(1),
         dummy::AggregationParam(0),
     );
-
-    datastore.put_aggregator_task(&helper_task).await.unwrap();
 
     let (verify_init_1, _) = verify_init_generator.next(&1);
     let (verify_init_2, _) = verify_init_generator.next(&2);
@@ -1464,7 +1454,8 @@ async fn aggregate_init_partially_replayed_aggregation_init() {
         Vec::from([verify_init_1.clone(), verify_init_2.clone()]),
     );
 
-    let mut response = put_aggregation_job(&task, &random(), &request, &router).await;
+    let mut response =
+        put_aggregation_job(&test_case.task, &random(), &request, &test_case.test.router).await;
     assert_eq!(response.status(), StatusCode::CREATED);
     let aggregate_resp: AggregationJobResp = decode_response_body(&mut response).await;
 
@@ -1495,7 +1486,8 @@ async fn aggregate_init_partially_replayed_aggregation_init() {
         ]),
     );
 
-    let mut response = put_aggregation_job(&task, &random(), &request, &router).await;
+    let mut response =
+        put_aggregation_job(&test_case.task, &random(), &request, &test_case.test.router).await;
     assert_eq!(response.status(), StatusCode::CREATED);
     let aggregate_resp: AggregationJobResp = decode_response_body(&mut response).await;
 
@@ -1534,7 +1526,8 @@ async fn aggregate_init_partially_replayed_aggregation_init() {
     // If the request succeeds, then the checksum was valid and helper agrees that all 5 reports are
     // included.
     assert_eq!(
-        put_aggregate_share_request(&task, &request, &random(), &router)
+        test_case
+            .put_aggregate_share_request(&request, &random())
             .await
             .status(),
         StatusCode::OK,
