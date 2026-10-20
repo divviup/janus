@@ -710,8 +710,7 @@ impl<V: vdaf::Collector> Collector<V> {
             // Successful response.
             Ok(response) => {
                 let status = response.status();
-                if status != StatusCode::OK {
-                    // Incorrect success status code.
+                if !status.is_success() {
                     return Err(Error::Http(Box::new(status.into())));
                 }
 
@@ -759,10 +758,10 @@ impl<V: vdaf::Collector> Collector<V> {
         let response = match response_res {
             // Successful response.
             Ok(response) => {
-                if response.status() != StatusCode::OK {
-                    return Err(Error::Http(Box::new(HttpErrorResponse::from(
-                        response.status(),
-                    ))));
+                let status = response.status();
+                // Janus leaders answer 204 for deleted jobs.
+                if !status.is_success() || status == StatusCode::NO_CONTENT {
+                    return Err(Error::Http(Box::new(HttpErrorResponse::from(status))));
                 }
                 response
             }
@@ -1352,7 +1351,7 @@ mod tests {
                 CollectionJobReq::<TimeInterval>::MEDIA_TYPE,
             )
             .match_authentication_token(&collector.authentication)
-            .with_status(200)
+            .with_status(201)
             .with_header(LOCATION.as_str(), collection_job_path.as_str())
             .expect(1)
             .create_async()
@@ -1378,7 +1377,7 @@ mod tests {
             .await;
         let mocked_collect_accepted = server
             .mock("GET", collection_job_path.as_str())
-            .with_status(200)
+            .with_status(202)
             .expect(2)
             .create_async()
             .await;
@@ -2345,6 +2344,36 @@ mod tests {
         });
 
         mock_error.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn poll_deleted_collection_job() {
+        install_test_trace_subscriber();
+        initialize_rustls();
+        let mut server = mockito::Server::new_async().await;
+        let configured_vdaf = ConfiguredVdaf::fake(1);
+        let collector = setup_collector(&mut server, configured_vdaf);
+
+        let collection_job = CollectionJob::new(
+            random(),
+            Query::new_leader_selected(random()),
+            dummy::AggregationParam(1),
+        );
+        let matcher = collection_uri_regex_matcher(&collector.task_id);
+
+        let mock_deleted = server
+            .mock("GET", matcher)
+            .with_status(204)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let error = collector.poll_once(&collection_job).await.unwrap_err();
+        assert_matches!(error, Error::Http(error_response) => {
+            assert_eq!(error_response.status(), StatusCode::NO_CONTENT);
+        });
+
+        mock_deleted.assert_async().await;
     }
 
     #[tokio::test]
