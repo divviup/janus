@@ -90,13 +90,13 @@ jobs:
     - name: Build (Docker-specific tests)
       # This matches the `cargo test` command invoked by `cargo xtask test-docker`, except for `--no-run`.
       run: cargo test --profile ci --locked --package=janus_interop_binaries --package=janus_integration_tests --features=testcontainer --no-run
-    #- name: Test (Docker)
-    #  id: test-docker
-    #  env:
-    #    RUST_LOG: info
-    #    JANUS_E2E_LOGS_PATH: ${{ github.workspace }}/test-logs
-    #    DIVVIUP_TS_INTEROP_CONTAINER: ${{ steps.default-input-values.outputs.divviup_ts_interop_container }}
-    #  run: cargo run --package xtask --profile=ci -- test-docker --profile=ci --locked
+    - name: Test (Docker)
+      id: test-docker
+      env:
+        RUST_LOG: info
+        JANUS_E2E_LOGS_PATH: ${{ github.workspace }}/test-logs
+        DIVVIUP_TS_INTEROP_CONTAINER: ${{ steps.default-input-values.outputs.divviup_ts_interop_container }}
+      run: cargo run --package xtask --profile=ci -- test-docker --profile=ci --locked
     - name: Upload container logs
       # Only get logs on test failure
       if: failure() && (steps.test.outcome == 'failure' || steps.test-docker.outcome == 'failure')

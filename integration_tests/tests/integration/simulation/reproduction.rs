@@ -21,8 +21,14 @@ fn successful_collection_time_interval() {
     install_test_trace_subscriber();
     initialize_rustls();
 
-    let collection_job_id = random();
     let time_precision = TimePrecision::from_seconds(3600);
+    let query = Query::TimeInterval(
+        Interval::new(
+            Time::from_seconds_since_epoch(1_699_999_200, &time_precision),
+            Duration::from_seconds(3600, &time_precision),
+        )
+        .unwrap(),
+    );
     let input = Input {
         is_leader_selected: false,
         config: Config {
@@ -58,17 +64,12 @@ fn successful_collection_time_interval() {
             Op::LeaderAggregationJobDriver,
             Op::LeaderGarbageCollector,
             Op::CollectorStart {
-                collection_job_id,
-                query: Query::TimeInterval(
-                    Interval::new(
-                        Time::from_seconds_since_epoch(1_699_999_200, &time_precision),
-                        Duration::from_seconds(3600, &time_precision),
-                    )
-                    .unwrap(),
-                ),
+                query: query.clone(),
             },
             Op::CollectionJobDriver,
-            Op::CollectorPoll { collection_job_id },
+            Op::CollectorPoll {
+                query: query.clone(),
+            },
             Op::Upload {
                 report_time: START_TIME.to_time(&time_precision),
                 count: 4,
@@ -76,17 +77,10 @@ fn successful_collection_time_interval() {
             Op::AggregationJobCreator,
             Op::LeaderAggregationJobDriver,
             Op::CollectorStart {
-                collection_job_id,
-                query: Query::TimeInterval(
-                    Interval::new(
-                        Time::from_seconds_since_epoch(1_699_999_200, &time_precision),
-                        Duration::from_seconds(3600, &time_precision),
-                    )
-                    .unwrap(),
-                ),
+                query: query.clone(),
             },
             Op::CollectionJobDriver,
-            Op::CollectorPoll { collection_job_id },
+            Op::CollectorPoll { query },
         ]),
     };
     let (test_result, metrics) = Simulation::run_with_metrics(input);
@@ -129,8 +123,8 @@ fn successful_collection_leader_selected() {
     install_test_trace_subscriber();
     initialize_rustls();
 
-    let collection_job_id = random();
     let time_precision = TimePrecision::from_seconds(3600);
+    let query = Query::LeaderSelected(random());
     let input = Input {
         is_leader_selected: true,
         config: Config {
@@ -166,11 +160,12 @@ fn successful_collection_leader_selected() {
             Op::LeaderAggregationJobDriver,
             Op::LeaderGarbageCollector,
             Op::CollectorStart {
-                collection_job_id,
-                query: Query::LeaderSelected,
+                query: query.clone(),
             },
             Op::CollectionJobDriver,
-            Op::CollectorPoll { collection_job_id },
+            Op::CollectorPoll {
+                query: query.clone(),
+            },
             Op::Upload {
                 report_time: START_TIME.to_time(&time_precision),
                 count: 4,
@@ -178,11 +173,10 @@ fn successful_collection_leader_selected() {
             Op::AggregationJobCreator,
             Op::LeaderAggregationJobDriver,
             Op::CollectorStart {
-                collection_job_id,
-                query: Query::LeaderSelected,
+                query: query.clone(),
             },
             Op::CollectionJobDriver,
-            Op::CollectorPoll { collection_job_id },
+            Op::CollectorPoll { query },
         ]),
     };
     let (test_result, metrics) = Simulation::run_with_metrics(input);
@@ -225,8 +219,14 @@ fn successful_collection_asynchronous() {
     install_test_trace_subscriber();
     initialize_rustls();
 
-    let collection_job_id = random();
     let time_precision = TimePrecision::from_seconds(3600);
+    let query = Query::TimeInterval(
+        Interval::new(
+            Time::from_seconds_since_epoch(1_699_999_200, &time_precision),
+            Duration::from_seconds(3600, &time_precision),
+        )
+        .unwrap(),
+    );
     let input = Input {
         is_leader_selected: false,
         config: Config {
@@ -277,17 +277,12 @@ fn successful_collection_asynchronous() {
             Op::LeaderAggregationJobDriver,
             Op::LeaderGarbageCollector,
             Op::CollectorStart {
-                collection_job_id,
-                query: Query::TimeInterval(
-                    Interval::new(
-                        Time::from_seconds_since_epoch(1_699_999_200, &time_precision),
-                        Duration::from_seconds(3600, &time_precision),
-                    )
-                    .unwrap(),
-                ),
+                query: query.clone(),
             },
             Op::CollectionJobDriver,
-            Op::CollectorPoll { collection_job_id },
+            Op::CollectorPoll {
+                query: query.clone(),
+            },
             Op::Upload {
                 report_time: START_TIME.to_time(&time_precision),
                 count: 4,
@@ -300,17 +295,10 @@ fn successful_collection_asynchronous() {
             },
             Op::LeaderAggregationJobDriver,
             Op::CollectorStart {
-                collection_job_id,
-                query: Query::TimeInterval(
-                    Interval::new(
-                        Time::from_seconds_since_epoch(1_699_999_200, &time_precision),
-                        Duration::from_seconds(3600, &time_precision),
-                    )
-                    .unwrap(),
-                ),
+                query: query.clone(),
             },
             Op::CollectionJobDriver,
-            Op::CollectorPoll { collection_job_id },
+            Op::CollectorPoll { query },
         ]),
     };
     let (test_result, metrics) = Simulation::run_with_metrics(input);
@@ -489,7 +477,6 @@ fn repro_abandoned_aggregation_job_batch_mismatch() {
     install_test_trace_subscriber();
     initialize_rustls();
 
-    let collection_job_id = random();
     let time_precision = TimePrecision::from_seconds(1000);
     let input = Input {
         is_leader_selected: false,
@@ -525,7 +512,6 @@ fn repro_abandoned_aggregation_job_batch_mismatch() {
             },
             Op::LeaderAggregationJobDriver,
             Op::CollectorStart {
-                collection_job_id,
                 query: Query::TimeInterval(
                     Interval::new(
                         START_TIME.to_time(&time_precision),
@@ -571,7 +557,6 @@ fn repro_helper_accumulate_on_retried_request() {
             },
             Op::LeaderAggregationJobDriver,
             Op::CollectorStart {
-                collection_job_id: random(),
                 query: Query::TimeInterval(
                     Interval::new(
                         START_TIME.to_time(&time_precision),
