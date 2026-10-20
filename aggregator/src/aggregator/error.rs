@@ -12,7 +12,7 @@ use janus_aggregator_core::{
 use janus_core::http::HttpErrorResponse;
 use janus_messages::{
     AggregateShareId, AggregationJobId, AggregationJobStep, CollectionJobId, HpkeConfigId,
-    Interval, ReportError, ReportId, ReportIdChecksum, Role, TaskId, Time,
+    ReportError, ReportId, ReportIdChecksum, Role, TaskId, Time,
 };
 use opentelemetry::{KeyValue, metrics::Counter};
 use prio::{topology::ping_pong::PingPongError, vdaf::VdafError};
@@ -115,8 +115,8 @@ pub enum Error {
     BatchMismatch(Box<BatchMismatch>),
     /// A collect or aggregate share request was rejected because the batch overlaps with a
     /// previously collected one.
-    #[error("task {0}: queried batch {1} overlaps with previously collected batch(es)")]
-    BatchOverlap(TaskId, Interval),
+    #[error("task {0}: queried batch overlaps with previously collected batch(es)")]
+    BatchOverlap(TaskId),
     /// HPKE failure.
     #[error("HPKE error: {0}")]
     Hpke(#[from] janus_core::hpke::Error),
@@ -339,7 +339,7 @@ impl Error {
             Error::InvalidBatchSize(_, _) => "invalid_batch_size",
             Error::Url(_) => "url",
             Error::BatchMismatch { .. } => "batch_mismatch",
-            Error::BatchOverlap(_, _) => "batch_overlap",
+            Error::BatchOverlap(_) => "batch_overlap",
             Error::Hpke(_) => "hpke",
             Error::TaskParameters(_) => "task_parameters",
             Error::HttpClient(_) => "http_client",

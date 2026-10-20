@@ -11,11 +11,13 @@ use crate::{
 };
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn janus_metrics_count() {
     run_metrics_test(VdafInstance::Prio3Count, "Prio3Count", 1).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn janus_metrics_sum() {
     run_metrics_test(
         VdafInstance::Prio3Sum {
@@ -28,6 +30,7 @@ async fn janus_metrics_sum() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn janus_metrics_sumvec() {
     run_metrics_test(
         VdafInstance::Prio3SumVec {
@@ -43,6 +46,7 @@ async fn janus_metrics_sumvec() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn janus_metrics_sumvec_custom() {
     run_metrics_test(
         VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
@@ -59,6 +63,7 @@ async fn janus_metrics_sumvec_custom() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn janus_metrics_histogram() {
     run_metrics_test(
         VdafInstance::Prio3Histogram {

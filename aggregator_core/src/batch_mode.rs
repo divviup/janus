@@ -146,7 +146,7 @@ pub trait CollectableBatchMode: AccumulableBatchMode {
     type Iter: Iterator<Item = Self::BatchIdentifier> + Send + Sync + Clone;
 
     /// Retrieves the batch identifier for a given query.
-    async fn collection_identifier_for_query(
+    async fn batch_identifier_for_query(
         tx: &Transaction<'_>,
         task: &AggregatorTask,
         query: &Query<Self>,
@@ -252,7 +252,7 @@ pub trait CollectableBatchMode: AccumulableBatchMode {
 impl CollectableBatchMode for TimeInterval {
     type Iter = TimeIntervalBatchIdentifierIter;
 
-    async fn collection_identifier_for_query(
+    async fn batch_identifier_for_query(
         _: &Transaction<'_>,
         _: &AggregatorTask,
         query: &Query<Self>,
@@ -328,7 +328,7 @@ impl Iterator for TimeIntervalBatchIdentifierIter {
 impl CollectableBatchMode for LeaderSelected {
     type Iter = iter::Once<Self::BatchIdentifier>;
 
-    async fn collection_identifier_for_query(
+    async fn batch_identifier_for_query(
         tx: &Transaction<'_>,
         task: &AggregatorTask,
         _: &Query<Self>,
@@ -341,7 +341,7 @@ impl CollectableBatchMode for LeaderSelected {
         _batch_id: &Self::BatchIdentifier,
         _query: &Query<Self>,
     ) -> bool {
-        // A leader-selected query has an empty body, so any batch ID is consistent with it.
+        // Leader-selected queries are consistent with any batch ID.
         true
     }
 
@@ -367,7 +367,7 @@ impl CollectableBatchMode for LeaderSelected {
 mod tests {
     use janus_messages::{
         BatchId, CollectionJobReq, Duration, Interval, Query, Time, TimePrecision,
-        batch_mode::{LeaderSelected, TimeInterval},
+        batch_mode::{LeaderSelected, LeaderSelectedQueryConfig, TimeInterval},
     };
     use prio::{
         codec::Encode,
@@ -433,18 +433,14 @@ mod tests {
 
         let batch_id = BatchId::from([5u8; 32]);
         let collector_request = CollectionJobReq::<LeaderSelected>::new(
-            Query::new_leader_selected(
-                janus_messages::batch_mode::LeaderSelectedQueryConfig::test_default(),
-            ),
+            Query::new_leader_selected(LeaderSelectedQueryConfig::test_default()),
             encoded_aggregation_parameter,
         );
         let leader_job = CollectionJob::<0, LeaderSelected, Vdaf>::new(
             random(),
             random(),
             random(),
-            Query::new_leader_selected(
-                janus_messages::batch_mode::LeaderSelectedQueryConfig::test_default(),
-            ),
+            Query::new_leader_selected(LeaderSelectedQueryConfig::test_default()),
             aggregation_parameter,
             batch_id,
             CollectionJobState::Start,

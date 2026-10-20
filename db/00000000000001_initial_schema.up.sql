@@ -447,6 +447,7 @@ CREATE TABLE collection_jobs(
     CONSTRAINT collection_jobs_unique_id UNIQUE(task_id, collection_job_id),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
 );
+CREATE INDEX collection_jobs_task_id_query ON collection_jobs(task_id, query);
 CREATE INDEX collection_jobs_task_id_batch_id ON collection_jobs(task_id, batch_identifier);
 -- TODO(#224): verify that this index is optimal for purposes of acquiring collection jobs.
 CREATE INDEX collection_jobs_state_and_lease_expiry ON collection_jobs(state, lease_expiry) WHERE state = 'START';

@@ -22,6 +22,7 @@ use futures::future::try_join_all;
 use janus_core::{
     auth_tokens::AuthenticationToken,
     hpke::{self, HpkePrivateKey},
+    messages::DeriveId,
     time::{Clock, TimeExt},
     vdaf::VdafInstance,
 };
@@ -3024,8 +3025,7 @@ WHERE collection_jobs.task_id = $1
             &[
                 /* task_id */ &task_info.pkey,
                 /* collection_job_id */ &collection_job_id.as_ref(),
-                /* threshold */
-                &task_info.report_expiry_threshold(self.clock.now())?,
+                /* threshold */ &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
@@ -3038,6 +3038,60 @@ WHERE collection_jobs.task_id = $1
                 *collection_job_id,
                 &row,
             )
+        })
+        .transpose()
+    }
+
+    /// Returns the collection job matching the query, if any exists.
+    pub async fn get_collection_job_by_query<
+        const SEED_SIZE: usize,
+        B: BatchMode,
+        A: AsyncAggregator<SEED_SIZE>,
+    >(
+        &self,
+        vdaf: &A,
+        task_id: &TaskId,
+        query: &Query<B>,
+    ) -> Result<Option<CollectionJob<SEED_SIZE, B, A>>, Error> {
+        let task_info = match self.task_info_for(task_id).await? {
+            Some(task_info) => task_info,
+            None => return Ok(None),
+        };
+
+        let stmt = self
+            .prepare_cached(
+                "-- get_collection_job_by_query()
+SELECT
+    collection_job_id, aggregation_param, batch_identifier, state, report_count,
+    client_timestamp_interval, helper_aggregate_share, leader_aggregate_share,
+    aggregate_share_id, query
+FROM collection_jobs
+WHERE collection_jobs.task_id = $1
+AND collection_jobs.query = $2
+AND COALESCE(
+          LOWER(collection_jobs.batch_interval),
+          (SELECT MAX(UPPER(client_timestamp_interval))
+           FROM batch_aggregations
+           WHERE batch_aggregations.task_id = collection_jobs.task_id
+             AND batch_aggregations.batch_identifier = collection_jobs.batch_identifier
+             AND batch_aggregations.aggregation_param = collection_jobs.aggregation_param),
+          0) >= $3",
+            )
+            .await?;
+        self.query_opt(
+            &stmt,
+            &[
+                /* task_id */ &task_info.pkey,
+                /* query */ &query.get_encoded()?,
+                /* threshold */ &task_info.report_expiry_threshold(self.clock.now())?,
+            ],
+        )
+        .await?
+        .map(|row| {
+            let batch_identifier = B::BatchIdentifier::get_decoded(row.get("batch_identifier"))?;
+            let collection_job_id =
+                row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
+            Self::collection_job_from_row(vdaf, *task_id, batch_identifier, collection_job_id, &row)
         })
         .transpose()
     }
@@ -3399,6 +3453,36 @@ WHERE task_id = $1
         ))
     }
 
+    /// Stores a new collection job constructed from a [`CollectionJobReq`].
+    ///
+    /// The collection job ID is deterministically derived from the request and returned.
+    pub async fn put_collection_job_by_request<
+        const SEED_SIZE: usize,
+        B: CollectableBatchMode,
+        A: AsyncAggregator<SEED_SIZE>,
+    >(
+        &self,
+        task_id: &TaskId,
+        req: &CollectionJobReq<B>,
+        collection_identifier: B::BatchIdentifier,
+    ) -> Result<CollectionJobId, Error> {
+        let collection_job_id = req.derive_id()?;
+
+        self.put_collection_job(&CollectionJob::<SEED_SIZE, B, A>::new(
+            *task_id,
+            collection_job_id,
+            random(),
+            req.query().clone(),
+            A::AggregationParam::get_decoded(req.aggregation_parameter())
+                .map_err(|_| Error::InvalidParameter("invalid aggregation parameter"))?,
+            collection_identifier,
+            CollectionJobState::Start,
+        ))
+        .await?;
+
+        Ok(collection_job_id)
+    }
+
     /// Stores a new collection job.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn put_collection_job<
@@ -3409,10 +3493,10 @@ WHERE task_id = $1
         &self,
         collection_job: &CollectionJob<SEED_SIZE, B, A>,
     ) -> Result<(), Error> {
-        let task_info = match self.task_info_for(collection_job.task_id()).await? {
-            Some(task_info) => task_info,
-            None => return Err(Error::MutationTargetNotFound),
-        };
+        let task_info = self
+            .task_info_for(collection_job.task_id())
+            .await?
+            .ok_or_else(|| Error::MutationTargetNotFound)?;
         let now = self.clock.now();
 
         let batch_interval = B::to_batch_interval(collection_job.batch_identifier())
@@ -6086,6 +6170,9 @@ pub enum Error {
     /// The transaction was aborted because it retried too many times.
     #[error("too many retries")]
     TooManyRetries { source: Option<Box<Error>> },
+    /// An identifier could not be derived from a request.
+    #[error("failed to derive identifier: {0}")]
+    IdentifierDerivation(#[from] janus_core::messages::DeriveIdError),
 }
 
 impl From<aws_lc_rs::error::Unspecified> for Error {
