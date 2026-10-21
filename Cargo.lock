@@ -1383,9 +1383,9 @@ dependencies = [
 
 [[package]]
 name = "divviup-client"
-version = "0.5.6"
+version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7eaeb430cdf6dd79132c024b5a22cfbc917a67f119e4dbd4ff6555f7285da9d3"
+checksum = "2dfb465b7f36df603c7784854c5d41a19389f832731f61f18d4e1bb7552837a7"
 dependencies = [
  "base64 0.23.1",
  "email_address",
@@ -1396,7 +1396,7 @@ dependencies = [
  "num-rational",
  "pad-adapter",
  "prio 0.16.8",
- "reqwest 0.12.28",
+ "reqwest",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -2250,7 +2250,6 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower-service",
- "webpki-roots",
 ]
 
 [[package]]
@@ -2283,7 +2282,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.4",
+ "socket2 0.5.10",
  "tokio",
  "tower-service",
  "tracing",
@@ -2564,7 +2563,7 @@ dependencies = [
  "rand 0.10.3",
  "rayon",
  "regex",
- "reqwest 0.13.5",
+ "reqwest",
  "retry-after",
  "rstest",
  "rustc_version",
@@ -2662,7 +2661,7 @@ dependencies = [
  "prio 0.18.1",
  "rand 0.10.3",
  "regex",
- "reqwest 0.13.5",
+ "reqwest",
  "rstest",
  "rstest_reuse",
  "rustc_version",
@@ -2699,7 +2698,7 @@ dependencies = [
  "ohttp",
  "prio 0.18.1",
  "rand 0.10.3",
- "reqwest 0.13.5",
+ "reqwest",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -2726,7 +2725,7 @@ dependencies = [
  "mockito",
  "prio 0.18.1",
  "rand 0.10.3",
- "reqwest 0.13.5",
+ "reqwest",
  "retry-after",
  "serde",
  "serde_json",
@@ -2765,7 +2764,7 @@ dependencies = [
  "quickcheck",
  "rand 0.10.3",
  "regex",
- "reqwest 0.13.5",
+ "reqwest",
  "retry-after",
  "rstest",
  "rustls",
@@ -2817,7 +2816,7 @@ dependencies = [
  "quickcheck",
  "rand 0.10.3",
  "regex",
- "reqwest 0.13.5",
+ "reqwest",
  "rstest",
  "rustls",
  "serde",
@@ -2853,7 +2852,7 @@ dependencies = [
  "prio 0.18.1",
  "rand 0.10.3",
  "regex",
- "reqwest 0.13.5",
+ "reqwest",
  "serde",
  "serde_json",
  "testcontainers",
@@ -2917,7 +2916,7 @@ dependencies = [
  "janus_messages 0.9.0-prerelease-1",
  "prio 0.18.1",
  "rand 0.10.3",
- "reqwest 0.13.5",
+ "reqwest",
  "serde_json",
  "tempfile",
  "tokio",
@@ -4254,7 +4253,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.6.4",
+ "socket2 0.5.10",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -4267,6 +4266,7 @@ version = "0.11.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04759210543be93709136e28212294a659ef5001836ff4eab4d663e4529bba83"
 dependencies = [
+ "aws-lc-rs",
  "bytes",
  "getrandom 0.4.3",
  "lru-slab",
@@ -4292,7 +4292,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.4",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.61.2",
 ]
@@ -4505,44 +4505,6 @@ checksum = "ba39f3699c378cd8970968dcbff9c43159ea4cfbd88d43c00b22f2ef10a435d2"
 
 [[package]]
 name = "reqwest"
-version = "0.12.28"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eddd3ca559203180a307f12d114c268abf583f59b03cb906fd0b3ff8646c1147"
-dependencies = [
- "base64 0.22.1",
- "bytes",
- "futures-core",
- "http",
- "http-body",
- "http-body-util",
- "hyper",
- "hyper-rustls",
- "hyper-util",
- "js-sys",
- "log",
- "percent-encoding",
- "pin-project-lite",
- "quinn",
- "rustls",
- "rustls-pki-types",
- "serde",
- "serde_json",
- "serde_urlencoded",
- "sync_wrapper",
- "tokio",
- "tokio-rustls",
- "tower 0.5.3",
- "tower-http 0.6.11",
- "tower-service",
- "url",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
- "webpki-roots",
-]
-
-[[package]]
-name = "reqwest"
 version = "0.13.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "16a1cfa75cc186dd73d5818e510e042e40927bccc9c236b061cea97e1eb08029"
@@ -4560,6 +4522,7 @@ dependencies = [
  "log",
  "percent-encoding",
  "pin-project-lite",
+ "quinn",
  "rustls",
  "rustls-pki-types",
  "rustls-platform-verifier",
@@ -4679,7 +4642,6 @@ dependencies = [
  "aws-lc-rs",
  "log",
  "once_cell",
- "ring",
  "rustls-pki-types",
  "rustls-webpki",
  "subtle",
@@ -4877,7 +4839,7 @@ checksum = "7bd22781911de0ca6debda95f073c8f18bec65d1a94f1fa9573f3102e514cea4"
 dependencies = [
  "ahash",
  "annotate-snippets",
- "base64 0.22.1",
+ "base64 0.21.7",
  "encoding_rs_io",
  "getrandom 0.3.4",
  "granit-parser",
