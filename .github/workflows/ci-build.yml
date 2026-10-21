@@ -148,7 +148,7 @@ jobs:
         driver: docker-container
         use: true
     - name: Build
-      uses: docker/bake-action@v7.4.0
+      uses: docker/bake-action@v7.5.0
       with:
         files: docker-bake.hcl
         workdir: .
@@ -175,7 +175,7 @@ jobs:
         driver: docker-container
         use: true
     - name: Build
-      uses: docker/bake-action@v7.4.0
+      uses: docker/bake-action@v7.5.0
       with:
         files: docker-bake.hcl
         workdir: .
