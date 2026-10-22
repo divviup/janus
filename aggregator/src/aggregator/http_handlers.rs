@@ -130,7 +130,16 @@ impl Error {
                 .with_aggregation_job_id(aggregation_job_id)
                 .into_response()
             }
-            Error::DeletedCollectionJob(_, _) => StatusCode::NO_CONTENT.into_response(),
+            Error::DeletedCollectionJob(task_id, collection_job_id) => {
+                ProblemDocument::new(
+                    "https://docs.divviup.org/references/janus-errors#collection-job-deleted",
+                    "The collection job has been deleted.",
+                    StatusCode::GONE,
+                )
+                .with_task_id(task_id)
+                .with_collection_job_id(collection_job_id)
+                .into_response()
+            },
             Error::AbandonedCollectionJob(task_id, collection_job_id) => {
                 ProblemDocument::new(
                     "https://docs.divviup.org/references/janus-errors#collection-job-abandoned",
@@ -188,6 +197,14 @@ impl Error {
             Error::AggregateShareRequestRejected(task_id, detail) => ProblemDocument::new(
                 "https://docs.divviup.org/references/janus-errors#aggregate-share-request-rejected",
                 "Aggregate share request rejected.",
+                StatusCode::BAD_REQUEST,
+            )
+            .with_task_id(task_id)
+            .with_detail(detail)
+            .into_response(),
+            Error::CollectionJobRequestRejected(task_id, detail) => ProblemDocument::new(
+                "https://docs.divviup.org/references/janus-errors#collection-job-request-rejected",
+                "Collection job request rejected.",
                 StatusCode::BAD_REQUEST,
             )
             .with_task_id(task_id)

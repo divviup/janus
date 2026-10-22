@@ -3042,17 +3042,19 @@ WHERE collection_jobs.task_id = $1
         .transpose()
     }
 
-    /// Returns the collection job matching the query, if any exists.
+    /// Returns the collection job matching the query and whether it is expired.
+    ///
+    /// Only valid for leader selected batch mode tasks. Use
+    /// [`Self::get_collection_jobs_intersecting_interval`] for time interval tasks.
     pub async fn get_collection_job_by_query<
         const SEED_SIZE: usize,
-        B: BatchMode,
         A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         vdaf: &A,
         task_id: &TaskId,
-        query: &Query<B>,
-    ) -> Result<Option<CollectionJob<SEED_SIZE, B, A>>, Error> {
+        query: &Query<LeaderSelected>,
+    ) -> Result<Option<(CollectionJob<SEED_SIZE, LeaderSelected, A>, bool)>, Error> {
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
             None => return Ok(None),
@@ -3062,20 +3064,18 @@ WHERE collection_jobs.task_id = $1
             .prepare_cached(
                 "-- get_collection_job_by_query()
 SELECT
-    collection_job_id, aggregation_param, batch_identifier, state, report_count,
-    client_timestamp_interval, helper_aggregate_share, leader_aggregate_share,
-    aggregate_share_id, query
-FROM collection_jobs
-WHERE collection_jobs.task_id = $1
-AND collection_jobs.query = $2
-AND COALESCE(
-          LOWER(collection_jobs.batch_interval),
-          (SELECT MAX(UPPER(client_timestamp_interval))
-           FROM batch_aggregations
-           WHERE batch_aggregations.task_id = collection_jobs.task_id
-             AND batch_aggregations.batch_identifier = collection_jobs.batch_identifier
-             AND batch_aggregations.aggregation_param = collection_jobs.aggregation_param),
-          0) >= $3",
+    cj.collection_job_id, cj.aggregation_param, cj.batch_identifier,
+    cj.state, cj.report_count, cj.client_timestamp_interval,
+    cj.helper_aggregate_share, cj.leader_aggregate_share,
+    cj.aggregate_share_id, cj.query, (
+        SELECT MAX(UPPER(ba.client_timestamp_interval))
+        FROM batch_aggregations AS ba
+        WHERE ba.task_id = cj.task_id
+            AND ba.batch_identifier = cj.batch_identifier
+            AND ba.aggregation_param = cj.aggregation_param
+    ) < $3 AS expired
+FROM collection_jobs AS cj
+WHERE cj.task_id = $1 AND cj.query = $2",
             )
             .await?;
         self.query_opt(
@@ -3088,10 +3088,15 @@ AND COALESCE(
         )
         .await?
         .map(|row| {
-            let batch_identifier = B::BatchIdentifier::get_decoded(row.get("batch_identifier"))?;
-            let collection_job_id =
-                row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
-            Self::collection_job_from_row(vdaf, *task_id, batch_identifier, collection_job_id, &row)
+            let job = Self::collection_job_from_row(
+                vdaf,
+                *task_id,
+                BatchId::get_decoded(row.get("batch_identifier"))?,
+                row.get_bytea_and_convert("collection_job_id")?,
+                &row,
+            )?;
+
+            Ok((job, row.get("expired")))
         })
         .transpose()
     }
@@ -3211,9 +3216,12 @@ WHERE task_id = $1
         .collect()
     }
 
-    /// Returns all collection jobs for the given task whose collect intervals intersect with the
-    /// given interval. Applies only to time-interval tasks.
+    /// Collection jobs whose batch intervals intersect with the given interval.
+    ///
+    /// Applies only to time-interval tasks. The returned tuple includes a boolean which is true if
+    /// the collection job is expired.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
+    #[allow(clippy::type_complexity)]
     pub async fn get_collection_jobs_intersecting_interval<
         const SEED_SIZE: usize,
         A: AsyncAggregator<SEED_SIZE>,
@@ -3222,7 +3230,7 @@ WHERE task_id = $1
         vdaf: &A,
         task_id: &TaskId,
         batch_interval: &Interval,
-    ) -> Result<Vec<CollectionJob<SEED_SIZE, TimeInterval, A>>, Error> {
+    ) -> Result<Vec<(CollectionJob<SEED_SIZE, TimeInterval, A>, bool)>, Error> {
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
             None => return Ok(Vec::new()),
@@ -3234,11 +3242,12 @@ WHERE task_id = $1
 SELECT
     collection_job_id, query, aggregation_param, batch_identifier, state,
     report_count, client_timestamp_interval, helper_aggregate_share,
-    leader_aggregate_share, aggregate_share_id
+    leader_aggregate_share, aggregate_share_id, batch_interval,
+    -- batch_interval will always be set for time interval tasks
+    LOWER(batch_interval) < $3 as expired
 FROM collection_jobs
 WHERE task_id = $1
-  AND batch_interval && $2
-  AND LOWER(collection_jobs.batch_interval) >= $3",
+  AND batch_interval && $2",
             )
             .await?;
         self.query(
@@ -3246,23 +3255,21 @@ WHERE task_id = $1
             &[
                 /* task_id */ &task_info.pkey,
                 /* batch_interval */ &SqlInterval::from(*batch_interval),
-                /* threshold */
-                &task_info.report_expiry_threshold(self.clock.now())?,
+                /* threshold */ &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
         .into_iter()
         .map(|row| {
-            let batch_identifier = Interval::get_decoded(row.get("batch_identifier"))?;
-            let collection_job_id =
-                row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
-            Self::collection_job_from_row::<SEED_SIZE, TimeInterval, A>(
+            let job = Self::collection_job_from_row::<SEED_SIZE, TimeInterval, A>(
                 vdaf,
                 *task_id,
-                batch_identifier,
-                collection_job_id,
+                Interval::get_decoded(row.get("batch_identifier"))?,
+                row.get_bytea_and_convert("collection_job_id")?,
                 &row,
-            )
+            )?;
+
+            Ok((job, row.get("expired")))
         })
         .collect()
     }

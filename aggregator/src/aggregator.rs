@@ -3156,39 +3156,20 @@ impl VdafOps {
         }
     }
 
-    async fn handle_create_collection_job_generic<
-        const SEED_SIZE: usize,
-        B: CollectableBatchMode,
-        A: AsyncAggregator<SEED_SIZE>,
-    >(
+    /// Handle creation of a collection job, returning the job ID and possibly an encoded
+    /// `CollectionJobResp<B>`.
+    async fn handle_create_collection_job_generic<const SEED_SIZE: usize, B, A>(
         datastore: &Datastore,
         task: Arc<AggregatorTask>,
         vdaf: Arc<A>,
         req_bytes: &[u8],
-    ) -> Result<(CollectionJobId, Option<Vec<u8>>), Error> {
-        let req =
-            Arc::new(CollectionJobReq::<B>::get_decoded(req_bytes).map_err(Error::MessageDecode)?);
-
-        Self::handle_create_collection_job_inner(datastore, task, vdaf, req).await
-    }
-
-    /// Handle creation of a collection job, returning the job ID and possibly an encoded
-    /// `CollectionJobResp<B>`.
-    #[tracing::instrument(
-        skip_all,
-        fields(query = ?req.query().query_body()),
-        err(level = Level::DEBUG)
-    )]
-    async fn handle_create_collection_job_inner<const SEED_SIZE: usize, B, A>(
-        datastore: &Datastore,
-        task: Arc<AggregatorTask>,
-        vdaf: Arc<A>,
-        req: Arc<CollectionJobReq<B>>,
     ) -> Result<(CollectionJobId, Option<Vec<u8>>), Error>
     where
         B: CollectableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
     {
+        let req =
+            Arc::new(CollectionJobReq::<B>::get_decoded(req_bytes).map_err(Error::MessageDecode)?);
         validate_collection_job_extensions(task.id(), req.extensions())?;
         A::AggregationParam::get_decoded(req.aggregation_parameter())
             .map_err(Error::MessageDecode)?;
@@ -3213,14 +3194,24 @@ impl VdafOps {
                     //
                     // In either case, we don't need to examine anything but the first item in the
                     // iterator.
-                    if let Some(job) = jobs.next() {
+                    if let Some((job, expired)) = jobs.next() {
                         if *job.id() == req.derive_id()? {
                             debug!(
                                 collection_job_id = %job.id(),
                                 collect_request = ?req,
-                                "collection job already exists"
+                                job_state = ?job.state(),
+                                "collection job already exists",
                             );
                             debug_assert!(jobs.next().is_none());
+                            if expired {
+                                return Err(datastore::Error::User(
+                                    Error::CollectionJobRequestRejected(
+                                        *task.id(),
+                                        "collection job request too late",
+                                    )
+                                    .into(),
+                                ));
+                            }
                             return Ok((
                                 *job.id(),
                                 Self::collection_job_resp_from_job(&task, &job)
@@ -3402,6 +3393,7 @@ impl VdafOps {
                 debug!(
                     collection_job_id = %collection_job.id(),
                     task_id = %task.id(),
+                    job_state = ?collection_job.state(),
                     "Serving cached collection job response"
                 );
                 let encrypted_leader_aggregate_share = hpke::seal(
@@ -3842,7 +3834,7 @@ impl VdafOps {
                 {
                     return Err(Error::AggregateShareRequestRejected(
                         *task.id(),
-                        "aggregate share request too late".to_string(),
+                        "aggregate share request too late",
                     ));
                 }
             }

@@ -3916,7 +3916,7 @@ async fn get_collection_jobs_including_or_intersecting_time(
                 async |want_first_job: bool, want_second_job: bool, interval: Interval| {
                     let mut saw_first_job = false;
                     let mut saw_second_job = false;
-                    for job in tx
+                    for (job, expired) in tx
                         .get_collection_jobs_intersecting_interval(
                             &dummy::Vdaf::default(),
                             task.id(),
@@ -3932,6 +3932,8 @@ async fn get_collection_jobs_including_or_intersecting_time(
                         } else {
                             panic!("unexpected collection job {job:?}");
                         }
+
+                        assert!(!expired);
                     }
                     assert_eq!(want_first_job, saw_first_job);
                     assert_eq!(want_second_job, saw_second_job);
@@ -4118,165 +4120,167 @@ async fn get_collection_jobs_by_batch_id(ephemeral_datastore: EphemeralDatastore
     .unwrap();
 }
 
-async fn get_collection_jobs_by_query_test<B: CollectableBatchMode>(
-    ephemeral_datastore: EphemeralDatastore,
-    batch_mode: task::BatchMode,
-    queries: [Query<B>; 3],
-    batch_identifiers: [B::BatchIdentifier; 3],
-) {
+#[rstest_reuse::apply(schema_versions_template)]
+#[tokio::test]
+async fn get_collection_jobs_by_query_leader_selected(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
     let clock = MockClock::new(START_TIMESTAMP);
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
     let aggregation_param = dummy::AggregationParam(13);
 
-    ds.run_tx("test-put-collection-job", |tx| {
-        let queries = queries.clone();
-        let batch_identifiers = batch_identifiers.clone();
-        Box::pin(async move {
-            let task = TaskBuilder::new(
-                batch_mode,
-                AggregationMode::Synchronous,
-                VdafInstance::Fake { rounds: 1 },
-            )
-            .with_report_expiry_age(Some(REPORT_EXPIRY_AGE_DURATION))
-            .with_time_precision(TIME_PRECISION)
-            .build()
-            .leader_view()
-            .unwrap();
-            tx.put_aggregator_task(&task).await.unwrap();
+    let queries = [
+        Query::new_leader_selected(random()),
+        Query::new_leader_selected(random()),
+        Query::new_leader_selected(random()),
+    ];
+    let batch_identifiers: [BatchId; _] = [random(), random(), random()];
 
-            let first_collection_job = CollectionJob::<0, B, dummy::Vdaf>::new(
-                *task.id(),
-                random(),
-                random(),
-                queries[0].clone(),
-                aggregation_param,
-                batch_identifiers[0].clone(),
-                CollectionJobState::Start,
-            );
-            tx.put_collection_job(&first_collection_job).await.unwrap();
-            // We must insert a batch aggregation so that the query can work out a client timestamp
-            // interval to check report expiry against. It doesn't matter what its
-            // BatchAggregationState is.
-            tx.put_batch_aggregation(&BatchAggregation::<0, B, dummy::Vdaf>::new(
-                *task.id(),
-                first_collection_job.batch_identifier().clone(),
-                aggregation_param,
-                0,
-                Interval::new(
-                    START_TIME,
-                    Duration::from_seconds(TIME_PRECISION_SECONDS, &TIME_PRECISION),
+    let (task_id, first_collection_job_id, second_collection_job_id) = ds
+        .run_tx("test-get-collection-jobs-by-query-leader-selected", |tx| {
+            let queries = queries.clone();
+            Box::pin(async move {
+                let task = TaskBuilder::new(
+                    task::BatchMode::LeaderSelected {
+                        batch_time_window_size: None,
+                    },
+                    AggregationMode::Synchronous,
+                    VdafInstance::Fake { rounds: 1 },
                 )
-                .unwrap(),
-                BatchAggregationState::Scrubbed,
-            ))
-            .await
-            .unwrap();
+                .with_report_expiry_age(Some(REPORT_EXPIRY_AGE_DURATION))
+                .with_time_precision(TIME_PRECISION)
+                .build()
+                .leader_view()
+                .unwrap();
+                tx.put_aggregator_task(&task).await.unwrap();
 
-            let second_collection_job = CollectionJob::<0, B, dummy::Vdaf>::new(
-                *task.id(),
-                random(),
-                random(),
-                queries[1].clone(),
-                aggregation_param,
-                batch_identifiers[1].clone(),
-                CollectionJobState::Start,
-            );
-            tx.put_collection_job(&second_collection_job).await.unwrap();
-            tx.put_batch_aggregation(&BatchAggregation::<0, B, dummy::Vdaf>::new(
-                *task.id(),
-                second_collection_job.batch_identifier().clone(),
-                aggregation_param,
-                0,
-                Interval::new(
-                    START_TIME,
-                    Duration::from_seconds(TIME_PRECISION_SECONDS, &TIME_PRECISION),
-                )
-                .unwrap(),
-                BatchAggregationState::Scrubbed,
-            ))
-            .await
-            .unwrap();
+                let first_collection_job = CollectionJob::<0, LeaderSelected, dummy::Vdaf>::new(
+                    *task.id(),
+                    random(),
+                    random(),
+                    queries[0].clone(),
+                    aggregation_param,
+                    batch_identifiers[0],
+                    CollectionJobState::Start,
+                );
+                tx.put_collection_job(&first_collection_job).await.unwrap();
+                // We must insert a batch aggregation so that the query can work out a client
+                // timestamp interval to check report expiry against. It doesn't
+                // matter what its BatchAggregationState is.
+                tx.put_batch_aggregation(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
+                    *task.id(),
+                    *first_collection_job.batch_identifier(),
+                    aggregation_param,
+                    0,
+                    Interval::new(
+                        START_TIME,
+                        Duration::from_seconds(TIME_PRECISION_SECONDS, &TIME_PRECISION),
+                    )
+                    .unwrap(),
+                    BatchAggregationState::Scrubbed,
+                ))
+                .await
+                .unwrap();
 
-            let check_jobs =
-                async |want_first_job: bool, want_second_job: bool, query: &Query<_>| {
-                    let job = tx
-                        .get_collection_job_by_query(&dummy::Vdaf::default(), task.id(), query)
-                        .await
-                        .unwrap();
+                let second_collection_job = CollectionJob::<0, LeaderSelected, dummy::Vdaf>::new(
+                    *task.id(),
+                    random(),
+                    random(),
+                    queries[1].clone(),
+                    aggregation_param,
+                    batch_identifiers[1],
+                    CollectionJobState::Start,
+                );
+                tx.put_collection_job(&second_collection_job).await.unwrap();
+                tx.put_batch_aggregation(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
+                    *task.id(),
+                    *second_collection_job.batch_identifier(),
+                    aggregation_param,
+                    0,
+                    Interval::new(
+                        START_TIME,
+                        Duration::from_seconds(TIME_PRECISION_SECONDS, &TIME_PRECISION),
+                    )
+                    .unwrap(),
+                    BatchAggregationState::Scrubbed,
+                ))
+                .await
+                .unwrap();
 
-                    if want_first_job {
-                        assert_eq!(job.unwrap().id(), first_collection_job.id());
-                    } else if want_second_job {
-                        assert_eq!(job.unwrap().id(), second_collection_job.id());
-                    } else {
-                        assert!(job.is_none());
-                    }
-                };
+                let check_jobs =
+                    async |want_first_job: bool, want_second_job: bool, query: &Query<_>| {
+                        let job = tx
+                            .get_collection_job_by_query(&dummy::Vdaf::default(), task.id(), query)
+                            .await
+                            .unwrap();
 
-            check_jobs(true, false, &queries[0]).await;
-            check_jobs(false, true, &queries[1]).await;
-            check_jobs(false, false, &queries[2]).await;
+                        if want_first_job || want_second_job {
+                            let (job, expired) = job.unwrap();
 
-            Ok(())
+                            assert!(!expired);
+                            if want_first_job {
+                                assert_eq!(job.id(), first_collection_job.id());
+                            } else if want_second_job {
+                                assert_eq!(job.id(), second_collection_job.id());
+                            }
+                        } else {
+                            assert!(job.is_none());
+                        }
+                    };
+
+                check_jobs(true, false, &queries[0]).await;
+                check_jobs(false, true, &queries[1]).await;
+                check_jobs(false, false, &queries[2]).await;
+
+                Ok((
+                    *task.id(),
+                    *first_collection_job.id(),
+                    *second_collection_job.id(),
+                ))
+            })
         })
-    })
-    .await
-    .unwrap();
-}
+        .await
+        .unwrap();
 
-#[rstest_reuse::apply(schema_versions_template)]
-#[tokio::test]
-async fn get_collection_jobs_by_query_time_interval(ephemeral_datastore: EphemeralDatastore) {
-    let first_batch_interval =
-        Interval::minimal(START_TIME.add_duration(&Duration::ONE).unwrap()).unwrap();
-    let second_batch_interval = Interval::minimal(
-        START_TIME
-            .add_duration(&Duration::from_time_precision_units(2))
-            .unwrap(),
-    )
-    .unwrap();
-    let third_batch_interval = Interval::minimal(
-        START_TIME
-            .add_duration(&Duration::from_time_precision_units(3))
-            .unwrap(),
-    )
-    .unwrap();
+    // advance time far enough for all the collection jobs to expire
+    clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
+    clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
+    println!("clock advanced");
+    ds.run_tx(
+        "test-get-collection-jobs-by-query-leader-selected-2",
+        |tx| {
+            let queries = queries.clone();
+            Box::pin(async move {
+                let check_jobs =
+                    async |want_first_job: bool, want_second_job: bool, query: &Query<_>| {
+                        let job = tx
+                            .get_collection_job_by_query(&dummy::Vdaf::default(), &task_id, query)
+                            .await
+                            .unwrap();
 
-    get_collection_jobs_by_query_test(
-        ephemeral_datastore,
-        task::BatchMode::TimeInterval,
-        [
-            Query::new_time_interval(first_batch_interval),
-            Query::new_time_interval(second_batch_interval),
-            Query::new_time_interval(third_batch_interval),
-        ],
-        [
-            first_batch_interval,
-            second_batch_interval,
-            third_batch_interval,
-        ],
-    )
-    .await;
-}
+                        if want_first_job || want_second_job {
+                            let (job, expired) = job.unwrap();
 
-#[rstest_reuse::apply(schema_versions_template)]
-#[tokio::test]
-async fn get_collection_jobs_by_query_leader_selected(ephemeral_datastore: EphemeralDatastore) {
-    get_collection_jobs_by_query_test(
-        ephemeral_datastore,
-        task::BatchMode::LeaderSelected {
-            batch_time_window_size: None,
+                            assert!(expired);
+                            if want_first_job {
+                                assert_eq!(job.id(), &first_collection_job_id);
+                            } else if want_second_job {
+                                assert_eq!(job.id(), &second_collection_job_id);
+                            }
+                        } else {
+                            assert!(job.is_none());
+                        }
+                    };
+
+                check_jobs(true, false, &queries[0]).await;
+                check_jobs(false, true, &queries[1]).await;
+                check_jobs(false, false, &queries[2]).await;
+                Ok(())
+            })
         },
-        [
-            Query::new_leader_selected(random()),
-            Query::new_leader_selected(random()),
-            Query::new_leader_selected(random()),
-        ],
-        [random(), random(), random()],
     )
     .await
+    .unwrap();
 }
 
 #[rstest_reuse::apply(schema_versions_template)]

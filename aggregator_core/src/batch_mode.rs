@@ -73,6 +73,7 @@ impl AccumulableBatchMode for TimeInterval {
     ) -> Result<Vec<CollectionJob<SEED_SIZE, Self, A>>, datastore::Error> {
         tx.get_collection_jobs_intersecting_interval(vdaf, task_id, batch_identifier)
             .await
+            .map(|v| v.into_iter().map(|(job, _)| job).collect())
     }
 
     fn to_batch_interval(collection_identifier: &Self::BatchIdentifier) -> Option<&Interval> {

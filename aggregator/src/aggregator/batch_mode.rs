@@ -91,6 +91,9 @@ pub trait CollectableBatchMode: CoreCollectableBatchMode + AccumulableBatchMode 
 
     /// Find any collection jobs that intersect with the request's query.
     ///
+    /// The iterator yields collection jobs and booleans which are true if the collection job is
+    /// expired.
+    ///
     /// For time interval batch mode, multiple collection jobs could have queries that overlap with
     /// the query's time interval. For leader selected batch mode, the query is a batch ID, so only
     /// zero or one collection job will ever be returned.
@@ -103,7 +106,7 @@ pub trait CollectableBatchMode: CoreCollectableBatchMode + AccumulableBatchMode 
         task: &AggregatorTask,
         request: &CollectionJobReq<Self>,
     ) -> Result<
-        impl Iterator<Item = CollectionJob<SEED_SIZE, Self, A>> + Send + Sync,
+        impl Iterator<Item = (CollectionJob<SEED_SIZE, Self, A>, bool)> + Send + Sync,
         datastore::Error,
     >;
 }
@@ -128,7 +131,7 @@ impl CollectableBatchMode for TimeInterval {
                 )
                 .await?
                 .into_iter()
-                .map(|job| {
+                .map(|(job, _)| {
                     if job.batch_interval() != collect_interval {
                         found_overlapping_nonequal_interval = true;
                     }
@@ -187,7 +190,7 @@ impl CollectableBatchMode for TimeInterval {
         task: &AggregatorTask,
         request: &CollectionJobReq<Self>,
     ) -> Result<
-        impl Iterator<Item = CollectionJob<SEED_SIZE, Self, A>> + Send + Sync,
+        impl Iterator<Item = (CollectionJob<SEED_SIZE, Self, A>, bool)> + Send + Sync,
         datastore::Error,
     > {
         Ok(tx
@@ -254,7 +257,7 @@ impl CollectableBatchMode for LeaderSelected {
         task: &AggregatorTask,
         request: &CollectionJobReq<Self>,
     ) -> Result<
-        impl Iterator<Item = CollectionJob<SEED_SIZE, Self, A>> + Send + Sync,
+        impl Iterator<Item = (CollectionJob<SEED_SIZE, Self, A>, bool)> + Send + Sync,
         datastore::Error,
     > {
         Ok(tx

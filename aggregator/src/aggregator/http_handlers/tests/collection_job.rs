@@ -1,39 +1,29 @@
-use assert_matches::assert_matches;
 use axum::body::Body;
+use chrono::TimeDelta;
 use http::{Request, StatusCode};
-use janus_aggregator_core::{
-    batch_mode::AccumulableBatchMode,
-    datastore::models::{CollectionJob, CollectionJobState},
-    task::{AggregationMode, BatchMode, test_util::TaskBuilder},
-};
+use janus_aggregator_core::task::{AggregationMode, BatchMode, test_util::TaskBuilder};
 use janus_core::{
     auth_tokens::test_util::WithAuthenticationToken,
-    hpke::{self, HpkeApplicationInfo, Label},
+    time::{Clock, DateTimeExt, TimeExt},
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    AggregateShareAad, CollectionJobExtension, CollectionJobExtensionType, CollectionJobId,
-    CollectionJobReq, CollectionJobResp, Duration, Interval, MediaType, Query, Role, Time,
-    batch_mode::TimeInterval,
+    CollectionJobExtension, CollectionJobExtensionType, CollectionJobId, CollectionJobReq,
+    CollectionJobResp, Duration, Interval, MediaType, Query, Role, Time, batch_mode::TimeInterval,
 };
-use prio::{
-    codec::{Decode, Encode},
-    vdaf::dummy,
-};
+use prio::{codec::Encode, vdaf::dummy};
 use rand::random;
 use serde_json::json;
 use tower::ServiceExt;
 
 use crate::aggregator::{
-    collection_job_tests::{ids_from_collection_job_response, setup_collection_job_test_case},
-    http_handlers::test_util::{
-        HttpHandlerTest, decode_response_body, take_problem_details, take_response_body,
-    },
+    collection_job_tests::{CollectionJobTestCase, ids_from_collection_job_response},
+    http_handlers::test_util::{HttpHandlerTest, decode_response_body, take_problem_details},
 };
 
 #[tokio::test]
 async fn collection_job_post_request_to_helper() {
-    let test_case = setup_collection_job_test_case(Role::Helper, BatchMode::TimeInterval).await;
+    let test_case = CollectionJobTestCase::setup(Role::Helper, BatchMode::TimeInterval).await;
     test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(
             0,
@@ -70,7 +60,7 @@ async fn collection_job_post_request_to_helper() {
 
 #[tokio::test]
 async fn collection_job_post_request_invalid_batch_interval() {
-    let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
+    let test_case = CollectionJobTestCase::setup(Role::Leader, BatchMode::TimeInterval).await;
     test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(
             0,
@@ -109,7 +99,7 @@ async fn collection_job_post_request_invalid_batch_interval() {
 
 #[tokio::test]
 async fn collection_job_post_request_invalid_aggregation_parameter() {
-    let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
+    let test_case = CollectionJobTestCase::setup(Role::Leader, BatchMode::TimeInterval).await;
     test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(
             0,
@@ -146,7 +136,7 @@ async fn collection_job_post_request_invalid_aggregation_parameter() {
 
 #[tokio::test]
 async fn collection_job_post_request_unsupported_extension() {
-    let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
+    let test_case = CollectionJobTestCase::setup(Role::Leader, BatchMode::TimeInterval).await;
 
     // No collection job extension types are defined, so any extension is unsupported.
     let request = CollectionJobReq::new(
@@ -181,7 +171,7 @@ async fn collection_job_post_request_unsupported_extension() {
 
 #[tokio::test]
 async fn collection_job_post_request_invalid_extension_order() {
-    let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
+    let test_case = CollectionJobTestCase::setup(Role::Leader, BatchMode::TimeInterval).await;
 
     // Extension types 0x0002 then 0x0001 are not in strictly increasing order.
     let request = CollectionJobReq::new(
@@ -271,7 +261,7 @@ async fn collection_job_post_request_invalid_batch_size() {
 
 #[tokio::test]
 async fn collection_job_post_request_unauthenticated() {
-    let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
+    let test_case = CollectionJobTestCase::setup(Role::Leader, BatchMode::TimeInterval).await;
     test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(
             0,
@@ -310,7 +300,7 @@ async fn collection_job_post_request_unauthenticated() {
 
 #[tokio::test]
 async fn collection_job_get_request_unauthenticated_collection_jobs() {
-    let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
+    let test_case = CollectionJobTestCase::setup(Role::Leader, BatchMode::TimeInterval).await;
     test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(
             0,
@@ -358,188 +348,14 @@ async fn collection_job_get_request_unauthenticated_collection_jobs() {
 
 #[tokio::test]
 async fn collection_job_success_time_interval() {
-    let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
-    test_case
-        .setup_time_interval_batch(Time::from_seconds_since_epoch(
-            0,
-            test_case.task.time_precision(),
-        ))
+    let mut test_case = CollectionJobTestCase::setup(Role::Leader, BatchMode::TimeInterval).await;
+
+    let (request, collection_job_id) = test_case
+        .simulate_successful_collection_job_time_interval(
+            Time::from_time_precision_units(10),
+            Interval::minimal(Time::from_time_precision_units(10)).unwrap(),
+        )
         .await;
-
-    let batch_interval =
-        TimeInterval::to_batch_identifier(&(), &Time::from_time_precision_units(0)).unwrap();
-
-    let aggregation_param = dummy::AggregationParam::default();
-    let leader_aggregate_share = dummy::AggregateShare(0);
-    let helper_aggregate_share = dummy::AggregateShare(1);
-
-    let request = CollectionJobReq::new(
-        Query::new_time_interval(batch_interval),
-        aggregation_param.get_encoded().unwrap(),
-    );
-
-    let mut response = test_case.post_collection_job(&request).await;
-    assert_eq!(response.status(), StatusCode::OK);
-    let (task_id, collection_job_id) = ids_from_collection_job_response(&response);
-    assert_eq!(&task_id, test_case.task.id());
-
-    let got_collection_job = test_case
-        .datastore
-        .run_unnamed_tx(|tx| {
-            let task_id = *test_case.task.id();
-
-            Box::pin(async move {
-                Ok(tx
-                    .get_collection_job(&dummy::Vdaf::new(1), &task_id, &collection_job_id)
-                    .await
-                    .unwrap()
-                    .unwrap())
-            })
-        })
-        .await
-        .unwrap();
-
-    let want_collection_job = CollectionJob::<0, TimeInterval, dummy::Vdaf>::new(
-        *test_case.task.id(),
-        collection_job_id,
-        // This is chosen by the leader, we have to copy it
-        *got_collection_job.aggregate_share_id(),
-        Query::new_time_interval(batch_interval),
-        aggregation_param,
-        batch_interval,
-        CollectionJobState::Start,
-    );
-
-    assert_eq!(want_collection_job, got_collection_job);
-    assert!(take_response_body(&mut response).await.is_empty());
-
-    let mut response = test_case.get_collection_job(&collection_job_id).await;
-    assert_eq!(response.status(), StatusCode::OK);
-    assert!(response.headers().get(http::header::CONTENT_TYPE).is_none());
-    assert!(take_response_body(&mut response).await.is_empty());
-
-    // Update the collection job with the aggregate shares and some aggregation jobs. collection
-    // job should now be complete.
-    test_case
-        .datastore
-        .run_unnamed_tx(|tx| {
-            let task = test_case.task.clone();
-            let helper_aggregate_share_bytes = helper_aggregate_share.get_encoded().unwrap();
-            Box::pin(async move {
-                let encrypted_helper_aggregate_share = hpke::seal(
-                    task.collector_hpke_keypair().config(),
-                    &HpkeApplicationInfo::new(
-                        &Label::AggregateShare,
-                        &Role::Helper,
-                        &Role::Collector,
-                    ),
-                    &helper_aggregate_share_bytes,
-                    &AggregateShareAad::new(
-                        *task.id(),
-                        task.task_configuration(),
-                        CollectionJobReq::new(
-                            Query::new_time_interval(batch_interval),
-                            aggregation_param.get_encoded().unwrap(),
-                        ),
-                    )
-                    .get_encoded()
-                    .unwrap(),
-                )
-                .unwrap();
-
-                let collection_job = tx
-                    .get_collection_job::<0, TimeInterval, dummy::Vdaf>(
-                        &dummy::Vdaf::new(1),
-                        task.id(),
-                        &collection_job_id,
-                    )
-                    .await
-                    .unwrap()
-                    .unwrap()
-                    .with_state(CollectionJobState::Finished {
-                        report_count: 12,
-                        client_timestamp_interval: batch_interval,
-                        encrypted_helper_aggregate_share,
-                        leader_aggregate_share,
-                    });
-
-                tx.update_collection_job::<0, TimeInterval, dummy::Vdaf>(&collection_job)
-                    .await
-                    .unwrap();
-                Ok(())
-            })
-        })
-        .await
-        .unwrap();
-
-    let mut response = test_case.get_collection_job(&collection_job_id).await;
-
-    assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(
-        response.headers().get("content-type").unwrap(),
-        CollectionJobResp::MEDIA_TYPE,
-    );
-    let collect_resp: CollectionJobResp = decode_response_body(&mut response).await;
-    let (
-        report_count,
-        interval,
-        leader_encrypted_aggregate_share,
-        helper_encrypted_aggregate_share,
-    ) = assert_matches!(
-        collect_resp.clone(),
-        CollectionJobResp{
-            report_count,
-            interval,
-            leader_encrypted_agg_share,
-            helper_encrypted_agg_share,
-            ..
-        } => (report_count, interval, leader_encrypted_agg_share, helper_encrypted_agg_share)
-    );
-
-    assert_eq!(report_count, 12);
-    assert_eq!(interval, batch_interval);
-
-    let decrypted_leader_aggregate_share = hpke::open(
-        test_case.task.collector_hpke_keypair(),
-        &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
-        &leader_encrypted_aggregate_share,
-        &AggregateShareAad::new(
-            *test_case.task.id(),
-            test_case.task.task_configuration(),
-            CollectionJobReq::new(
-                Query::new_time_interval(batch_interval),
-                aggregation_param.get_encoded().unwrap(),
-            ),
-        )
-        .get_encoded()
-        .unwrap(),
-    )
-    .unwrap();
-    assert_eq!(
-        leader_aggregate_share,
-        dummy::AggregateShare::get_decoded(decrypted_leader_aggregate_share.as_ref()).unwrap()
-    );
-
-    let decrypted_helper_aggregate_share = hpke::open(
-        test_case.task.collector_hpke_keypair(),
-        &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
-        &helper_encrypted_aggregate_share,
-        &AggregateShareAad::new(
-            *test_case.task.id(),
-            test_case.task.task_configuration(),
-            CollectionJobReq::new(
-                Query::new_time_interval(batch_interval),
-                aggregation_param.get_encoded().unwrap(),
-            ),
-        )
-        .get_encoded()
-        .unwrap(),
-    )
-    .unwrap();
-    assert_eq!(
-        helper_aggregate_share,
-        dummy::AggregateShare::get_decoded(decrypted_helper_aggregate_share.as_ref()).unwrap()
-    );
 
     // Re-send the very first collection job creation request. We should get the representation of
     // the completed collection job without needing a further GET.
@@ -556,7 +372,7 @@ async fn collection_job_success_time_interval() {
 
 #[tokio::test]
 async fn collection_job_get_request_no_such_collection_job() {
-    let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
+    let test_case = CollectionJobTestCase::setup(Role::Leader, BatchMode::TimeInterval).await;
     test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(
             0,
@@ -574,7 +390,7 @@ async fn collection_job_get_request_no_such_collection_job() {
 
 #[tokio::test]
 async fn collection_job_post_request_batch_queried_multiple_times() {
-    let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
+    let test_case = CollectionJobTestCase::setup(Role::Leader, BatchMode::TimeInterval).await;
     let interval = test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(
             0,
@@ -598,21 +414,13 @@ async fn collection_job_post_request_batch_queried_multiple_times() {
     );
 
     let mut response = test_case.post_collection_job(&invalid_request).await;
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    assert_eq!(
-        take_problem_details(&mut response).await,
-        json!({
-            "status": StatusCode::BAD_REQUEST.as_u16(),
-            "type": "urn:ietf:params:ppm:dap:error:batchOverlap",
-            "title": "The queried batch overlaps with a previously queried batch.",
-            "taskid": format!("{}", test_case.task.id()),
-        })
-    );
+    test_case
+        .check_batch_overlap_response(response.status(), take_problem_details(&mut response).await);
 }
 
 #[tokio::test]
 async fn collection_job_post_request_batch_overlap() {
-    let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
+    let test_case = CollectionJobTestCase::setup(Role::Leader, BatchMode::TimeInterval).await;
     let interval = test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(
             0,
@@ -643,77 +451,221 @@ async fn collection_job_post_request_batch_overlap() {
     );
 
     let mut response = test_case.post_collection_job(&invalid_request).await;
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    assert_eq!(
-        take_problem_details(&mut response).await,
-        json!({
-            "status": StatusCode::BAD_REQUEST.as_u16(),
-            "type": "urn:ietf:params:ppm:dap:error:batchOverlap",
-            "title": "The queried batch overlaps with a previously queried batch.",
-            "taskid": format!("{}", test_case.task.id()),
-        })
-    );
+    test_case
+        .check_batch_overlap_response(response.status(), take_problem_details(&mut response).await);
 }
 
 #[tokio::test]
-async fn delete_collection_job() {
-    let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
-    let batch_interval = test_case
-        .setup_time_interval_batch(Time::from_seconds_since_epoch(
-            0,
-            test_case.task.time_precision(),
-        ))
-        .await;
+async fn recreate_deleted_collection_job_time_interval() {
+    let mut test_case = CollectionJobTestCase::setup(Role::Leader, BatchMode::TimeInterval).await;
 
-    // Try to delete a collection job that doesn't exist
-    let response = test_case
-        .router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("DELETE")
-                .uri(test_case.task.collection_job_uri(&random()).unwrap().path())
-                .with_authentication_token(test_case.task.collector_auth_token())
-                .body(Body::empty())
-                .unwrap(),
+    // Run a collection to completion, then delete the job.
+    let (request, collection_job_id) = test_case
+        .simulate_successful_collection_job_time_interval(
+            Time::from_time_precision_units(10),
+            Interval::minimal(Time::from_time_precision_units(10)).unwrap(),
         )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        .await;
+    let response = test_case.delete_collection_job(&collection_job_id).await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
-    // Create a collection job
-    let request = CollectionJobReq::new(
-        Query::new_time_interval(batch_interval),
-        dummy::AggregationParam::default().get_encoded().unwrap(),
+    let mut response = test_case.get_collection_job(&collection_job_id).await;
+    test_case.check_gone_response(
+        response.status(),
+        take_problem_details(&mut response).await,
+        &collection_job_id,
     );
 
-    let response = test_case.post_collection_job(&request).await;
-    assert_eq!(response.status(), StatusCode::OK);
-    let (_, collection_job_id) = ids_from_collection_job_response(&response);
+    // Re-creating the job with an identical request should be refused because it has been deleted.
+    let mut response = test_case.post_collection_job(&request).await;
+    test_case.check_gone_response(
+        response.status(),
+        take_problem_details(&mut response).await,
+        &collection_job_id,
+    );
 
-    // Cancel the job
-    let response = test_case
-        .router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("DELETE")
-                .uri(
-                    test_case
-                        .task
-                        .collection_job_uri(&collection_job_id)
-                        .unwrap()
-                        .path(),
-                )
-                .with_authentication_token(test_case.task.collector_auth_token())
-                .body(Body::empty())
-                .unwrap(),
+    // Re-creating the job with a mutated request should fail with batchOverlap.
+    let mutant_request = CollectionJobReq::new(
+        request.query().clone(),
+        dummy::AggregationParam(17).get_encoded().unwrap(),
+    );
+    let mut response = test_case.post_collection_job(&mutant_request).await;
+    test_case
+        .check_batch_overlap_response(response.status(), take_problem_details(&mut response).await);
+}
+
+#[tokio::test]
+async fn recreate_deleted_collection_job_leader_selected() {
+    let mut test_case = CollectionJobTestCase::setup(
+        Role::Leader,
+        BatchMode::LeaderSelected {
+            batch_time_window_size: None,
+        },
+    )
+    .await;
+    let (batch_id_1, batch_id_2, spanned_interval) =
+        test_case.setup_leader_selected_current_batch().await;
+
+    // Run a collection to completion, then delete the job.
+    let (request, collection_job_id) = test_case
+        .simulate_successful_collection_job_leader_selected(
+            batch_id_1,
+            batch_id_2,
+            spanned_interval,
         )
-        .await
-        .unwrap();
+        .await;
+
+    // Put another outstanding batch in the datastore to ensure subsequent job creation requests
+    // aren't failing just because there's no reports to aggregate.
+    test_case
+        .setup_leader_selected_batch(
+            test_case
+                .clock()
+                .now()
+                .to_time(test_case.task.time_precision()),
+            test_case.task.min_batch_size() + 1,
+        )
+        .await;
+
+    let response = test_case.delete_collection_job(&collection_job_id).await;
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
-    // Get the job again
+    let mut response = test_case.get_collection_job(&collection_job_id).await;
+    test_case.check_gone_response(
+        response.status(),
+        take_problem_details(&mut response).await,
+        &collection_job_id,
+    );
+
+    // Re-creating the job with an identical request should be refused because it has been deleted.
+    let mut response = test_case.post_collection_job(&request).await;
+    test_case.check_gone_response(
+        response.status(),
+        take_problem_details(&mut response).await,
+        &collection_job_id,
+    );
+
+    // Re-creating the job with a mutated request should fail with batchOverlap.
+    let mutant_request = CollectionJobReq::new(
+        request.query().clone(),
+        dummy::AggregationParam(17).get_encoded().unwrap(),
+    );
+    let mut response = test_case.post_collection_job(&mutant_request).await;
+    test_case
+        .check_batch_overlap_response(response.status(), take_problem_details(&mut response).await);
+}
+
+#[tokio::test]
+async fn recreate_expired_collection_job_time_interval() {
+    let expiry = Duration::from_time_precision_units(20);
+    let mut test_case = CollectionJobTestCase::setup_with_report_expiry_age(
+        Role::Leader,
+        BatchMode::TimeInterval,
+        Some(expiry),
+    )
+    .await;
+
+    let now = Time::from_seconds_since_epoch(
+        test_case.clock().now().as_seconds_since_epoch(),
+        test_case.task.time_precision(),
+    );
+
+    let report_time = now
+        .sub_duration(&Duration::from_time_precision_units(3))
+        .unwrap();
+    let queried_interval = Interval::new(
+        now.sub_duration(&Duration::from_time_precision_units(10))
+            .unwrap(),
+        Duration::from_time_precision_units(10),
+    )
+    .unwrap();
+
+    // Run a collection to completion.
+    let (request, collection_job_id) = test_case
+        .simulate_successful_collection_job_time_interval(report_time, queried_interval)
+        .await;
+
+    // Advance clock far enough for the collection job to expire.
+    test_case.clock().advance(TimeDelta::seconds(
+        2 * expiry.as_seconds(test_case.task.time_precision()) as i64,
+    ));
+
     let response = test_case.get_collection_job(&collection_job_id).await;
-    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    // Re-creating the job with an identical request should be refused.
+    let mut response = test_case.post_collection_job(&request).await;
+    test_case.check_collection_job_rejection_response(
+        response.status(),
+        take_problem_details(&mut response).await,
+    );
+
+    // Re-creating the job with a mutated request should fail with batchOverlap.
+    let mutant_request = CollectionJobReq::new(
+        request.query().clone(),
+        dummy::AggregationParam(17).get_encoded().unwrap(),
+    );
+    let mut response = test_case.post_collection_job(&mutant_request).await;
+    test_case
+        .check_batch_overlap_response(response.status(), take_problem_details(&mut response).await);
+}
+
+#[tokio::test]
+async fn recreate_expired_collection_job_leader_selected() {
+    let expiry = Duration::from_time_precision_units(20);
+    let mut test_case = CollectionJobTestCase::setup_with_report_expiry_age(
+        Role::Leader,
+        BatchMode::LeaderSelected {
+            batch_time_window_size: None,
+        },
+        Some(expiry),
+    )
+    .await;
+
+    let (batch_id_1, batch_id_2, spanned_interval) =
+        test_case.setup_leader_selected_current_batch().await;
+
+    let (request, collection_job_id) = test_case
+        .simulate_successful_collection_job_leader_selected(
+            batch_id_1,
+            batch_id_2,
+            spanned_interval,
+        )
+        .await;
+
+    // Advance clock far enough for the collection job to expire.
+    test_case.clock().advance(TimeDelta::seconds(
+        2 * expiry.as_seconds(test_case.task.time_precision()) as i64,
+    ));
+
+    let response = test_case.get_collection_job(&collection_job_id).await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    // Put another outstanding batch in the datastore to ensure subsequent job creation requests
+    // aren't failing just because there's no reports to aggregate.
+    test_case
+        .setup_leader_selected_batch(
+            test_case
+                .clock()
+                .now()
+                .to_time(test_case.task.time_precision()),
+            test_case.task.min_batch_size() + 1,
+        )
+        .await;
+
+    // Re-creating the job with an identical request should be refused.
+    let mut response = test_case.post_collection_job(&request).await;
+    test_case.check_collection_job_rejection_response(
+        response.status(),
+        take_problem_details(&mut response).await,
+    );
+
+    // Re-creating the job with a mutated request should fail with batchOverlap.
+    let mutant_request = CollectionJobReq::new(
+        request.query().clone(),
+        dummy::AggregationParam(17).get_encoded().unwrap(),
+    );
+    let mut response = test_case.post_collection_job(&mutant_request).await;
+    test_case
+        .check_batch_overlap_response(response.status(), take_problem_details(&mut response).await);
 }

@@ -29,7 +29,7 @@ use janus_core::{
 };
 use janus_messages::{
     AggregateShareAad, AggregationJobStep, BatchId, CollectionJobId, CollectionJobReq,
-    CollectionJobResp, Interval, MediaType, Query, Role, TaskId, Time, TimePrecision,
+    CollectionJobResp, Duration, Interval, MediaType, Query, Role, TaskId, Time, TimePrecision,
     batch_mode::{
         BatchMode as BatchModeTrait, LeaderSelected, LeaderSelectedQueryConfig, TimeInterval,
     },
@@ -58,6 +58,76 @@ pub(crate) struct CollectionJobTestCase {
 }
 
 impl CollectionJobTestCase {
+    pub(crate) async fn setup(role: Role, batch_mode: BatchMode) -> Self {
+        Self::setup_with_report_expiry_age(role, batch_mode, None).await
+    }
+
+    pub(crate) async fn setup_with_report_expiry_age(
+        role: Role,
+        batch_mode: BatchMode,
+        report_expiry_age: Option<Duration>,
+    ) -> Self {
+        install_test_trace_subscriber();
+
+        let task = TaskBuilder::new(
+            batch_mode,
+            AggregationMode::Synchronous,
+            VdafInstance::Fake { rounds: 1 },
+        )
+        .with_report_expiry_age(report_expiry_age)
+        .build();
+        let role_task = task.view_for_role(role).unwrap();
+        let clock = MockClock::default();
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+
+        datastore.put_aggregator_task(&role_task).await.unwrap();
+        datastore.put_hpke_key().await.unwrap();
+
+        let router = AggregatorHandlerBuilder::new(
+            Arc::clone(&datastore),
+            TestRuntime::default(),
+            &noop_meter(),
+            Config {
+                batch_aggregation_shard_count: BATCH_AGGREGATION_SHARD_COUNT,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap()
+        .build()
+        .unwrap();
+
+        CollectionJobTestCase {
+            task,
+            clock,
+            router,
+            datastore,
+            _ephemeral_datastore: ephemeral_datastore,
+        }
+    }
+
+    pub(super) async fn setup_leader_selected_current_batch(
+        &mut self,
+    ) -> (BatchId, BatchId, Interval) {
+        // Fill the datastore with the necessary data so that there are two outstanding batches to
+        // be collected.
+        let time = self.clock.now().to_time(self.task.time_precision());
+        let batch_id_1 = self
+            .setup_leader_selected_batch(time, self.task.min_batch_size() + 1)
+            .await;
+        let batch_id_2 = self
+            .setup_leader_selected_batch(time, self.task.min_batch_size() + 1)
+            .await;
+        let client_timestamp_interval = Interval::minimal(time).unwrap();
+
+        (batch_id_1, batch_id_2, client_timestamp_interval)
+    }
+
+    pub(super) fn clock(&self) -> &MockClock {
+        &self.clock
+    }
+
     pub(super) async fn post_collection_job_with_auth_token<B: BatchModeTrait>(
         &self,
         request: &CollectionJobReq<B>,
@@ -122,6 +192,29 @@ impl CollectionJobTestCase {
             Some(self.task.collector_auth_token()),
         )
         .await
+    }
+
+    pub(super) async fn delete_collection_job(
+        &self,
+        collection_job_id: &CollectionJobId,
+    ) -> http::Response<Body> {
+        self.router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(
+                        self.task
+                            .collection_job_uri(collection_job_id)
+                            .unwrap()
+                            .path(),
+                    )
+                    .with_authentication_token(self.task.collector_auth_token())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
     }
 
     /// Seed the database with reports and various aggregation artifacts from aggregating them in a
@@ -252,6 +345,422 @@ impl CollectionJobTestCase {
             .await
             .unwrap()
     }
+
+    pub(super) async fn simulate_successful_collection_job_time_interval(
+        &mut self,
+        report_time: Time,
+        queried_interval: Interval,
+    ) -> (CollectionJobReq<TimeInterval>, CollectionJobId) {
+        self.setup_time_interval_batch(report_time).await;
+
+        let aggregation_param = dummy::AggregationParam::default();
+        let leader_aggregate_share = dummy::AggregateShare(0);
+        let helper_aggregate_share = dummy::AggregateShare(1);
+
+        let request = CollectionJobReq::new(
+            Query::new_time_interval(queried_interval),
+            aggregation_param.get_encoded().unwrap(),
+        );
+
+        let mut response = self.post_collection_job(&request).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let (task_id, collection_job_id) = ids_from_collection_job_response(&response);
+        assert_eq!(&task_id, self.task.id());
+
+        let got_collection_job = self
+            .datastore
+            .run_unnamed_tx(|tx| {
+                let task_id = *self.task.id();
+
+                Box::pin(async move {
+                    Ok(tx
+                        .get_collection_job(&dummy::Vdaf::new(1), &task_id, &collection_job_id)
+                        .await
+                        .unwrap()
+                        .unwrap())
+                })
+            })
+            .await
+            .unwrap();
+
+        let want_collection_job = CollectionJob::<0, TimeInterval, dummy::Vdaf>::new(
+            *self.task.id(),
+            collection_job_id,
+            // This is chosen by the leader, we have to copy it
+            *got_collection_job.aggregate_share_id(),
+            Query::new_time_interval(queried_interval),
+            aggregation_param,
+            queried_interval,
+            CollectionJobState::Start,
+        );
+
+        assert_eq!(want_collection_job, got_collection_job);
+        assert!(take_response_body(&mut response).await.is_empty());
+
+        let mut response = self.get_collection_job(&collection_job_id).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().get(http::header::CONTENT_TYPE).is_none());
+        assert!(take_response_body(&mut response).await.is_empty());
+
+        // Update the collection job with the aggregate shares and some aggregation jobs. collection
+        // job should now be complete.
+        self.datastore
+            .run_unnamed_tx(|tx| {
+                let task = self.task.clone();
+                let helper_aggregate_share_bytes = helper_aggregate_share.get_encoded().unwrap();
+                Box::pin(async move {
+                    let encrypted_helper_aggregate_share = hpke::seal(
+                        task.collector_hpke_keypair().config(),
+                        &HpkeApplicationInfo::new(
+                            &Label::AggregateShare,
+                            &Role::Helper,
+                            &Role::Collector,
+                        ),
+                        &helper_aggregate_share_bytes,
+                        &AggregateShareAad::new(
+                            *task.id(),
+                            task.task_configuration(),
+                            CollectionJobReq::new(
+                                Query::new_time_interval(queried_interval),
+                                aggregation_param.get_encoded().unwrap(),
+                            ),
+                        )
+                        .get_encoded()
+                        .unwrap(),
+                    )
+                    .unwrap();
+
+                    let collection_job = tx
+                        .get_collection_job::<0, TimeInterval, dummy::Vdaf>(
+                            &dummy::Vdaf::new(1),
+                            task.id(),
+                            &collection_job_id,
+                        )
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .with_state(CollectionJobState::Finished {
+                            report_count: 12,
+                            client_timestamp_interval: queried_interval,
+                            encrypted_helper_aggregate_share,
+                            leader_aggregate_share,
+                        });
+
+                    tx.update_collection_job::<0, TimeInterval, dummy::Vdaf>(&collection_job)
+                        .await
+                        .unwrap();
+                    Ok(())
+                })
+            })
+            .await
+            .unwrap();
+
+        let mut response = self.get_collection_job(&collection_job_id).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get("content-type").unwrap(),
+            CollectionJobResp::MEDIA_TYPE,
+        );
+        let collect_resp: CollectionJobResp = decode_response_body(&mut response).await;
+        let (
+            report_count,
+            interval,
+            leader_encrypted_aggregate_share,
+            helper_encrypted_aggregate_share,
+        ) = assert_matches!(
+            collect_resp.clone(),
+            CollectionJobResp{
+                report_count,
+                interval,
+                leader_encrypted_agg_share,
+                helper_encrypted_agg_share,
+                ..
+            } => (report_count, interval, leader_encrypted_agg_share, helper_encrypted_agg_share)
+        );
+
+        assert_eq!(report_count, 12);
+        assert_eq!(interval, queried_interval);
+
+        let decrypted_leader_aggregate_share = hpke::open(
+            self.task.collector_hpke_keypair(),
+            &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
+            &leader_encrypted_aggregate_share,
+            &AggregateShareAad::new(
+                *self.task.id(),
+                self.task.task_configuration(),
+                CollectionJobReq::new(
+                    Query::new_time_interval(queried_interval),
+                    aggregation_param.get_encoded().unwrap(),
+                ),
+            )
+            .get_encoded()
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            leader_aggregate_share,
+            dummy::AggregateShare::get_decoded(decrypted_leader_aggregate_share.as_ref()).unwrap()
+        );
+
+        let decrypted_helper_aggregate_share = hpke::open(
+            self.task.collector_hpke_keypair(),
+            &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
+            &helper_encrypted_aggregate_share,
+            &AggregateShareAad::new(
+                *self.task.id(),
+                self.task.task_configuration(),
+                CollectionJobReq::new(
+                    Query::new_time_interval(queried_interval),
+                    aggregation_param.get_encoded().unwrap(),
+                ),
+            )
+            .get_encoded()
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            helper_aggregate_share,
+            dummy::AggregateShare::get_decoded(decrypted_helper_aggregate_share.as_ref()).unwrap()
+        );
+
+        (request, collection_job_id)
+    }
+
+    pub(super) async fn simulate_successful_collection_job_leader_selected(
+        &mut self,
+        batch_id_1: BatchId,
+        batch_id_2: BatchId,
+        spanned_interval: Interval,
+    ) -> (CollectionJobReq<LeaderSelected>, CollectionJobId) {
+        let mut saw_batch_id_1 = false;
+        let mut saw_batch_id_2 = false;
+        let mut collection_job_ids = vec![];
+        let mut collection_job_resps = vec![];
+        let vdaf = dummy::Vdaf::new(1);
+        let leader_aggregate_share = dummy::AggregateShare(0);
+        let helper_aggregate_share = dummy::AggregateShare(1);
+        let aggregation_param = dummy::AggregationParam::default();
+        let requests = [
+            CollectionJobReq::new(
+                Query::new_leader_selected(random()),
+                aggregation_param.get_encoded().unwrap(),
+            ),
+            CollectionJobReq::new(
+                Query::new_leader_selected(random()),
+                aggregation_param.get_encoded().unwrap(),
+            ),
+        ];
+
+        for request in requests.clone() {
+            let mut response = self.post_collection_job(&request).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            let (task_id, collection_job_id) = ids_from_collection_job_response(&response);
+            collection_job_ids.push(collection_job_id);
+            assert_eq!(self.task.id(), &task_id);
+            assert!(take_response_body(&mut response).await.is_empty());
+
+            let mut response = self.get_collection_job(&collection_job_id).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            assert!(response.headers().get(http::header::CONTENT_TYPE).is_none());
+            assert!(take_response_body(&mut response).await.is_empty());
+
+            // Update the collection job with the aggregate shares. collection job should now be
+            // complete.
+            let batch_id = self
+                .datastore
+                .run_unnamed_tx(|tx| {
+                    let task = self.task.clone();
+                    let vdaf = vdaf.clone();
+                    let helper_aggregate_share_bytes =
+                        helper_aggregate_share.get_encoded().unwrap();
+                    let request = request.clone();
+                    Box::pin(async move {
+                        let collection_job = tx
+                            .get_collection_job::<0, LeaderSelected, dummy::Vdaf>(
+                                &vdaf,
+                                task.id(),
+                                &collection_job_id,
+                            )
+                            .await
+                            .unwrap()
+                            .unwrap();
+                        let batch_id = *collection_job.batch_identifier();
+
+                        let encrypted_helper_aggregate_share = hpke::seal(
+                            task.collector_hpke_keypair().config(),
+                            &HpkeApplicationInfo::new(
+                                &Label::AggregateShare,
+                                &Role::Helper,
+                                &Role::Collector,
+                            ),
+                            &helper_aggregate_share_bytes,
+                            &AggregateShareAad::new(*task.id(), task.task_configuration(), request)
+                                .get_encoded()
+                                .unwrap(),
+                        )
+                        .unwrap();
+
+                        tx.update_collection_job::<0, LeaderSelected, dummy::Vdaf>(
+                            &collection_job.with_state(CollectionJobState::Finished {
+                                report_count: task.min_batch_size() + 1,
+                                client_timestamp_interval: spanned_interval,
+                                encrypted_helper_aggregate_share,
+                                leader_aggregate_share,
+                            }),
+                        )
+                        .await
+                        .unwrap();
+
+                        Ok(batch_id)
+                    })
+                })
+                .await
+                .unwrap();
+
+            if batch_id.eq(&batch_id_1) {
+                saw_batch_id_1 = true;
+            } else if batch_id.eq(&batch_id_2) {
+                saw_batch_id_2 = true;
+            } else {
+                panic!("unexpected batch ID");
+            }
+
+            let mut response = self.get_collection_job(&collection_job_id).await;
+            assert_eq!(
+                response.headers().get("content-type").unwrap(),
+                CollectionJobResp::MEDIA_TYPE,
+            );
+
+            let collect_resp: CollectionJobResp = decode_response_body(&mut response).await;
+            let (
+                report_count,
+                interval,
+                leader_encrypted_aggregate_share,
+                helper_encrypted_aggregate_share,
+            ) = assert_matches!(
+                collect_resp.clone(),
+                CollectionJobResp {
+                    report_count,
+                    interval,
+                    leader_encrypted_agg_share,
+                    helper_encrypted_agg_share,
+                    ..
+                } => (
+                    report_count,
+                    interval,
+                    leader_encrypted_agg_share,
+                    helper_encrypted_agg_share
+                )
+            );
+
+            assert_eq!(report_count, self.task.min_batch_size() + 1);
+            assert_eq!(interval, spanned_interval);
+
+            let decrypted_leader_aggregate_share = hpke::open(
+                self.task.collector_hpke_keypair(),
+                &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
+                &leader_encrypted_aggregate_share,
+                &AggregateShareAad::new(
+                    *self.task.id(),
+                    self.task.task_configuration(),
+                    request.clone(),
+                )
+                .get_encoded()
+                .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                leader_aggregate_share,
+                dummy::AggregateShare::get_decoded(decrypted_leader_aggregate_share.as_ref())
+                    .unwrap()
+            );
+
+            let decrypted_helper_aggregate_share = hpke::open(
+                self.task.collector_hpke_keypair(),
+                &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
+                &helper_encrypted_aggregate_share,
+                &AggregateShareAad::new(
+                    *self.task.id(),
+                    self.task.task_configuration(),
+                    request.clone(),
+                )
+                .get_encoded()
+                .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                helper_aggregate_share,
+                dummy::AggregateShare::get_decoded(decrypted_helper_aggregate_share.as_ref())
+                    .unwrap()
+            );
+
+            collection_job_resps.push(collect_resp);
+        }
+
+        assert!(saw_batch_id_1 && saw_batch_id_2);
+        // Collection job IDs should be distinct
+        assert_eq!(collection_job_ids.len(), 2);
+        assert_ne!(collection_job_ids[0], collection_job_ids[1]);
+
+        (requests[0].clone(), collection_job_ids[0])
+    }
+
+    #[track_caller]
+    pub(super) fn check_gone_response(
+        &self,
+        status: StatusCode,
+        problem_details: serde_json::Value,
+        collection_job_id: &CollectionJobId,
+    ) {
+        assert_eq!(status, StatusCode::GONE);
+        assert_eq!(
+            problem_details,
+            json!({
+                "status": StatusCode::GONE.as_u16(),
+                "type": "https://docs.divviup.org/references/janus-errors#collection-job-deleted",
+                "title": "The collection job has been deleted.",
+                "taskid": format!("{}", self.task.id()),
+                "collection_job_id": format!("{}", collection_job_id),
+            })
+        );
+    }
+
+    #[track_caller]
+    pub(super) fn check_batch_overlap_response(
+        &self,
+        status: StatusCode,
+        problem_details: serde_json::Value,
+    ) {
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            problem_details,
+            json!({
+                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "type": "urn:ietf:params:ppm:dap:error:batchOverlap",
+                "title": "The queried batch overlaps with a previously queried batch.",
+                "taskid": format!("{}", self.task.id()),
+            })
+        );
+    }
+
+    #[track_caller]
+    pub(super) fn check_collection_job_rejection_response(
+        &self,
+        status: StatusCode,
+        problem_details: serde_json::Value,
+    ) {
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            problem_details,
+            json!({
+                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "type": "https://docs.divviup.org/references/janus-errors#collection-job-request-rejected",
+                "title": "Collection job request rejected.",
+                "detail": "collection job request too late",
+                "taskid": format!("{}", self.task.id()),
+            })
+        );
+    }
 }
 
 /// Parse task ID and collection job ID out of response location header.
@@ -267,253 +776,35 @@ pub(super) fn ids_from_collection_job_response(
         .unwrap()
 }
 
-pub(crate) async fn setup_collection_job_test_case(
-    role: Role,
-    batch_mode: BatchMode,
-) -> CollectionJobTestCase {
-    install_test_trace_subscriber();
-
-    let task = TaskBuilder::new(
-        batch_mode,
-        AggregationMode::Synchronous,
-        VdafInstance::Fake { rounds: 1 },
-    )
-    .build();
-    let role_task = task.view_for_role(role).unwrap();
-    let clock = MockClock::default();
-    let ephemeral_datastore = ephemeral_datastore().await;
-    let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
-
-    datastore.put_aggregator_task(&role_task).await.unwrap();
-    datastore.put_hpke_key().await.unwrap();
-
-    let router = AggregatorHandlerBuilder::new(
-        Arc::clone(&datastore),
-        TestRuntime::default(),
-        &noop_meter(),
-        Config {
-            batch_aggregation_shard_count: BATCH_AGGREGATION_SHARD_COUNT,
-            ..Default::default()
-        },
-    )
-    .await
-    .unwrap()
-    .build()
-    .unwrap();
-
-    CollectionJobTestCase {
-        task,
-        clock,
-        router,
-        datastore,
-        _ephemeral_datastore: ephemeral_datastore,
-    }
-}
-
-async fn setup_leader_selected_current_batch_collection_job_test_case()
--> (CollectionJobTestCase, BatchId, BatchId, Interval) {
-    let test_case = setup_collection_job_test_case(
-        Role::Leader,
-        BatchMode::LeaderSelected {
-            batch_time_window_size: None,
-        },
-    )
-    .await;
-
-    // Fill the datastore with the necessary data so that there are two outstanding batches to be
-    // collected.
-    let time = test_case
-        .clock
-        .now()
-        .to_time(test_case.task.time_precision());
-    let batch_id_1 = test_case
-        .setup_leader_selected_batch(time, test_case.task.min_batch_size() + 1)
-        .await;
-    let batch_id_2 = test_case
-        .setup_leader_selected_batch(time, test_case.task.min_batch_size() + 1)
-        .await;
-    let client_timestamp_interval = Interval::minimal(time).unwrap();
-
-    (test_case, batch_id_1, batch_id_2, client_timestamp_interval)
-}
-
 #[tokio::test]
 async fn collection_job_success_leader_selected() {
     // This test drives two current batch collection jobs to completion, verifying that distinct
     // collection job IDs are minted and distinct batch IDs are collected each time. Then, we
     // attempt to collect another current batch, which must fail as there are no more outstanding
     // batches.
-    let (test_case, batch_id_1, batch_id_2, spanned_interval) =
-        setup_leader_selected_current_batch_collection_job_test_case().await;
-
-    let first_idempotency_key: LeaderSelectedQueryConfig = random();
-    let mut saw_batch_id_1 = false;
-    let mut saw_batch_id_2 = false;
-    let mut collection_job_ids = vec![];
-    let mut collection_job_resps = vec![];
-    let vdaf = dummy::Vdaf::new(1);
-    let leader_aggregate_share = dummy::AggregateShare(0);
-    let helper_aggregate_share = dummy::AggregateShare(1);
-    let aggregation_param = dummy::AggregationParam::default();
-
-    for idempotency_key in [first_idempotency_key.clone(), random()] {
-        let request = CollectionJobReq::new(
-            Query::new_leader_selected(idempotency_key),
-            aggregation_param.get_encoded().unwrap(),
-        );
-        let mut response = test_case.post_collection_job(&request).await;
-        assert_eq!(response.status(), StatusCode::OK);
-        let (task_id, collection_job_id) = ids_from_collection_job_response(&response);
-        collection_job_ids.push(collection_job_id);
-        assert_eq!(test_case.task.id(), &task_id);
-        assert!(take_response_body(&mut response).await.is_empty());
-
-        let mut response = test_case.get_collection_job(&collection_job_id).await;
-        assert_eq!(response.status(), StatusCode::OK);
-        assert!(response.headers().get(http::header::CONTENT_TYPE).is_none());
-        assert!(take_response_body(&mut response).await.is_empty());
-
-        // Update the collection job with the aggregate shares. collection job should now be
-        // complete.
-        let batch_id = test_case
-            .datastore
-            .run_unnamed_tx(|tx| {
-                let task = test_case.task.clone();
-                let vdaf = vdaf.clone();
-                let helper_aggregate_share_bytes = helper_aggregate_share.get_encoded().unwrap();
-                let request = request.clone();
-                Box::pin(async move {
-                    let collection_job = tx
-                        .get_collection_job::<0, LeaderSelected, dummy::Vdaf>(
-                            &vdaf,
-                            task.id(),
-                            &collection_job_id,
-                        )
-                        .await
-                        .unwrap()
-                        .unwrap();
-                    let batch_id = *collection_job.batch_identifier();
-
-                    let encrypted_helper_aggregate_share = hpke::seal(
-                        task.collector_hpke_keypair().config(),
-                        &HpkeApplicationInfo::new(
-                            &Label::AggregateShare,
-                            &Role::Helper,
-                            &Role::Collector,
-                        ),
-                        &helper_aggregate_share_bytes,
-                        &AggregateShareAad::new(*task.id(), task.task_configuration(), request)
-                            .get_encoded()
-                            .unwrap(),
-                    )
-                    .unwrap();
-
-                    tx.update_collection_job::<0, LeaderSelected, dummy::Vdaf>(
-                        &collection_job.with_state(CollectionJobState::Finished {
-                            report_count: task.min_batch_size() + 1,
-                            client_timestamp_interval: spanned_interval,
-                            encrypted_helper_aggregate_share,
-                            leader_aggregate_share,
-                        }),
-                    )
-                    .await
-                    .unwrap();
-
-                    Ok(batch_id)
-                })
-            })
-            .await
-            .unwrap();
-
-        if batch_id.eq(&batch_id_1) {
-            saw_batch_id_1 = true;
-        } else if batch_id.eq(&batch_id_2) {
-            saw_batch_id_2 = true;
-        } else {
-            panic!("unexpected batch ID");
-        }
-
-        let mut response = test_case.get_collection_job(&collection_job_id).await;
-        assert_eq!(
-            response.headers().get("content-type").unwrap(),
-            CollectionJobResp::MEDIA_TYPE,
-        );
-
-        let collect_resp: CollectionJobResp = decode_response_body(&mut response).await;
-        let (
-            report_count,
-            interval,
-            leader_encrypted_aggregate_share,
-            helper_encrypted_aggregate_share,
-        ) = assert_matches!(
-            collect_resp.clone(),
-            CollectionJobResp {
-                report_count,
-                interval,
-                leader_encrypted_agg_share,
-                helper_encrypted_agg_share,
-                ..
-            } => (
-                report_count,
-                interval,
-                leader_encrypted_agg_share,
-                helper_encrypted_agg_share
-            )
-        );
-
-        assert_eq!(report_count, test_case.task.min_batch_size() + 1);
-        assert_eq!(interval, spanned_interval);
-
-        let decrypted_leader_aggregate_share = hpke::open(
-            test_case.task.collector_hpke_keypair(),
-            &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
-            &leader_encrypted_aggregate_share,
-            &AggregateShareAad::new(
-                *test_case.task.id(),
-                test_case.task.task_configuration(),
-                request.clone(),
-            )
-            .get_encoded()
-            .unwrap(),
+    let mut test_case = CollectionJobTestCase::setup(
+        Role::Leader,
+        BatchMode::LeaderSelected {
+            batch_time_window_size: None,
+        },
+    )
+    .await;
+    let (batch_id_1, batch_id_2, spanned_interval) =
+        test_case.setup_leader_selected_current_batch().await;
+    let (request, collection_job_id) = test_case
+        .simulate_successful_collection_job_leader_selected(
+            batch_id_1,
+            batch_id_2,
+            spanned_interval,
         )
-        .unwrap();
-        assert_eq!(
-            leader_aggregate_share,
-            dummy::AggregateShare::get_decoded(decrypted_leader_aggregate_share.as_ref()).unwrap()
-        );
-
-        let decrypted_helper_aggregate_share = hpke::open(
-            test_case.task.collector_hpke_keypair(),
-            &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
-            &helper_encrypted_aggregate_share,
-            &AggregateShareAad::new(
-                *test_case.task.id(),
-                test_case.task.task_configuration(),
-                request.clone(),
-            )
-            .get_encoded()
-            .unwrap(),
-        )
-        .unwrap();
-        assert_eq!(
-            helper_aggregate_share,
-            dummy::AggregateShare::get_decoded(decrypted_helper_aggregate_share.as_ref()).unwrap()
-        );
-
-        collection_job_resps.push(collect_resp);
-    }
-
-    assert!(saw_batch_id_1 && saw_batch_id_2);
-    // Collection job IDs should be distinct
-    assert_eq!(collection_job_ids.len(), 2);
-    assert_ne!(collection_job_ids[0], collection_job_ids[1]);
+        .await;
 
     // We have run the two ready batches to completion. Further attempts to collect current batch
     // ought to fail.
     let mut response = test_case
         .post_collection_job(&CollectionJobReq::new(
             Query::new_leader_selected(random()),
-            aggregation_param.get_encoded().unwrap(),
+            dummy::AggregationParam::default().get_encoded().unwrap(),
         ))
         .await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
@@ -529,14 +820,10 @@ async fn collection_job_success_leader_selected() {
 
     // Re-send the very first collection job creation request. We should get the representation of
     // the completed collection job without needing a further GET.
-    let request = CollectionJobReq::new(
-        Query::new_leader_selected(first_idempotency_key),
-        aggregation_param.get_encoded().unwrap(),
-    );
     let mut response = test_case.post_collection_job(&request).await;
     assert_eq!(response.status(), StatusCode::OK);
-    let (_, collection_job_id) = ids_from_collection_job_response(&response);
-    assert_eq!(collection_job_id, collection_job_ids[0]);
+    let (_, collection_job_id_again) = ids_from_collection_job_response(&response);
+    assert_eq!(collection_job_id, collection_job_id_again);
     assert_eq!(
         response.headers().get("content-type").unwrap(),
         CollectionJobResp::MEDIA_TYPE,
@@ -546,7 +833,7 @@ async fn collection_job_success_leader_selected() {
 
 #[tokio::test]
 async fn collection_job_post_idempotence_time_interval() {
-    let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
+    let test_case = CollectionJobTestCase::setup(Role::Leader, BatchMode::TimeInterval).await;
     // Seed DB with reports, aggregations, etc. corresponding to the two time intervals used later
     // in the test
     test_case
@@ -637,7 +924,7 @@ async fn collection_job_post_idempotence_time_interval() {
 async fn collection_job_post_idempotence_time_interval_mutate_aggregation_param() {
     // Create a collection job for some time interval, then try to create another, varying the
     // aggregation parameter. It should fail due to batch overlap.
-    let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
+    let test_case = CollectionJobTestCase::setup(Role::Leader, BatchMode::TimeInterval).await;
     test_case
         .setup_time_interval_batch(Time::from_time_precision_units(0))
         .await;
@@ -656,22 +943,20 @@ async fn collection_job_post_idempotence_time_interval_mutate_aggregation_param(
     );
 
     let mut response = test_case.post_collection_job(&mutated_request).await;
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    assert_eq!(
-        take_problem_details(&mut response).await,
-        json!({
-            "status": StatusCode::BAD_REQUEST.as_u16(),
-            "type": "urn:ietf:params:ppm:dap:error:batchOverlap",
-            "title": "The queried batch overlaps with a previously queried batch.",
-            "taskid": format!("{}", test_case.task.id()),
-        })
-    );
+    test_case
+        .check_batch_overlap_response(response.status(), take_problem_details(&mut response).await);
 }
 
 #[tokio::test]
 async fn collection_job_post_idempotence_leader_selected() {
-    let (test_case, batch_id_1, batch_id_2, _) =
-        setup_leader_selected_current_batch_collection_job_test_case().await;
+    let mut test_case = CollectionJobTestCase::setup(
+        Role::Leader,
+        BatchMode::LeaderSelected {
+            batch_time_window_size: None,
+        },
+    )
+    .await;
+    let (batch_id_1, batch_id_2, _) = test_case.setup_leader_selected_current_batch().await;
 
     let mut seen_batch_id = None;
     let mut collection_job_id = None;
@@ -769,9 +1054,16 @@ async fn collection_job_post_idempotence_leader_selected() {
 
 #[tokio::test]
 async fn collection_job_post_idempotence_leader_selected_mutate_aggregation_param() {
+    let mut test_case = CollectionJobTestCase::setup(
+        Role::Leader,
+        BatchMode::LeaderSelected {
+            batch_time_window_size: None,
+        },
+    )
+    .await;
+    test_case.setup_leader_selected_current_batch().await;
     // Create a collection job for some idempotency key, then try to create another, varying the
     // aggregation parameter. It should fail because the batch is marked as aggregated.
-    let (test_case, _, _, _) = setup_leader_selected_current_batch_collection_job_test_case().await;
 
     let idempotency_key: LeaderSelectedQueryConfig = random();
 
@@ -789,22 +1081,21 @@ async fn collection_job_post_idempotence_leader_selected_mutate_aggregation_para
     );
 
     let mut response = test_case.post_collection_job(&mutated_request).await;
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    assert_eq!(
-        take_problem_details(&mut response).await,
-        json!({
-            "status": StatusCode::BAD_REQUEST.as_u16(),
-            "type": "urn:ietf:params:ppm:dap:error:batchOverlap",
-            "title": "The queried batch overlaps with a previously queried batch.",
-            "taskid": format!("{}", test_case.task.id()),
-        })
-    );
+    test_case
+        .check_batch_overlap_response(response.status(), take_problem_details(&mut response).await);
 }
 
 #[tokio::test]
 async fn collection_job_post_idempotence_leader_selected_no_extra_reports() {
-    let (test_case, _batch_id_1, _batch_id_2, _) =
-        setup_leader_selected_current_batch_collection_job_test_case().await;
+    let mut test_case = CollectionJobTestCase::setup(
+        Role::Leader,
+        BatchMode::LeaderSelected {
+            batch_time_window_size: None,
+        },
+    )
+    .await;
+
+    test_case.setup_leader_selected_current_batch().await;
 
     let request_1 = CollectionJobReq::new(
         Query::new_leader_selected(random()),
@@ -843,7 +1134,7 @@ async fn collection_job_post_idempotence_leader_selected_no_extra_reports() {
 
 #[tokio::test]
 async fn collection_job_batch_mode_misaligned() {
-    let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
+    let test_case = CollectionJobTestCase::setup(Role::Leader, BatchMode::TimeInterval).await;
     test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(
             0,
