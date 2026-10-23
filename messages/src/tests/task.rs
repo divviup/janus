@@ -1034,12 +1034,12 @@ fn task_configuration_decode_encode_is_byte_preserving() {
         concat!(
             // leader_aggregator_url
             "0014",                                     // length
-            "68747470733A2F2F6578616D706C652E636F6D2F",  // "https://example.com/"
+            "68747470733A2F2F6578616D706C652E636F6D2F", // "https://example.com/"
         ),
         concat!(
             // helper_aggregator_url
             "001C",                                                     // length
-            "68747470733A2F2F616E6F746865722E6578616D706C652E636F6D2F",  // "https://another.example.com/"
+            "68747470733A2F2F616E6F746865722E6578616D706C652E636F6D2F", // "https://another.example.com/"
         ),
         "0000000000000E10", // time_precision
         "0000000000002710", // min_batch_size
@@ -1061,8 +1061,8 @@ fn task_configuration_decode_encode_is_byte_preserving() {
                 "000000000000001C", // duration
             ),
             concat!(
-                "1234",             // extension_type (unknown)
-                "000F",             // extension_data length
+                "1234",                           // extension_type (unknown)
+                "000F",                           // extension_data length
                 "BEEFCAFEDEADBEEFCAFEDEADBEEFCA", // extension_data (15 opaque bytes)
             ),
         ),

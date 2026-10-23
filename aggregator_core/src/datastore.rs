@@ -54,9 +54,9 @@ use self::models::{
     AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob, AggregationJob,
     AggregatorRole, AuthenticationTokenType, BatchAggregation, BatchAggregationState,
     BatchAggregationStateCode, CollectionJob, CollectionJobState, CollectionJobStateCode,
-    HpkeKeyState, HpkeKeypair, LeaderStoredReport, Lease, LeaseToken, OutstandingBatch,
-    ReportAggregation, ReportAggregationMetadata, ReportAggregationMetadataState,
-    ReportAggregationState, ReportAggregationStateCode, UnaggregatedReport,
+    HpkeKeyState, HpkeKeypair, LeaderStoredReport, Lease, OutstandingBatch, ReportAggregation,
+    ReportAggregationMetadata, ReportAggregationMetadataState, ReportAggregationState,
+    ReportAggregationStateCode, UnaggregatedReport,
 };
 #[cfg(feature = "test-util")]
 use crate::VdafHasAggregationParameter;
@@ -934,7 +934,7 @@ FROM tasks",
         task_rows
             .into_iter()
             .map(|row| self.task_from_row(&TaskId::get_decoded(row.get("task_id"))?, &row))
-            .collect::<Result<_, _>>()
+            .collect()
     }
 
     /// Construct an [`AggregatorTask`] from the contents of the provided (tasks) `Row`.
@@ -969,7 +969,7 @@ FROM tasks",
             .get::<_, Option<Vec<u8>>>("collector_hpke_config")
             .map(|config| HpkeConfig::get_decoded(&config))
             .transpose()?;
-        let encrypted_vdaf_verify_key: Vec<u8> = row.get::<_, Vec<u8>>("vdaf_verify_key");
+        let encrypted_vdaf_verify_key: Vec<u8> = row.get("vdaf_verify_key");
         let vdaf_verify_key = self
             .crypter
             .decrypt(
@@ -1182,7 +1182,7 @@ WHERE client_reports.task_id = $1
             Self::client_report_from_row(
                 vdaf,
                 *task_id,
-                row.get_bytea_and_convert::<ReportId>("report_id")?,
+                row.get_bytea_and_convert("report_id")?,
                 row,
             )
         })
@@ -1294,13 +1294,13 @@ RETURNING report_id, client_timestamp",
         rows.into_iter()
             .map(|row| {
                 Ok(UnaggregatedReport::new(
-                    row.get_bytea_and_convert::<ReportId>("report_id")?,
+                    row.get_bytea_and_convert("report_id")?,
                     Time::from_time_precision_units(
                         row.get_bigint_and_convert("client_timestamp")?,
                     ),
                 ))
             })
-            .collect::<Result<Vec<_>, Error>>()
+            .collect()
     }
 
     /// `get_unaggregated_client_report_ids_by_collect_for_task` returns pairs of report IDs and
@@ -1377,7 +1377,7 @@ FROM unaggregated_client_report_ids",
         rows.into_iter()
             .map(|row| {
                 let unaggregated_report = UnaggregatedReport::new(
-                    row.get_bytea_and_convert::<ReportId>("report_id")?,
+                    row.get_bytea_and_convert("report_id")?,
                     Time::from_time_precision_units(
                         row.get_bigint_and_convert("client_timestamp")?,
                     ),
@@ -1385,7 +1385,7 @@ FROM unaggregated_client_report_ids",
                 let agg_param = A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
                 Ok((agg_param, unaggregated_report))
             })
-            .collect::<Result<Vec<_>, Error>>()
+            .collect()
     }
 
     /// `mark_report_unaggregated` resets the aggregation-started flag on the given client report,
@@ -1915,7 +1915,7 @@ WHERE aggregation_jobs.task_id = $1
         .map(|row| {
             Self::aggregation_job_from_row(
                 task_id,
-                &row.get_bytea_and_convert::<AggregationJobId>("aggregation_job_id")?,
+                &row.get_bytea_and_convert("aggregation_job_id")?,
                 &row,
             )
         })
@@ -2017,7 +2017,7 @@ RETURNING tasks.task_id, tasks.batch_mode, tasks.vdaf,
         .await?
         .into_iter()
         .map(|row| {
-            let lease_token = row.get_bytea_and_convert::<LeaseToken>("lease_token")?;
+            let lease_token = row.get_bytea_and_convert("lease_token")?;
             let lease_attempts = row.get_bigint_and_convert("lease_attempts")?;
 
             Ok(Lease::new(
@@ -2258,7 +2258,7 @@ ORDER BY ord ASC",
                 role,
                 task_id,
                 aggregation_job_id,
-                &row.get_bytea_and_convert::<ReportId>("client_report_id")?,
+                &row.get_bytea_and_convert("client_report_id")?,
                 &row,
                 task_info.time_precision,
             )
@@ -2377,8 +2377,8 @@ WHERE report_aggregations.task_id = $1
                 vdaf,
                 role,
                 task_id,
-                &row.get_bytea_and_convert::<AggregationJobId>("aggregation_job_id")?,
-                &row.get_bytea_and_convert::<ReportId>("client_report_id")?,
+                &row.get_bytea_and_convert("aggregation_job_id")?,
+                &row.get_bytea_and_convert("client_report_id")?,
                 &row,
                 task_info.time_precision,
             )
@@ -3154,8 +3154,7 @@ LIMIT 1",
         )
         .await?
         .map(|row| {
-            let collection_job_id =
-                row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
+            let collection_job_id = row.get_bytea_and_convert("collection_job_id")?;
             Self::collection_job_from_row(
                 vdaf,
                 *task_id,
@@ -3261,7 +3260,7 @@ WHERE task_id = $1
         .await?
         .into_iter()
         .map(|row| {
-            let job = Self::collection_job_from_row::<SEED_SIZE, TimeInterval, A>(
+            let job = Self::collection_job_from_row(
                 vdaf,
                 *task_id,
                 Interval::get_decoded(row.get("batch_identifier"))?,
@@ -3322,8 +3321,7 @@ WHERE task_id = $1
         .await?
         .into_iter()
         .map(|row| {
-            let collection_job_id =
-                row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
+            let collection_job_id = row.get_bytea_and_convert("collection_job_id")?;
             Self::collection_job_from_row(vdaf, *task_id, *batch_id, collection_job_id, &row)
         })
         .collect()
@@ -3374,8 +3372,7 @@ WHERE task_id = $1
         .await?
         .into_iter()
         .map(|row| {
-            let collection_job_id =
-                row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
+            let collection_job_id = row.get_bytea_and_convert("collection_job_id")?;
             let batch_identifier = B::BatchIdentifier::get_decoded(row.get("batch_identifier"))?;
             Self::collection_job_from_row(vdaf, *task_id, batch_identifier, collection_job_id, &row)
         })
@@ -3393,7 +3390,7 @@ WHERE task_id = $1
         collection_job_id: CollectionJobId,
         row: &Row,
     ) -> Result<CollectionJob<SEED_SIZE, B, A>, Error> {
-        let query = Query::<B>::get_decoded(row.get("query"))?;
+        let query = Query::get_decoded(row.get("query"))?;
         let aggregation_param = A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
         let state: CollectionJobStateCode = row.get("state");
         let report_count: Option<i64> = row.get("report_count");
@@ -3629,7 +3626,7 @@ RETURNING
         .await?
         .into_iter()
         .map(|row| {
-            let lease_token = row.get_bytea_and_convert::<LeaseToken>("lease_token")?;
+            let lease_token = row.get_bytea_and_convert("lease_token")?;
             let lease_attempts = row.get_bigint_and_convert("lease_attempts")?;
 
             Ok(Lease::new(
@@ -4648,7 +4645,7 @@ WHERE task_id = $1
             aggregate_share_id,
             row.get_bigint_and_convert("report_count")?,
             ReportIdChecksum::get_decoded(row.get("checksum"))?,
-            CollectionJobReq::<B>::get_decoded(row.get("collection_job_req"))?,
+            CollectionJobReq::get_decoded(row.get("collection_job_req"))?,
         ))
     }
 
@@ -5303,7 +5300,7 @@ SELECT config_id, config, private_key, state, last_state_change_at FROM hpke_key
         Ok(HpkeKeypair::new(
             hpke::HpkeKeypair::new(config, private_key),
             row.get("state"),
-            row.get::<_, DateTime<Utc>>("last_state_change_at"),
+            row.get("last_state_change_at"),
         ))
     }
 
@@ -5559,7 +5556,7 @@ SELECT ord, type, token FROM taskprov_collector_auth_tokens
         aggregator_auth_token_rows: &[Row],
         collector_auth_token_rows: &[Row],
     ) -> Result<PeerAggregator, Error> {
-        let endpoint = Url::parse(peer_aggregator_row.get::<_, &str>("endpoint"))?;
+        let endpoint = Url::parse(peer_aggregator_row.get("endpoint"))?;
         let endpoint_bytes = endpoint.as_str().as_ref();
         let peer_role: AggregatorRole = peer_aggregator_row.get("peer_role");
         let aggregation_mode: Option<AggregationMode> = peer_aggregator_row.get("aggregation_mode");
@@ -5813,7 +5810,7 @@ SELECT id, report_expiry_age, time_precision FROM tasks WHERE tasks.task_id = $1
             panic!("task_info_for: found multiple tasks with same ID");
         }
 
-        let pkey = row.get::<_, i64>("id");
+        let pkey = row.get("id");
         let report_expiry_age = row
             .get::<_, Option<i64>>("report_expiry_age")
             .map(|age| {
