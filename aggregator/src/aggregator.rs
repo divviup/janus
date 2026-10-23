@@ -3156,20 +3156,39 @@ impl VdafOps {
         }
     }
 
-    /// Handle creation of a collection job, returning the job ID and possibly an encoded
-    /// `CollectionJobResp<B>`.
-    async fn handle_create_collection_job_generic<const SEED_SIZE: usize, B, A>(
+    async fn handle_create_collection_job_generic<
+        const SEED_SIZE: usize,
+        B: CollectableBatchMode,
+        A: AsyncAggregator<SEED_SIZE>,
+    >(
         datastore: &Datastore,
         task: Arc<AggregatorTask>,
         vdaf: Arc<A>,
         req_bytes: &[u8],
+    ) -> Result<(CollectionJobId, Option<Vec<u8>>), Error> {
+        let req =
+            Arc::new(CollectionJobReq::<B>::get_decoded(req_bytes).map_err(Error::MessageDecode)?);
+
+        Self::handle_create_collection_job_inner(datastore, task, vdaf, req).await
+    }
+
+    /// Handle creation of a collection job, returning the job ID and possibly an encoded
+    /// `CollectionJobResp<B>`.
+    #[tracing::instrument(
+        skip_all,
+        fields(query = ?req.query().query_body()),
+        err(level = Level::DEBUG)
+    )]
+    async fn handle_create_collection_job_inner<const SEED_SIZE: usize, B, A>(
+        datastore: &Datastore,
+        task: Arc<AggregatorTask>,
+        vdaf: Arc<A>,
+        req: Arc<CollectionJobReq<B>>,
     ) -> Result<(CollectionJobId, Option<Vec<u8>>), Error>
     where
         B: CollectableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
     {
-        let req =
-            Arc::new(CollectionJobReq::<B>::get_decoded(req_bytes).map_err(Error::MessageDecode)?);
         validate_collection_job_extensions(task.id(), req.extensions())?;
         A::AggregationParam::get_decoded(req.aggregation_parameter())
             .map_err(Error::MessageDecode)?;
