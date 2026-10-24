@@ -3166,6 +3166,8 @@ impl VdafOps {
         vdaf: Arc<A>,
         req_bytes: &[u8],
     ) -> Result<(CollectionJobId, Option<Vec<u8>>), Error> {
+        // Parse the collection job request and call an inner method, so we can decorate it with a
+        // tracing span that includes request fields.
         let req =
             Arc::new(CollectionJobReq::<B>::get_decoded(req_bytes).map_err(Error::MessageDecode)?);
 
@@ -3213,14 +3215,24 @@ impl VdafOps {
                     //
                     // In either case, we don't need to examine anything but the first item in the
                     // iterator.
-                    if let Some(job) = jobs.next() {
+                    if let Some((job, expired)) = jobs.next() {
                         if *job.id() == req.derive_id()? {
                             debug!(
                                 collection_job_id = %job.id(),
                                 collect_request = ?req,
-                                "collection job already exists"
+                                job_state = ?job.state(),
+                                "collection job already exists",
                             );
                             debug_assert!(jobs.next().is_none());
+                            if expired {
+                                return Err(datastore::Error::User(
+                                    Error::CollectionJobRequestRejected(
+                                        *task.id(),
+                                        "collection job request too late",
+                                    )
+                                    .into(),
+                                ));
+                            }
                             return Ok((
                                 *job.id(),
                                 Self::collection_job_resp_from_job(&task, &job)
@@ -3402,6 +3414,7 @@ impl VdafOps {
                 debug!(
                     collection_job_id = %collection_job.id(),
                     task_id = %task.id(),
+                    job_state = ?collection_job.state(),
                     "Serving cached collection job response"
                 );
                 let encrypted_leader_aggregate_share = hpke::seal(
@@ -3842,7 +3855,7 @@ impl VdafOps {
                 {
                     return Err(Error::AggregateShareRequestRejected(
                         *task.id(),
-                        "aggregate share request too late".to_string(),
+                        "aggregate share request too late",
                     ));
                 }
             }

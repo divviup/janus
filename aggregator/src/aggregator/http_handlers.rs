@@ -130,7 +130,16 @@ impl Error {
                 .with_aggregation_job_id(aggregation_job_id)
                 .into_response()
             }
-            Error::DeletedCollectionJob(_, _) => StatusCode::NO_CONTENT.into_response(),
+            Error::DeletedCollectionJob(task_id, collection_job_id) => {
+                ProblemDocument::new(
+                    "https://docs.divviup.org/references/janus-errors#collection-job-deleted",
+                    "The collection job has been deleted.",
+                    StatusCode::GONE,
+                )
+                .with_task_id(task_id)
+                .with_collection_job_id(collection_job_id)
+                .into_response()
+            },
             Error::AbandonedCollectionJob(task_id, collection_job_id) => {
                 ProblemDocument::new(
                     "https://docs.divviup.org/references/janus-errors#collection-job-abandoned",
@@ -188,6 +197,14 @@ impl Error {
             Error::AggregateShareRequestRejected(task_id, detail) => ProblemDocument::new(
                 "https://docs.divviup.org/references/janus-errors#aggregate-share-request-rejected",
                 "Aggregate share request rejected.",
+                StatusCode::BAD_REQUEST,
+            )
+            .with_task_id(task_id)
+            .with_detail(detail)
+            .into_response(),
+            Error::CollectionJobRequestRejected(task_id, detail) => ProblemDocument::new(
+                "https://docs.divviup.org/references/janus-errors#collection-job-request-rejected",
+                "Collection job request rejected.",
                 StatusCode::BAD_REQUEST,
             )
             .with_task_id(task_id)
@@ -1144,7 +1161,7 @@ pub mod test_util {
     use janus_messages::codec::Decode;
 
     use super::AggregatorHandlerBuilder;
-    use crate::aggregator::test_util::default_aggregator_config;
+    use crate::aggregator::{self, test_util::default_aggregator_config};
 
     pub async fn take_response_body(response: &mut Response) -> Vec<u8> {
         let body = std::mem::take(response.body_mut());
@@ -1181,20 +1198,35 @@ pub mod test_util {
 
     impl HttpHandlerTest {
         pub async fn new() -> Self {
+            Self::builder().build().await
+        }
+
+        pub fn builder() -> HttpHandlerTestBuilder {
+            HttpHandlerTestBuilder {
+                config: default_aggregator_config(),
+            }
+        }
+    }
+
+    pub struct HttpHandlerTestBuilder {
+        config: aggregator::Config,
+    }
+
+    impl HttpHandlerTestBuilder {
+        pub async fn build(self) -> HttpHandlerTest {
             install_test_trace_subscriber();
             initialize_rustls();
-            let clock = MockClock::default();
             let ephemeral_datastore = ephemeral_datastore().await;
+            let clock = MockClock::default();
             let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
             let hpke_keypair = datastore.put_hpke_key().await.unwrap();
 
-            let meter = noop_meter();
             let router = AggregatorHandlerBuilder::new(
                 datastore.clone(),
                 TestRuntime::default(),
-                &meter,
-                default_aggregator_config(),
+                &noop_meter(),
+                self.config,
             )
             .await
             .unwrap()
@@ -1207,13 +1239,17 @@ pub mod test_util {
             .build()
             .unwrap();
 
-            Self {
+            HttpHandlerTest {
                 clock,
                 ephemeral_datastore,
                 datastore,
                 router,
                 hpke_keypair,
             }
+        }
+
+        pub fn with_config(self, config: aggregator::Config) -> Self {
+            Self { config }
         }
     }
 }

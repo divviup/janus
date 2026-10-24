@@ -131,8 +131,11 @@ pub enum Error {
     Http(Box<HttpErrorResponse>),
     /// An aggregate share request was rejected.
     #[error("task {0}: {1}")]
-    AggregateShareRequestRejected(TaskId, String),
-    /// An attempt was made to act on an unknown collection job.
+    AggregateShareRequestRejected(TaskId, &'static str),
+    /// A collection job request was rejected.
+    #[error("task {0}: {1}")]
+    CollectionJobRequestRejected(TaskId, &'static str),
+    /// An attempt was made to act on an unknown aggregate share.
     #[error("task {0}: unrecognized aggregate share: {1}")]
     UnrecognizedAggregateShareId(TaskId, AggregateShareId),
     /// An empty aggregation (no report shares) was attempted.
@@ -345,6 +348,7 @@ impl Error {
             Error::HttpClient(_) => "http_client",
             Error::Http { .. } => "http",
             Error::AggregateShareRequestRejected(_, _) => "aggregate_share_request_rejected",
+            Error::CollectionJobRequestRejected(_, _) => "collection_job_request_rejected",
             Error::UnrecognizedAggregateShareId(_, _) => "unrecognized_aggreate_share_id",
             Error::EmptyAggregation(_) => "empty_aggregation",
             Error::Internal(_) => "internal",

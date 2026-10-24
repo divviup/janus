@@ -9,10 +9,7 @@ use janus_messages::{
 
 use crate::{
     AsyncAggregator,
-    datastore::{
-        self, Transaction,
-        models::{BatchAggregation, CollectionJob},
-    },
+    datastore::{self, Transaction, models::BatchAggregation},
     task::AggregatorTask,
 };
 
@@ -25,14 +22,6 @@ pub trait AccumulableBatchMode: BatchMode {
         _: &Self::PartialBatchIdentifier,
         client_timestamp: &Time,
     ) -> Result<Self::BatchIdentifier, datastore::Error>;
-
-    /// Retrieves collection jobs which include the given batch identifier.
-    async fn get_collection_jobs_including<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>>(
-        tx: &Transaction<'_>,
-        vdaf: &A,
-        task_id: &TaskId,
-        batch_identifier: &Self::BatchIdentifier,
-    ) -> Result<Vec<CollectionJob<SEED_SIZE, Self, A>>, datastore::Error>;
 
     /// Some batch modes (e.g. [`TimeInterval`]) can represent their batch identifiers as an
     /// interval. This method extracts the interval from such identifiers, or returns `None` if the
@@ -60,19 +49,6 @@ impl AccumulableBatchMode for TimeInterval {
         client_timestamp: &Time,
     ) -> Result<Self::BatchIdentifier, datastore::Error> {
         Interval::minimal(*client_timestamp).map_err(|e| datastore::Error::User(e.into()))
-    }
-
-    async fn get_collection_jobs_including<
-        const SEED_SIZE: usize,
-        A: AsyncAggregator<SEED_SIZE>,
-    >(
-        tx: &Transaction<'_>,
-        vdaf: &A,
-        task_id: &TaskId,
-        batch_identifier: &Self::BatchIdentifier,
-    ) -> Result<Vec<CollectionJob<SEED_SIZE, Self, A>>, datastore::Error> {
-        tx.get_collection_jobs_intersecting_interval(vdaf, task_id, batch_identifier)
-            .await
     }
 
     fn to_batch_interval(collection_identifier: &Self::BatchIdentifier) -> Option<&Interval> {
@@ -103,19 +79,6 @@ impl AccumulableBatchMode for LeaderSelected {
         _: &Time,
     ) -> Result<Self::BatchIdentifier, datastore::Error> {
         Ok(*batch_id)
-    }
-
-    async fn get_collection_jobs_including<
-        const SEED_SIZE: usize,
-        A: AsyncAggregator<SEED_SIZE>,
-    >(
-        tx: &Transaction<'_>,
-        vdaf: &A,
-        task_id: &TaskId,
-        batch_id: &Self::BatchIdentifier,
-    ) -> Result<Vec<CollectionJob<SEED_SIZE, Self, A>>, datastore::Error> {
-        tx.get_collection_jobs_by_batch_id(vdaf, task_id, batch_id)
-            .await
     }
 
     fn to_batch_interval(_: &Self::BatchIdentifier) -> Option<&Interval> {

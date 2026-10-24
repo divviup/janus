@@ -73,6 +73,13 @@ impl BatchMode {
             BatchMode::LeaderSelected { .. } => BatchConfig::LeaderSelected,
         }
     }
+
+    /// Construct a simple `Self::LeaderSelected` value,
+    pub fn leader_selected() -> Self {
+        Self::LeaderSelected {
+            batch_time_window_size: None,
+        }
+    }
 }
 
 impl TryFrom<batch_mode::Code> for BatchMode {
@@ -1428,6 +1435,17 @@ pub mod test_util {
         /// Gets the batch mode for the eventual task.
         pub fn batch_mode(&self) -> &BatchMode {
             self.0.batch_mode()
+        }
+
+        /// Sets the batch mode for the eventual task.
+        pub fn with_batch_mode(self, batch_mode: BatchMode) -> Self {
+            Self(Task {
+                common_parameters: CommonTaskParameters {
+                    batch_mode,
+                    ..self.0.common_parameters
+                },
+                ..self.0
+            })
         }
 
         /// Gets the aggregation mode used by the helper for the eventual task.
