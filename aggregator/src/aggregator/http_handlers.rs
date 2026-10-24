@@ -1204,12 +1204,14 @@ pub mod test_util {
         pub fn builder() -> HttpHandlerTestBuilder {
             HttpHandlerTestBuilder {
                 config: default_aggregator_config(),
+                clock: MockClock::default(),
             }
         }
     }
 
     pub struct HttpHandlerTestBuilder {
         config: aggregator::Config,
+        clock: MockClock,
     }
 
     impl HttpHandlerTestBuilder {
@@ -1217,8 +1219,7 @@ pub mod test_util {
             install_test_trace_subscriber();
             initialize_rustls();
             let ephemeral_datastore = ephemeral_datastore().await;
-            let clock = MockClock::default();
-            let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+            let datastore = Arc::new(ephemeral_datastore.datastore(self.clock.clone()).await);
 
             let hpke_keypair = datastore.put_hpke_key().await.unwrap();
 
@@ -1240,7 +1241,7 @@ pub mod test_util {
             .unwrap();
 
             HttpHandlerTest {
-                clock,
+                clock: self.clock,
                 ephemeral_datastore,
                 datastore,
                 router,
@@ -1248,8 +1249,12 @@ pub mod test_util {
             }
         }
 
+        pub fn with_clock(self, clock: MockClock) -> Self {
+            Self { clock, ..self }
+        }
+
         pub fn with_config(self, config: aggregator::Config) -> Self {
-            Self { config }
+            Self { config, ..self }
         }
     }
 }
