@@ -3166,6 +3166,8 @@ impl VdafOps {
         vdaf: Arc<A>,
         req_bytes: &[u8],
     ) -> Result<(CollectionJobId, Option<Vec<u8>>), Error> {
+        // Parse the collection job request and call an inner method, so we can decorate it with a
+        // tracing span that includes request fields.
         let req =
             Arc::new(CollectionJobReq::<B>::get_decoded(req_bytes).map_err(Error::MessageDecode)?);
 

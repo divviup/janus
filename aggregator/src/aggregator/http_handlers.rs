@@ -1161,7 +1161,7 @@ pub mod test_util {
     use janus_messages::codec::Decode;
 
     use super::AggregatorHandlerBuilder;
-    use crate::aggregator::test_util::default_aggregator_config;
+    use crate::aggregator::{self, test_util::default_aggregator_config};
 
     pub async fn take_response_body(response: &mut Response) -> Vec<u8> {
         let body = std::mem::take(response.body_mut());
@@ -1198,20 +1198,35 @@ pub mod test_util {
 
     impl HttpHandlerTest {
         pub async fn new() -> Self {
+            Self::builder().build().await
+        }
+
+        pub fn builder() -> HttpHandlerTestBuilder {
+            HttpHandlerTestBuilder {
+                config: default_aggregator_config(),
+            }
+        }
+    }
+
+    pub struct HttpHandlerTestBuilder {
+        config: aggregator::Config,
+    }
+
+    impl HttpHandlerTestBuilder {
+        pub async fn build(self) -> HttpHandlerTest {
             install_test_trace_subscriber();
             initialize_rustls();
-            let clock = MockClock::default();
             let ephemeral_datastore = ephemeral_datastore().await;
+            let clock = MockClock::default();
             let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
             let hpke_keypair = datastore.put_hpke_key().await.unwrap();
 
-            let meter = noop_meter();
             let router = AggregatorHandlerBuilder::new(
                 datastore.clone(),
                 TestRuntime::default(),
-                &meter,
-                default_aggregator_config(),
+                &noop_meter(),
+                self.config,
             )
             .await
             .unwrap()
@@ -1224,13 +1239,17 @@ pub mod test_util {
             .build()
             .unwrap();
 
-            Self {
+            HttpHandlerTest {
                 clock,
                 ephemeral_datastore,
                 datastore,
                 router,
                 hpke_keypair,
             }
+        }
+
+        pub fn with_config(self, config: aggregator::Config) -> Self {
+            Self { config }
         }
     }
 }

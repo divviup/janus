@@ -1,35 +1,27 @@
-use std::sync::Arc;
-
 use assert_matches::assert_matches;
-use axum::{Router, body::Body};
+use axum::body::Body;
 use http::{Request, StatusCode};
 use janus_aggregator_core::{
-    datastore::{
-        Datastore,
-        models::{
-            AggregationJob, AggregationJobState, BatchAggregation, BatchAggregationState,
-            CollectionJob, CollectionJobState, LeaderStoredReport, ReportAggregation,
-            ReportAggregationState,
-        },
-        test_util::{EphemeralDatastore, ephemeral_datastore},
+    datastore::models::{
+        AggregationJob, AggregationJobState, BatchAggregation, BatchAggregationState,
+        CollectionJob, CollectionJobState, LeaderStoredReport, ReportAggregation,
+        ReportAggregationState,
     },
     task::{
         AggregationMode, BatchMode,
         test_util::{Task, TaskBuilder},
     },
-    test_util::noop_meter,
 };
 use janus_core::{
     auth_tokens::{AuthenticationToken, test_util::WithAuthenticationToken},
     hpke::{self, HpkeApplicationInfo, Label},
     retries::HeaderMapExt,
-    test_util::{install_test_trace_subscriber, runtime::TestRuntime},
     time::{Clock, DateTimeExt, MockClock},
     vdaf::VdafInstance,
 };
 use janus_messages::{
     AggregateShareAad, AggregationJobStep, BatchId, CollectionJobId, CollectionJobReq,
-    CollectionJobResp, Duration, Interval, MediaType, Query, Role, TaskId, Time, TimePrecision,
+    CollectionJobResp, Interval, MediaType, Query, Role, TaskId, Time, TimePrecision,
     batch_mode::{
         BatchMode as BatchModeTrait, LeaderSelected, LeaderSelectedQueryConfig, TimeInterval,
     },
@@ -42,90 +34,33 @@ use rand::random;
 use serde_json::json;
 use tower::ServiceExt;
 
-use super::http_handlers::AggregatorHandlerBuilder;
 use crate::aggregator::{
     Config,
-    http_handlers::test_util::{decode_response_body, take_problem_details, take_response_body},
+    http_handlers::test_util::{
+        HttpHandlerTest, decode_response_body, take_problem_details, take_response_body,
+    },
     test_util::BATCH_AGGREGATION_SHARD_COUNT,
 };
 
 pub(crate) struct CollectionJobTestCase {
     pub(super) task: Task,
-    clock: MockClock,
-    pub(super) router: Router,
-    pub(super) datastore: Arc<Datastore>,
-    _ephemeral_datastore: EphemeralDatastore,
+    test: HttpHandlerTest,
 }
 
 impl CollectionJobTestCase {
-    pub(crate) async fn setup(role: Role, batch_mode: BatchMode) -> Self {
-        Self::setup_with_report_expiry_age(role, batch_mode, None).await
-    }
-
-    pub(crate) async fn setup_with_report_expiry_age(
-        role: Role,
-        batch_mode: BatchMode,
-        report_expiry_age: Option<Duration>,
-    ) -> Self {
-        install_test_trace_subscriber();
-
-        let task = TaskBuilder::new(
-            batch_mode,
-            AggregationMode::Synchronous,
-            VdafInstance::Fake { rounds: 1 },
-        )
-        .with_report_expiry_age(report_expiry_age)
-        .build();
-        let role_task = task.view_for_role(role).unwrap();
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
-
-        datastore.put_aggregator_task(&role_task).await.unwrap();
-        datastore.put_hpke_key().await.unwrap();
-
-        let router = AggregatorHandlerBuilder::new(
-            Arc::clone(&datastore),
-            TestRuntime::default(),
-            &noop_meter(),
-            Config {
-                batch_aggregation_shard_count: BATCH_AGGREGATION_SHARD_COUNT,
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap()
-        .build()
-        .unwrap();
-
-        CollectionJobTestCase {
-            task,
-            clock,
-            router,
-            datastore,
-            _ephemeral_datastore: ephemeral_datastore,
+    pub(super) fn builder() -> CollectionJobTestCaseBuilder {
+        CollectionJobTestCaseBuilder {
+            task_builder: TaskBuilder::new(
+                BatchMode::TimeInterval,
+                AggregationMode::Synchronous,
+                VdafInstance::Fake { rounds: 1 },
+            ),
+            role: Role::Leader,
         }
     }
 
-    pub(super) async fn setup_leader_selected_current_batch(
-        &mut self,
-    ) -> (BatchId, BatchId, Interval) {
-        // Fill the datastore with the necessary data so that there are two outstanding batches to
-        // be collected.
-        let time = self.clock.now().to_time(self.task.time_precision());
-        let batch_id_1 = self
-            .setup_leader_selected_batch(time, self.task.min_batch_size() + 1)
-            .await;
-        let batch_id_2 = self
-            .setup_leader_selected_batch(time, self.task.min_batch_size() + 1)
-            .await;
-        let client_timestamp_interval = Interval::minimal(time).unwrap();
-
-        (batch_id_1, batch_id_2, client_timestamp_interval)
-    }
-
     pub(super) fn clock(&self) -> &MockClock {
-        &self.clock
+        &self.test.clock
     }
 
     pub(super) async fn post_collection_job_with_auth_token<B: BatchModeTrait>(
@@ -143,7 +78,8 @@ impl CollectionJobTestCase {
         if let Some(auth) = auth_token {
             builder = builder.with_authentication_token(auth);
         }
-        self.router
+        self.test
+            .router
             .clone()
             .oneshot(
                 builder
@@ -176,7 +112,8 @@ impl CollectionJobTestCase {
         if let Some(auth) = auth_token {
             builder = builder.with_authentication_token(auth);
         }
-        self.router
+        self.test
+            .router
             .clone()
             .oneshot(builder.body(Body::empty()).unwrap())
             .await
@@ -198,7 +135,8 @@ impl CollectionJobTestCase {
         &self,
         collection_job_id: &CollectionJobId,
     ) -> http::Response<Body> {
-        self.router
+        self.test
+            .router
             .clone()
             .oneshot(
                 Request::builder()
@@ -217,6 +155,23 @@ impl CollectionJobTestCase {
             .unwrap()
     }
 
+    pub(super) async fn setup_leader_selected_current_batch(
+        &mut self,
+    ) -> (BatchId, BatchId, Interval) {
+        // Fill the datastore with the necessary data so that there are two outstanding batches to
+        // be collected.
+        let time = self.clock().now().to_time(self.task.time_precision());
+        let batch_id_1 = self
+            .setup_leader_selected_batch(time, self.task.min_batch_size() + 1)
+            .await;
+        let batch_id_2 = self
+            .setup_leader_selected_batch(time, self.task.min_batch_size() + 1)
+            .await;
+        let client_timestamp_interval = Interval::minimal(time).unwrap();
+
+        (batch_id_1, batch_id_2, client_timestamp_interval)
+    }
+
     /// Seed the database with reports and various aggregation artifacts from aggregating them in a
     /// leader-selected batch.
     pub(super) async fn setup_leader_selected_batch(
@@ -225,7 +180,8 @@ impl CollectionJobTestCase {
         report_count: u64,
     ) -> BatchId {
         let batch_id = random();
-        self.datastore
+        self.test
+            .datastore
             .run_unnamed_tx(|tx| {
                 let task = self.task.clone();
                 Box::pin(async move {
@@ -289,7 +245,8 @@ impl CollectionJobTestCase {
     /// Seed the database with a report and various aggregation artifacts from aggregating it in a
     /// time interval batch.
     pub(super) async fn setup_time_interval_batch(&self, time: Time) -> Interval {
-        self.datastore
+        self.test
+            .datastore
             .run_unnamed_tx(|tx| {
                 let task = self.task.clone();
                 Box::pin(async move {
@@ -368,6 +325,7 @@ impl CollectionJobTestCase {
         assert_eq!(&task_id, self.task.id());
 
         let got_collection_job = self
+            .test
             .datastore
             .run_unnamed_tx(|tx| {
                 let task_id = *self.task.id();
@@ -402,9 +360,10 @@ impl CollectionJobTestCase {
         assert!(response.headers().get(http::header::CONTENT_TYPE).is_none());
         assert!(take_response_body(&mut response).await.is_empty());
 
-        // Update the collection job with the aggregate shares and some aggregation jobs. collection
-        // job should now be complete.
-        self.datastore
+        // Update the collection job with the aggregate shares. The collection job should now be
+        // complete.
+        self.test
+            .datastore
             .run_unnamed_tx(|tx| {
                 let task = self.task.clone();
                 let helper_aggregate_share_bytes = helper_aggregate_share.get_encoded().unwrap();
@@ -567,6 +526,7 @@ impl CollectionJobTestCase {
             // Update the collection job with the aggregate shares. collection job should now be
             // complete.
             let batch_id = self
+                .test
                 .datastore
                 .run_unnamed_tx(|tx| {
                     let task = self.task.clone();
@@ -763,6 +723,47 @@ impl CollectionJobTestCase {
     }
 }
 
+pub(super) struct CollectionJobTestCaseBuilder {
+    task_builder: TaskBuilder,
+    role: Role,
+}
+
+impl CollectionJobTestCaseBuilder {
+    pub(super) async fn build(self) -> CollectionJobTestCase {
+        let test = HttpHandlerTest::builder()
+            .with_config(Config {
+                batch_aggregation_shard_count: BATCH_AGGREGATION_SHARD_COUNT,
+                ..Default::default()
+            })
+            .build()
+            .await;
+
+        let task = self.task_builder.build();
+        let role_task = match self.role {
+            Role::Leader => task.leader_view().unwrap(),
+            Role::Helper => task.helper_view().unwrap(),
+            _ => panic!("unexpected role"),
+        };
+        test.datastore
+            .put_aggregator_task(&role_task)
+            .await
+            .unwrap();
+
+        CollectionJobTestCase { task, test }
+    }
+
+    pub(super) fn with_role(self, role: Role) -> Self {
+        Self { role, ..self }
+    }
+
+    pub(super) fn build_task<F: FnMut(TaskBuilder) -> TaskBuilder>(self, mut f: F) -> Self {
+        Self {
+            task_builder: f(self.task_builder),
+            ..self
+        }
+    }
+}
+
 /// Parse task ID and collection job ID out of response location header.
 ///
 /// Panics if header is missing from response or value is malformed.
@@ -782,13 +783,10 @@ async fn collection_job_success_leader_selected() {
     // collection job IDs are minted and distinct batch IDs are collected each time. Then, we
     // attempt to collect another current batch, which must fail as there are no more outstanding
     // batches.
-    let mut test_case = CollectionJobTestCase::setup(
-        Role::Leader,
-        BatchMode::LeaderSelected {
-            batch_time_window_size: None,
-        },
-    )
-    .await;
+    let mut test_case = CollectionJobTestCase::builder()
+        .build_task(|tb| tb.with_batch_mode(BatchMode::leader_selected()))
+        .build()
+        .await;
     let (batch_id_1, batch_id_2, spanned_interval) =
         test_case.setup_leader_selected_current_batch().await;
     let (request, collection_job_id) = test_case
@@ -833,7 +831,10 @@ async fn collection_job_success_leader_selected() {
 
 #[tokio::test]
 async fn collection_job_post_idempotence_time_interval() {
-    let test_case = CollectionJobTestCase::setup(Role::Leader, BatchMode::TimeInterval).await;
+    let test_case = CollectionJobTestCase::builder()
+        .build_task(|tb| tb.with_batch_mode(BatchMode::TimeInterval))
+        .build()
+        .await;
     // Seed DB with reports, aggregations, etc. corresponding to the two time intervals used later
     // in the test
     test_case
@@ -896,6 +897,7 @@ async fn collection_job_post_idempotence_time_interval() {
     expect_collection_job_ids.sort();
 
     let got_collection_job_ids = test_case
+        .test
         .datastore
         .run_unnamed_tx(|tx| {
             let task_id = *test_case.task.id();
@@ -924,7 +926,10 @@ async fn collection_job_post_idempotence_time_interval() {
 async fn collection_job_post_idempotence_time_interval_mutate_aggregation_param() {
     // Create a collection job for some time interval, then try to create another, varying the
     // aggregation parameter. It should fail due to batch overlap.
-    let test_case = CollectionJobTestCase::setup(Role::Leader, BatchMode::TimeInterval).await;
+    let test_case = CollectionJobTestCase::builder()
+        .build_task(|tb| tb.with_batch_mode(BatchMode::TimeInterval))
+        .build()
+        .await;
     test_case
         .setup_time_interval_batch(Time::from_time_precision_units(0))
         .await;
@@ -949,13 +954,10 @@ async fn collection_job_post_idempotence_time_interval_mutate_aggregation_param(
 
 #[tokio::test]
 async fn collection_job_post_idempotence_leader_selected() {
-    let mut test_case = CollectionJobTestCase::setup(
-        Role::Leader,
-        BatchMode::LeaderSelected {
-            batch_time_window_size: None,
-        },
-    )
-    .await;
+    let mut test_case = CollectionJobTestCase::builder()
+        .build_task(|tb| tb.with_batch_mode(BatchMode::leader_selected()))
+        .build()
+        .await;
     let (batch_id_1, batch_id_2, _) = test_case.setup_leader_selected_current_batch().await;
 
     let mut seen_batch_id = None;
@@ -980,6 +982,7 @@ async fn collection_job_post_idempotence_leader_selected() {
         // Make sure that there is only ever a single collection job, and that it uses the same
         // batch ID after each POST
         let batch_id = test_case
+            .test
             .datastore
             .run_unnamed_tx(|tx| {
                 let task_id = *test_case.task.id();
@@ -1026,6 +1029,7 @@ async fn collection_job_post_idempotence_leader_selected() {
     expect_collection_job_ids.sort();
 
     let got_collection_job_ids = test_case
+        .test
         .datastore
         .run_unnamed_tx(|tx| {
             let task_id = *test_case.task.id();
@@ -1054,13 +1058,10 @@ async fn collection_job_post_idempotence_leader_selected() {
 
 #[tokio::test]
 async fn collection_job_post_idempotence_leader_selected_mutate_aggregation_param() {
-    let mut test_case = CollectionJobTestCase::setup(
-        Role::Leader,
-        BatchMode::LeaderSelected {
-            batch_time_window_size: None,
-        },
-    )
-    .await;
+    let mut test_case = CollectionJobTestCase::builder()
+        .build_task(|tb| tb.with_batch_mode(BatchMode::leader_selected()))
+        .build()
+        .await;
     test_case.setup_leader_selected_current_batch().await;
     // Create a collection job for some idempotency key, then try to create another, varying the
     // aggregation parameter. It should fail because the batch is marked as aggregated.
@@ -1087,14 +1088,10 @@ async fn collection_job_post_idempotence_leader_selected_mutate_aggregation_para
 
 #[tokio::test]
 async fn collection_job_post_idempotence_leader_selected_no_extra_reports() {
-    let mut test_case = CollectionJobTestCase::setup(
-        Role::Leader,
-        BatchMode::LeaderSelected {
-            batch_time_window_size: None,
-        },
-    )
-    .await;
-
+    let mut test_case = CollectionJobTestCase::builder()
+        .build_task(|tb| tb.with_batch_mode(BatchMode::leader_selected()))
+        .build()
+        .await;
     test_case.setup_leader_selected_current_batch().await;
 
     let request_1 = CollectionJobReq::new(
@@ -1134,7 +1131,10 @@ async fn collection_job_post_idempotence_leader_selected_no_extra_reports() {
 
 #[tokio::test]
 async fn collection_job_batch_mode_misaligned() {
-    let test_case = CollectionJobTestCase::setup(Role::Leader, BatchMode::TimeInterval).await;
+    let test_case = CollectionJobTestCase::builder()
+        .build_task(|tb| tb.with_batch_mode(BatchMode::TimeInterval))
+        .build()
+        .await;
     test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(
             0,

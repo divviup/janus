@@ -1,29 +1,27 @@
-use axum::body::Body;
 use chrono::TimeDelta;
-use http::{Request, StatusCode};
-use janus_aggregator_core::task::{AggregationMode, BatchMode, test_util::TaskBuilder};
-use janus_core::{
-    auth_tokens::test_util::WithAuthenticationToken,
-    time::{Clock, DateTimeExt, TimeExt},
-    vdaf::VdafInstance,
-};
+use http::StatusCode;
+use janus_aggregator_core::task::BatchMode;
+use janus_core::time::{Clock, DateTimeExt, TimeExt};
 use janus_messages::{
     CollectionJobExtension, CollectionJobExtensionType, CollectionJobId, CollectionJobReq,
-    CollectionJobResp, Duration, Interval, MediaType, Query, Role, Time, batch_mode::TimeInterval,
+    CollectionJobResp, Duration, Interval, MediaType, Query, Role, Time,
 };
 use prio::{codec::Encode, vdaf::dummy};
 use rand::random;
 use serde_json::json;
-use tower::ServiceExt;
 
 use crate::aggregator::{
     collection_job_tests::{CollectionJobTestCase, ids_from_collection_job_response},
-    http_handlers::test_util::{HttpHandlerTest, decode_response_body, take_problem_details},
+    http_handlers::test_util::{decode_response_body, take_problem_details},
 };
 
 #[tokio::test]
 async fn collection_job_post_request_to_helper() {
-    let test_case = CollectionJobTestCase::setup(Role::Helper, BatchMode::TimeInterval).await;
+    let test_case = CollectionJobTestCase::builder()
+        .with_role(Role::Helper)
+        .build_task(|tb| tb.with_batch_mode(BatchMode::TimeInterval))
+        .build()
+        .await;
     test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(
             0,
@@ -60,7 +58,10 @@ async fn collection_job_post_request_to_helper() {
 
 #[tokio::test]
 async fn collection_job_post_request_invalid_batch_interval() {
-    let test_case = CollectionJobTestCase::setup(Role::Leader, BatchMode::TimeInterval).await;
+    let test_case = CollectionJobTestCase::builder()
+        .build_task(|tb| tb.with_batch_mode(BatchMode::TimeInterval))
+        .build()
+        .await;
     test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(
             0,
@@ -99,7 +100,10 @@ async fn collection_job_post_request_invalid_batch_interval() {
 
 #[tokio::test]
 async fn collection_job_post_request_invalid_aggregation_parameter() {
-    let test_case = CollectionJobTestCase::setup(Role::Leader, BatchMode::TimeInterval).await;
+    let test_case = CollectionJobTestCase::builder()
+        .build_task(|tb| tb.with_batch_mode(BatchMode::TimeInterval))
+        .build()
+        .await;
     test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(
             0,
@@ -136,7 +140,10 @@ async fn collection_job_post_request_invalid_aggregation_parameter() {
 
 #[tokio::test]
 async fn collection_job_post_request_unsupported_extension() {
-    let test_case = CollectionJobTestCase::setup(Role::Leader, BatchMode::TimeInterval).await;
+    let test_case = CollectionJobTestCase::builder()
+        .build_task(|tb| tb.with_batch_mode(BatchMode::TimeInterval))
+        .build()
+        .await;
 
     // No collection job extension types are defined, so any extension is unsupported.
     let request = CollectionJobReq::new(
@@ -171,7 +178,10 @@ async fn collection_job_post_request_unsupported_extension() {
 
 #[tokio::test]
 async fn collection_job_post_request_invalid_extension_order() {
-    let test_case = CollectionJobTestCase::setup(Role::Leader, BatchMode::TimeInterval).await;
+    let test_case = CollectionJobTestCase::builder()
+        .build_task(|tb| tb.with_batch_mode(BatchMode::TimeInterval))
+        .build()
+        .await;
 
     // Extension types 0x0002 then 0x0001 are not in strictly increasing order.
     let request = CollectionJobReq::new(
@@ -206,45 +216,20 @@ async fn collection_job_post_request_invalid_extension_order() {
 
 #[tokio::test]
 async fn collection_job_post_request_invalid_batch_size() {
-    let HttpHandlerTest {
-        router,
-        ephemeral_datastore: _ephemeral_datastore,
-        datastore,
-        ..
-    } = HttpHandlerTest::new().await;
-
-    // Set up parameters.
-    let task = TaskBuilder::new(
-        BatchMode::TimeInterval,
-        AggregationMode::Synchronous,
-        VdafInstance::Fake { rounds: 1 },
-    )
-    .with_min_batch_size(1)
-    .build();
-    let leader_task = task.leader_view().unwrap();
-    datastore.put_aggregator_task(&leader_task).await.unwrap();
+    let test_case = CollectionJobTestCase::builder()
+        .build_task(|tb| {
+            tb.with_min_batch_size(1)
+                .with_batch_mode(BatchMode::TimeInterval)
+        })
+        .build()
+        .await;
 
     let request = CollectionJobReq::new(
         Query::new_time_interval(Interval::minimal(Time::from_time_precision_units(0)).unwrap()),
         dummy::AggregationParam::default().get_encoded().unwrap(),
     );
 
-    let mut response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(task.collection_job_creation_uri().unwrap().path())
-                .with_authentication_token(task.collector_auth_token())
-                .header(
-                    http::header::CONTENT_TYPE,
-                    CollectionJobReq::<TimeInterval>::MEDIA_TYPE,
-                )
-                .body(Body::from(request.get_encoded().unwrap()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let mut response = test_case.post_collection_job(&request).await;
 
     // Collect request will be rejected because there are no reports in the batch interval
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
@@ -254,14 +239,17 @@ async fn collection_job_post_request_invalid_batch_size() {
             "status": StatusCode::BAD_REQUEST.as_u16(),
             "type": "urn:ietf:params:ppm:dap:error:invalidBatchSize",
             "title": "The number of reports included in the batch is invalid.",
-            "taskid": format!("{}", task.id()),
+            "taskid": format!("{}", test_case.task.id()),
         })
     );
 }
 
 #[tokio::test]
 async fn collection_job_post_request_unauthenticated() {
-    let test_case = CollectionJobTestCase::setup(Role::Leader, BatchMode::TimeInterval).await;
+    let test_case = CollectionJobTestCase::builder()
+        .build_task(|tb| tb.with_batch_mode(BatchMode::TimeInterval))
+        .build()
+        .await;
     test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(
             0,
@@ -300,7 +288,10 @@ async fn collection_job_post_request_unauthenticated() {
 
 #[tokio::test]
 async fn collection_job_get_request_unauthenticated_collection_jobs() {
-    let test_case = CollectionJobTestCase::setup(Role::Leader, BatchMode::TimeInterval).await;
+    let test_case = CollectionJobTestCase::builder()
+        .build_task(|tb| tb.with_batch_mode(BatchMode::TimeInterval))
+        .build()
+        .await;
     test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(
             0,
@@ -348,7 +339,10 @@ async fn collection_job_get_request_unauthenticated_collection_jobs() {
 
 #[tokio::test]
 async fn collection_job_success_time_interval() {
-    let mut test_case = CollectionJobTestCase::setup(Role::Leader, BatchMode::TimeInterval).await;
+    let mut test_case = CollectionJobTestCase::builder()
+        .build_task(|tb| tb.with_batch_mode(BatchMode::TimeInterval))
+        .build()
+        .await;
 
     let (request, collection_job_id) = test_case
         .simulate_successful_collection_job_time_interval(
@@ -372,7 +366,10 @@ async fn collection_job_success_time_interval() {
 
 #[tokio::test]
 async fn collection_job_get_request_no_such_collection_job() {
-    let test_case = CollectionJobTestCase::setup(Role::Leader, BatchMode::TimeInterval).await;
+    let test_case = CollectionJobTestCase::builder()
+        .build_task(|tb| tb.with_batch_mode(BatchMode::TimeInterval))
+        .build()
+        .await;
     test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(
             0,
@@ -390,7 +387,10 @@ async fn collection_job_get_request_no_such_collection_job() {
 
 #[tokio::test]
 async fn collection_job_post_request_batch_queried_multiple_times() {
-    let test_case = CollectionJobTestCase::setup(Role::Leader, BatchMode::TimeInterval).await;
+    let test_case = CollectionJobTestCase::builder()
+        .build_task(|tb| tb.with_batch_mode(BatchMode::TimeInterval))
+        .build()
+        .await;
     let interval = test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(
             0,
@@ -420,7 +420,10 @@ async fn collection_job_post_request_batch_queried_multiple_times() {
 
 #[tokio::test]
 async fn collection_job_post_request_batch_overlap() {
-    let test_case = CollectionJobTestCase::setup(Role::Leader, BatchMode::TimeInterval).await;
+    let test_case = CollectionJobTestCase::builder()
+        .build_task(|tb| tb.with_batch_mode(BatchMode::TimeInterval))
+        .build()
+        .await;
     let interval = test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(
             0,
@@ -457,7 +460,10 @@ async fn collection_job_post_request_batch_overlap() {
 
 #[tokio::test]
 async fn recreate_deleted_collection_job_time_interval() {
-    let mut test_case = CollectionJobTestCase::setup(Role::Leader, BatchMode::TimeInterval).await;
+    let mut test_case = CollectionJobTestCase::builder()
+        .build_task(|tb| tb.with_batch_mode(BatchMode::TimeInterval))
+        .build()
+        .await;
 
     // Run a collection to completion, then delete the job.
     let (request, collection_job_id) = test_case
@@ -496,13 +502,10 @@ async fn recreate_deleted_collection_job_time_interval() {
 
 #[tokio::test]
 async fn recreate_deleted_collection_job_leader_selected() {
-    let mut test_case = CollectionJobTestCase::setup(
-        Role::Leader,
-        BatchMode::LeaderSelected {
-            batch_time_window_size: None,
-        },
-    )
-    .await;
+    let mut test_case = CollectionJobTestCase::builder()
+        .build_task(|tb| tb.with_batch_mode(BatchMode::leader_selected()))
+        .build()
+        .await;
     let (batch_id_1, batch_id_2, spanned_interval) =
         test_case.setup_leader_selected_current_batch().await;
 
@@ -558,12 +561,13 @@ async fn recreate_deleted_collection_job_leader_selected() {
 #[tokio::test]
 async fn recreate_expired_collection_job_time_interval() {
     let expiry = Duration::from_time_precision_units(20);
-    let mut test_case = CollectionJobTestCase::setup_with_report_expiry_age(
-        Role::Leader,
-        BatchMode::TimeInterval,
-        Some(expiry),
-    )
-    .await;
+    let mut test_case = CollectionJobTestCase::builder()
+        .build_task(|tb| {
+            tb.with_batch_mode(BatchMode::TimeInterval)
+                .with_report_expiry_age(Some(expiry))
+        })
+        .build()
+        .await;
 
     let now = Time::from_seconds_since_epoch(
         test_case.clock().now().as_seconds_since_epoch(),
@@ -613,14 +617,13 @@ async fn recreate_expired_collection_job_time_interval() {
 #[tokio::test]
 async fn recreate_expired_collection_job_leader_selected() {
     let expiry = Duration::from_time_precision_units(20);
-    let mut test_case = CollectionJobTestCase::setup_with_report_expiry_age(
-        Role::Leader,
-        BatchMode::LeaderSelected {
-            batch_time_window_size: None,
-        },
-        Some(expiry),
-    )
-    .await;
+    let mut test_case = CollectionJobTestCase::builder()
+        .build_task(|tb| {
+            tb.with_batch_mode(BatchMode::leader_selected())
+                .with_report_expiry_age(Some(expiry))
+        })
+        .build()
+        .await;
 
     let (batch_id_1, batch_id_2, spanned_interval) =
         test_case.setup_leader_selected_current_batch().await;
