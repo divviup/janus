@@ -77,6 +77,7 @@ yaml_serde.workspace = true
 [dev-dependencies]
 assert_matches.workspace = true
 hex = { workspace = true, features = ["serde"] }  # ensure this remains compatible with the non-dev dependency
+hex-literal.workspace = true
 janus_core = { workspace = true, features = ["test-util"] }
 rstest.workspace = true
 rustls.workspace = true
