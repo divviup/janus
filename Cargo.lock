@@ -2751,6 +2751,7 @@ dependencies = [
  "educe 0.8.1",
  "futures",
  "hex",
+ "hex-literal",
  "hpke-dispatch",
  "http",
  "http-api-problem",

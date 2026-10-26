@@ -370,6 +370,7 @@ impl HpkeKeypair {
 mod tests {
     use std::collections::HashSet;
 
+    use hex_literal::hex;
     use hpke_dispatch::{Kem, Keypair};
     use janus_messages::{
         HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey,
@@ -664,5 +665,63 @@ mod tests {
         // provided. (AES-128-GCM, AES-256-GCM, and ChaCha20Poly1305) This makes for an expected
         // total of 2 * 2 * 3 = 12 unique combinations of algorithms.
         assert_eq!(algorithms_tested.len(), 12);
+    }
+
+    #[test]
+    fn backwards_compatibility_unclamped_private_key() {
+        // These test vector values are from RFC 7748 section 6.1.
+        // https://www.rfc-editor.org/info/rfc7748/#section-6.1
+        let test_vector_private_key =
+            hex!("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a");
+        let test_vector_clamped =
+            hex!("70076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c6a");
+        let test_vector_public_key =
+            hex!("8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a");
+
+        let hpke_config = HpkeConfig::new(
+            0.into(),
+            HpkeKemId::X25519HkdfSha256,
+            HpkeKdfId::HkdfSha256,
+            HpkeAeadId::Aes128Gcm,
+            HpkePublicKey::from(test_vector_public_key.to_vec()),
+        );
+        let keypair_from_unclamped = HpkeKeypair::new(
+            hpke_config.clone(),
+            HpkePrivateKey(test_vector_private_key.to_vec()),
+        );
+
+        let keypair_from_clamped = HpkeKeypair::new(
+            hpke_config.clone(),
+            HpkePrivateKey(test_vector_clamped.to_vec()),
+        );
+
+        let info = b"info";
+        let message = b"message";
+        let aad = b"aad";
+        let ciphertext = seal(
+            &hpke_config,
+            &HpkeApplicationInfo(info.to_vec()),
+            message,
+            aad,
+        )
+        .unwrap();
+
+        let plaintext_a = open(
+            &keypair_from_clamped,
+            &HpkeApplicationInfo(info.to_vec()),
+            &ciphertext,
+            aad,
+        )
+        .unwrap();
+        assert_eq!(plaintext_a, message);
+
+        let plaintext_b = open(
+            &keypair_from_unclamped,
+            &HpkeApplicationInfo(info.to_vec()),
+            &ciphertext,
+            aad,
+        )
+        .unwrap();
+        assert_eq!(plaintext_b, message);
     }
 }
