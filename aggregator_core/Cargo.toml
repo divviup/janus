@@ -64,9 +64,6 @@ tracing-log = { workspace = true }
 url.workspace = true
 yaml_serde.workspace = true
 
-[build-dependencies]
-rustc_version = { workspace = true }
-
 [dev-dependencies]
 assert_matches.workspace = true
 janus_aggregator_core = { workspace = true, features = ["test-util"] }
