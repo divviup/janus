@@ -46,6 +46,9 @@ pub(super) struct AggregateShareTestCase {
 }
 
 impl AggregateShareTestCase {
+    const REPORT_COUNT: u64 = 5;
+    const CHECKSUM: ReportIdChecksum = ReportIdChecksum::from_array([3; 32]);
+
     pub(super) fn builder() -> AggregateShareTestCaseBuilder {
         AggregateShareTestCaseBuilder {
             task_builder: TaskBuilder::new(
@@ -60,16 +63,8 @@ impl AggregateShareTestCase {
         }
     }
 
-    fn report_count() -> u64 {
-        5
-    }
-
-    fn checksum() -> ReportIdChecksum {
-        ReportIdChecksum::get_decoded(&[3; 32]).unwrap()
-    }
-
     pub(super) async fn put_aggregate_share_request<B: batch_mode::BatchMode>(
-        &mut self,
+        &self,
         request: &AggregateShareReq<B>,
         aggregate_share_id: &AggregateShareId,
     ) -> http::Response<Body> {
@@ -92,7 +87,7 @@ impl AggregateShareTestCase {
     }
 
     pub(super) async fn get_aggregate_share(
-        &mut self,
+        &self,
         aggregate_share_id: &AggregateShareId,
     ) -> http::Response<Body> {
         let req = Request::get(
@@ -108,7 +103,7 @@ impl AggregateShareTestCase {
     }
 
     pub(super) async fn delete_aggregate_share(
-        &mut self,
+        &self,
         aggregate_share_id: &AggregateShareId,
     ) -> http::Response<Body> {
         let req = Request::delete(
@@ -202,26 +197,6 @@ impl AggregateShareTestCase {
     }
 
     #[track_caller]
-    pub(super) fn check_gone_response(
-        &self,
-        status: StatusCode,
-        problem_details: serde_json::Value,
-        aggregate_share_id: &AggregateShareId,
-    ) {
-        assert_eq!(status, StatusCode::GONE);
-        assert_eq!(
-            problem_details,
-            json!({
-                "status": StatusCode::GONE.as_u16(),
-                "type": "https://docs.divviup.org/references/janus-errors#aggregate-share-deleted",
-                "title": "The aggregate share has been deleted.",
-                "taskid": format!("{}", self.task.id()),
-                "collection_job_id": format!("{aggregate_share_id}"),
-            })
-        );
-    }
-
-    #[track_caller]
     pub(super) fn check_batch_invalid_response(
         &self,
         status: StatusCode,
@@ -260,7 +235,7 @@ impl AggregateShareTestCase {
     }
 
     #[track_caller]
-    pub(super) fn check_open_aggregate_share<B: batch_mode::BatchMode>(
+    pub(super) fn open_aggregate_share<B: batch_mode::BatchMode>(
         &self,
         req: &AggregateShareReq<B>,
         aggregate_share_resp: &AggregateShareMessage,
@@ -323,20 +298,20 @@ impl AggregateShareTestCaseBuilder {
         if let Some(setup) = self.leader_selected_batch_aggregation {
             test.datastore
                 .run_unnamed_tx(|tx| {
-                    let helper_task = role_task.clone();
+                    let task = role_task.clone();
 
                     Box::pin(async move {
                         tx.put_batch_aggregation(
                             &BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
-                                *helper_task.id(),
+                                *task.id(),
                                 setup.batch_id,
                                 setup.aggregation_param,
                                 0,
                                 setup.client_timestamp_interval,
                                 BatchAggregationState::Aggregating {
                                     aggregate_share: Some(dummy::AggregateShare(16)),
-                                    report_count: AggregateShareTestCase::report_count(),
-                                    checksum: AggregateShareTestCase::checksum(),
+                                    report_count: AggregateShareTestCase::REPORT_COUNT,
+                                    checksum: AggregateShareTestCase::CHECKSUM,
                                     aggregation_jobs_created: 1,
                                     aggregation_jobs_terminated: 1,
                                 },
@@ -344,7 +319,7 @@ impl AggregateShareTestCaseBuilder {
                         )
                         .await
                         .unwrap();
-                        tx.put_outstanding_batch(helper_task.id(), &setup.batch_id, &None)
+                        tx.put_outstanding_batch(task.id(), &setup.batch_id, &None)
                             .await
                             .unwrap();
                         Ok(())
@@ -357,19 +332,19 @@ impl AggregateShareTestCaseBuilder {
         if let Some(setup) = self.time_interval_batch_aggregation {
             test.datastore
                 .run_unnamed_tx(|tx| {
-                    let helper_task = role_task.clone();
+                    let task = role_task.clone();
                     Box::pin(async move {
                         tx.put_batch_aggregation(
                             &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
-                                *helper_task.id(),
+                                *task.id(),
                                 setup.batch_interval,
                                 setup.aggregation_param,
                                 0,
                                 setup.batch_interval,
                                 BatchAggregationState::Aggregating {
                                     aggregate_share: Some(dummy::AggregateShare(16)),
-                                    report_count: AggregateShareTestCase::report_count(),
-                                    checksum: AggregateShareTestCase::checksum(),
+                                    report_count: AggregateShareTestCase::REPORT_COUNT,
+                                    checksum: AggregateShareTestCase::CHECKSUM,
                                     aggregation_jobs_created: 1,
                                     aggregation_jobs_terminated: 1,
                                 },
@@ -425,7 +400,7 @@ impl AggregateShareTestCaseBuilder {
 
 #[tokio::test]
 async fn aggregate_share_request_to_leader() {
-    let mut test_case = AggregateShareTestCase::builder()
+    let test_case = AggregateShareTestCase::builder()
         .with_role(Role::Leader)
         .build()
         .await;
@@ -462,7 +437,7 @@ async fn aggregate_share_request_to_leader() {
 
 #[tokio::test]
 async fn aggregate_share_request_invalid_batch_interval() {
-    let mut test_case = AggregateShareTestCase::builder()
+    let test_case = AggregateShareTestCase::builder()
         .build_task(|tb| {
             tb.with_report_expiry_age(Some(Duration::from_seconds(
                 3600,
@@ -539,7 +514,7 @@ async fn aggregate_share_request_invalid_batch_interval() {
 
 #[tokio::test]
 async fn aggregate_share_request() {
-    let mut test_case = AggregateShareTestCase::builder()
+    let test_case = AggregateShareTestCase::builder()
         .build_task(|tb| {
             tb.with_time_precision(TimePrecision::from_seconds(500))
                 .with_min_batch_size(10)
@@ -902,7 +877,7 @@ async fn aggregate_share_request() {
                 decode_response_body(&mut response).await;
 
             let aggregate_share = test_case
-                .check_open_aggregate_share(&request, &aggregate_share_resp)
+                .open_aggregate_share(&request, &aggregate_share_resp)
                 .unwrap();
 
             // Should get the sum over the first and second aggregate shares
@@ -1066,7 +1041,7 @@ async fn aggregate_share_request_duplicate_with_different_id() {
     // Set up batch aggregations that will be used for the duplicate requests
     let batch_interval = Interval::minimal(Time::from_time_precision_units(0)).unwrap();
     let aggregation_param = dummy::AggregationParam(0);
-    let mut test_case = AggregateShareTestCase::builder()
+    let test_case = AggregateShareTestCase::builder()
         .with_time_interval_batch_aggregation(TimeIntervalBatchAggregationSetup {
             batch_interval,
             aggregation_param,
@@ -1080,8 +1055,8 @@ async fn aggregate_share_request_duplicate_with_different_id() {
             aggregation_param.get_encoded().unwrap(),
         ),
         BatchSelector::new_time_interval(batch_interval),
-        AggregateShareTestCase::report_count(),
-        AggregateShareTestCase::checksum(),
+        AggregateShareTestCase::REPORT_COUNT,
+        AggregateShareTestCase::CHECKSUM,
     );
 
     let aggregate_share_id_1 = AggregateShareId::from([1u8; 16]);
@@ -1110,7 +1085,7 @@ async fn aggregate_share_request_get_poll_after_put() {
     // Set up batch aggregations that will be used for the duplicate requests
     let batch_interval = Interval::minimal(Time::from_time_precision_units(0)).unwrap();
     let aggregation_param = dummy::AggregationParam(0);
-    let mut test_case = AggregateShareTestCase::builder()
+    let test_case = AggregateShareTestCase::builder()
         .with_time_interval_batch_aggregation(TimeIntervalBatchAggregationSetup {
             batch_interval,
             aggregation_param,
@@ -1124,8 +1099,8 @@ async fn aggregate_share_request_get_poll_after_put() {
             aggregation_param.get_encoded().unwrap(),
         ),
         BatchSelector::new_time_interval(batch_interval),
-        AggregateShareTestCase::report_count(),
-        AggregateShareTestCase::checksum(),
+        AggregateShareTestCase::REPORT_COUNT,
+        AggregateShareTestCase::CHECKSUM,
     );
 
     let aggregate_share_id = AggregateShareId::from([42u8; 16]);
@@ -1152,7 +1127,7 @@ async fn aggregate_share_request_get_poll_after_put() {
     );
     let aggregate_share_resp: AggregateShareMessage = decode_response_body(&mut response).await;
     test_case
-        .check_open_aggregate_share(&request, &aggregate_share_resp)
+        .open_aggregate_share(&request, &aggregate_share_resp)
         .unwrap();
 
     // We should be able to delete it
@@ -1165,7 +1140,7 @@ async fn aggregate_share_request_get_poll_after_put_leader_selected() {
     let batch_id = BatchId::from([9u8; 32]);
     let client_timestamp_interval = Interval::minimal(Time::from_time_precision_units(0)).unwrap();
     let aggregation_param = dummy::AggregationParam(0);
-    let mut test_case = AggregateShareTestCase::builder()
+    let test_case = AggregateShareTestCase::builder()
         .build_task(|tb| tb.with_batch_mode(BatchMode::leader_selected()))
         .with_leader_selected_batch_aggregation(LeaderSelectedBatchAggregationSetup {
             batch_id,
@@ -1181,8 +1156,8 @@ async fn aggregate_share_request_get_poll_after_put_leader_selected() {
             aggregation_param.get_encoded().unwrap(),
         ),
         BatchSelector::new_leader_selected(batch_id),
-        AggregateShareTestCase::report_count(),
-        AggregateShareTestCase::checksum(),
+        AggregateShareTestCase::REPORT_COUNT,
+        AggregateShareTestCase::CHECKSUM,
     );
 
     let aggregate_share_id = AggregateShareId::from([42u8; 16]);
@@ -1198,7 +1173,7 @@ async fn aggregate_share_request_get_poll_after_put_leader_selected() {
 
     let aggregate_share_resp: AggregateShareMessage = decode_response_body(&mut response).await;
     test_case
-        .check_open_aggregate_share(&request, &aggregate_share_resp)
+        .open_aggregate_share(&request, &aggregate_share_resp)
         .unwrap();
 }
 
@@ -1214,7 +1189,7 @@ async fn aggregate_share_request_narrower_selector_than_query() {
     .unwrap();
     let aggregation_param = dummy::AggregationParam(0);
 
-    let mut test_case = AggregateShareTestCase::builder()
+    let test_case = AggregateShareTestCase::builder()
         .build_task(|tb| tb.with_batch_mode(BatchMode::TimeInterval))
         .with_time_interval_batch_aggregation(TimeIntervalBatchAggregationSetup {
             batch_interval: selected_interval,
@@ -1229,8 +1204,8 @@ async fn aggregate_share_request_narrower_selector_than_query() {
             aggregation_param.get_encoded().unwrap(),
         ),
         BatchSelector::new_time_interval(selected_interval),
-        AggregateShareTestCase::report_count(),
-        AggregateShareTestCase::checksum(),
+        AggregateShareTestCase::REPORT_COUNT,
+        AggregateShareTestCase::CHECKSUM,
     );
 
     let aggregate_share_id = AggregateShareId::from([42u8; 16]);
@@ -1287,7 +1262,7 @@ async fn aggregate_share_request_narrower_selector_than_query() {
 async fn aggregate_share_request_duplicate_with_different_query() {
     let selected_interval = Interval::minimal(Time::from_time_precision_units(3)).unwrap();
     let aggregation_param = dummy::AggregationParam(0);
-    let mut test_case = AggregateShareTestCase::builder()
+    let test_case = AggregateShareTestCase::builder()
         .build_task(|tb| tb.with_batch_mode(BatchMode::TimeInterval))
         .with_time_interval_batch_aggregation(TimeIntervalBatchAggregationSetup {
             batch_interval: selected_interval,
@@ -1310,8 +1285,8 @@ async fn aggregate_share_request_duplicate_with_different_query() {
                 aggregation_param.get_encoded().unwrap(),
             ),
             BatchSelector::new_time_interval(selected_interval),
-            AggregateShareTestCase::report_count(),
-            AggregateShareTestCase::checksum(),
+            AggregateShareTestCase::REPORT_COUNT,
+            AggregateShareTestCase::CHECKSUM,
         )
     };
 
@@ -1343,7 +1318,7 @@ async fn aggregate_share_request_same_id_different_batch() {
     )
     .unwrap();
     let aggregation_param = dummy::AggregationParam(0);
-    let mut test_case = AggregateShareTestCase::builder()
+    let test_case = AggregateShareTestCase::builder()
         .build_task(|tb| tb.with_batch_mode(BatchMode::TimeInterval))
         .with_time_interval_batch_aggregation(TimeIntervalBatchAggregationSetup {
             batch_interval: first_interval,
@@ -1368,8 +1343,8 @@ async fn aggregate_share_request_same_id_different_batch() {
                     second_interval,
                     BatchAggregationState::Aggregating {
                         aggregate_share: Some(dummy::AggregateShare(16)),
-                        report_count: AggregateShareTestCase::report_count(),
-                        checksum: AggregateShareTestCase::checksum(),
+                        report_count: AggregateShareTestCase::REPORT_COUNT,
+                        checksum: AggregateShareTestCase::CHECKSUM,
                         aggregation_jobs_created: 1,
                         aggregation_jobs_terminated: 1,
                     },
@@ -1390,8 +1365,8 @@ async fn aggregate_share_request_same_id_different_batch() {
                 aggregation_param.get_encoded().unwrap(),
             ),
             BatchSelector::new_time_interval(batch_interval),
-            AggregateShareTestCase::report_count(),
-            AggregateShareTestCase::checksum(),
+            AggregateShareTestCase::REPORT_COUNT,
+            AggregateShareTestCase::CHECKSUM,
         )
     };
 
@@ -1416,7 +1391,7 @@ async fn aggregate_share_request_same_id_different_batch() {
 async fn aggregate_share_aad_task_configuration_mismatch_fails() {
     let batch_interval = Interval::minimal(Time::from_time_precision_units(0)).unwrap();
     let aggregation_param = dummy::AggregationParam(0);
-    let mut test_case = AggregateShareTestCase::builder()
+    let test_case = AggregateShareTestCase::builder()
         .build_task(|tb| {
             tb.with_batch_mode(BatchMode::TimeInterval)
                 .with_min_batch_size(1)
@@ -1434,8 +1409,8 @@ async fn aggregate_share_aad_task_configuration_mismatch_fails() {
             aggregation_param.get_encoded().unwrap(),
         ),
         BatchSelector::new_time_interval(batch_interval),
-        AggregateShareTestCase::report_count(),
-        AggregateShareTestCase::checksum(),
+        AggregateShareTestCase::REPORT_COUNT,
+        AggregateShareTestCase::CHECKSUM,
     );
 
     let mut response = test_case
@@ -1480,7 +1455,7 @@ async fn aggregate_share_aad_task_configuration_mismatch_fails() {
 
 #[tokio::test]
 async fn aggregate_share_request_get_unrecognized_id() {
-    let mut test_case = AggregateShareTestCase::builder()
+    let test_case = AggregateShareTestCase::builder()
         .build_task(|tb| tb.with_batch_mode(BatchMode::TimeInterval))
         .build()
         .await;
@@ -1500,7 +1475,7 @@ async fn aggregate_share_request_get_unrecognized_id() {
 
 #[tokio::test]
 async fn aggregate_share_delete_nonexistant() {
-    let mut test_case = AggregateShareTestCase::builder()
+    let test_case = AggregateShareTestCase::builder()
         .build_task(|tb| tb.with_batch_mode(BatchMode::TimeInterval))
         .build()
         .await;
@@ -1520,7 +1495,7 @@ async fn aggregate_share_delete_nonexistant() {
 
 #[tokio::test]
 async fn aggregate_share_request_batch_selector_inconsistent_with_query() {
-    let mut test_case = AggregateShareTestCase::builder()
+    let test_case = AggregateShareTestCase::builder()
         .build_task(|tb| tb.with_batch_mode(BatchMode::TimeInterval))
         .build()
         .await;
@@ -1563,7 +1538,7 @@ async fn aggregate_share_request_batch_selector_inconsistent_with_query() {
 // (DAP-19 §4.6.4).
 #[tokio::test]
 async fn aggregate_share_request_unsupported_extension() {
-    let mut test_case = AggregateShareTestCase::builder()
+    let test_case = AggregateShareTestCase::builder()
         .build_task(|tb| tb.with_batch_mode(BatchMode::TimeInterval))
         .build()
         .await;
@@ -1606,7 +1581,7 @@ async fn aggregate_share_request_unsupported_extension() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "test will be fixed in #4950"]
 async fn recreate_deleted_aggregate_share_time_interval() {
     let selected_interval = Interval::minimal(Time::from_time_precision_units(3)).unwrap();
     let queried_interval = Interval::new(
@@ -1616,7 +1591,7 @@ async fn recreate_deleted_aggregate_share_time_interval() {
     .unwrap();
     let aggregation_param = dummy::AggregationParam(0);
 
-    let mut test_case = AggregateShareTestCase::builder()
+    let test_case = AggregateShareTestCase::builder()
         .with_time_interval_batch_aggregation(TimeIntervalBatchAggregationSetup {
             batch_interval: selected_interval,
             aggregation_param,
@@ -1631,8 +1606,8 @@ async fn recreate_deleted_aggregate_share_time_interval() {
             aggregation_param.get_encoded().unwrap(),
         ),
         BatchSelector::new_time_interval(selected_interval),
-        AggregateShareTestCase::report_count(),
-        AggregateShareTestCase::checksum(),
+        AggregateShareTestCase::REPORT_COUNT,
+        AggregateShareTestCase::CHECKSUM,
     );
 
     let aggregate_share_id = AggregateShareId::from([42u8; 16]);
@@ -1651,7 +1626,7 @@ async fn recreate_deleted_aggregate_share_time_interval() {
     let mut response = test_case
         .put_aggregate_share_request(&request, &aggregate_share_id)
         .await;
-    test_case.check_gone_response(
+    test_case.check_unrecognized_aggregate_share_response(
         response.status(),
         take_problem_details(&mut response).await,
         &aggregate_share_id,
@@ -1664,8 +1639,8 @@ async fn recreate_deleted_aggregate_share_time_interval() {
             dummy::AggregationParam(17).get_encoded().unwrap(),
         ),
         BatchSelector::new_time_interval(selected_interval),
-        AggregateShareTestCase::report_count(),
-        AggregateShareTestCase::checksum(),
+        AggregateShareTestCase::REPORT_COUNT,
+        AggregateShareTestCase::CHECKSUM,
     );
     let mut response = test_case
         .put_aggregate_share_request(&mutant_request, &aggregate_share_id)
@@ -1678,13 +1653,13 @@ async fn recreate_deleted_aggregate_share_time_interval() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "test will be fixed in #4950"]
 async fn recreate_deleted_aggregate_share_leader_selected() {
     let selected_interval = Interval::minimal(Time::from_time_precision_units(3)).unwrap();
     let aggregation_param = dummy::AggregationParam(0);
     let batch_id = random();
 
-    let mut test_case = AggregateShareTestCase::builder()
+    let test_case = AggregateShareTestCase::builder()
         .build_task(|tb| tb.with_batch_mode(BatchMode::leader_selected()))
         .with_leader_selected_batch_aggregation(LeaderSelectedBatchAggregationSetup {
             batch_id,
@@ -1701,8 +1676,8 @@ async fn recreate_deleted_aggregate_share_leader_selected() {
             aggregation_param.get_encoded().unwrap(),
         ),
         BatchSelector::new_leader_selected(batch_id),
-        AggregateShareTestCase::report_count(),
-        AggregateShareTestCase::checksum(),
+        AggregateShareTestCase::REPORT_COUNT,
+        AggregateShareTestCase::CHECKSUM,
     );
 
     let aggregate_share_id = AggregateShareId::from([42u8; 16]);
@@ -1721,7 +1696,7 @@ async fn recreate_deleted_aggregate_share_leader_selected() {
     let mut response = test_case
         .put_aggregate_share_request(&request, &aggregate_share_id)
         .await;
-    test_case.check_gone_response(
+    test_case.check_unrecognized_aggregate_share_response(
         response.status(),
         take_problem_details(&mut response).await,
         &aggregate_share_id,
@@ -1734,8 +1709,8 @@ async fn recreate_deleted_aggregate_share_leader_selected() {
             dummy::AggregationParam(17).get_encoded().unwrap(),
         ),
         BatchSelector::new_leader_selected(batch_id),
-        AggregateShareTestCase::report_count(),
-        AggregateShareTestCase::checksum(),
+        AggregateShareTestCase::REPORT_COUNT,
+        AggregateShareTestCase::CHECKSUM,
     );
     let mut response = test_case
         .put_aggregate_share_request(&mutant_request, &aggregate_share_id)
@@ -1748,7 +1723,7 @@ async fn recreate_deleted_aggregate_share_leader_selected() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "test will be fixed in #4950"]
 async fn recreate_expired_aggregate_share_time_interval() {
     let clock = MockClock::default();
     let now = Time::from_seconds_since_epoch(
@@ -1770,7 +1745,7 @@ async fn recreate_expired_aggregate_share_time_interval() {
     .unwrap();
     let aggregation_param = dummy::AggregationParam(0);
 
-    let mut test_case = AggregateShareTestCase::builder()
+    let test_case = AggregateShareTestCase::builder()
         .with_clock(clock.clone())
         .build_task(|tb| tb.with_report_expiry_age(Some(expiry)))
         .with_time_interval_batch_aggregation(TimeIntervalBatchAggregationSetup {
@@ -1792,8 +1767,8 @@ async fn recreate_expired_aggregate_share_time_interval() {
             aggregation_param.get_encoded().unwrap(),
         ),
         BatchSelector::new_time_interval(selected_interval),
-        AggregateShareTestCase::report_count(),
-        AggregateShareTestCase::checksum(),
+        AggregateShareTestCase::REPORT_COUNT,
+        AggregateShareTestCase::CHECKSUM,
     );
 
     let aggregate_share_id = AggregateShareId::from([42u8; 16]);
@@ -1836,8 +1811,8 @@ async fn recreate_expired_aggregate_share_time_interval() {
             dummy::AggregationParam(17).get_encoded().unwrap(),
         ),
         BatchSelector::new_time_interval(selected_interval),
-        AggregateShareTestCase::report_count(),
-        AggregateShareTestCase::checksum(),
+        AggregateShareTestCase::REPORT_COUNT,
+        AggregateShareTestCase::CHECKSUM,
     );
     let mut response = test_case
         .put_aggregate_share_request(&mutant_request, &aggregate_share_id)
@@ -1850,7 +1825,7 @@ async fn recreate_expired_aggregate_share_time_interval() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "test will be fixed in #4950"]
 async fn recreate_expired_aggregate_share_leader_selected() {
     let clock = MockClock::default();
     let now = Time::from_seconds_since_epoch(
@@ -1866,7 +1841,8 @@ async fn recreate_expired_aggregate_share_leader_selected() {
     let batch_id = random();
     let expiry = Duration::from_time_precision_units(20);
 
-    let mut test_case = AggregateShareTestCase::builder()
+    let test_case = AggregateShareTestCase::builder()
+        .with_clock(clock.clone())
         .build_task(|tb| {
             tb.with_batch_mode(BatchMode::leader_selected())
                 .with_report_expiry_age(Some(expiry))
@@ -1891,8 +1867,8 @@ async fn recreate_expired_aggregate_share_leader_selected() {
             aggregation_param.get_encoded().unwrap(),
         ),
         BatchSelector::new_leader_selected(batch_id),
-        AggregateShareTestCase::report_count(),
-        AggregateShareTestCase::checksum(),
+        AggregateShareTestCase::REPORT_COUNT,
+        AggregateShareTestCase::CHECKSUM,
     );
 
     let aggregate_share_id = AggregateShareId::from([42u8; 16]);
@@ -1935,8 +1911,8 @@ async fn recreate_expired_aggregate_share_leader_selected() {
             dummy::AggregationParam(17).get_encoded().unwrap(),
         ),
         BatchSelector::new_leader_selected(batch_id),
-        AggregateShareTestCase::report_count(),
-        AggregateShareTestCase::checksum(),
+        AggregateShareTestCase::REPORT_COUNT,
+        AggregateShareTestCase::CHECKSUM,
     );
     let mut response = test_case
         .put_aggregate_share_request(&mutant_request, &aggregate_share_id)
