@@ -2664,7 +2664,6 @@ dependencies = [
  "reqwest",
  "rstest",
  "rstest_reuse",
- "rustc_version",
  "serde",
  "serde_json",
  "serde_test",
