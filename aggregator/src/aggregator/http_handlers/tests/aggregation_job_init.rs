@@ -1407,7 +1407,7 @@ async fn aggregate_init_partially_replayed_aggregation_init() {
     //   - the VerifyResps for reports 3-5 indicate success
     // We then send an aggregate share request for the batch ID. It should succeed and all five
     // reports should be included.
-    let mut test_case = AggregateShareTestCase::builder()
+    let test_case = AggregateShareTestCase::builder()
         .build_task(|task_builder| {
             task_builder
                 .with_batch_mode(BatchMode::LeaderSelected {

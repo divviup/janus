@@ -24,7 +24,7 @@ use crate::aggregator::{
 /// reports cannot be aggregated with the same aggregation parameter into multiple batches.
 #[tokio::test]
 async fn helper_aggregation_report_share_replay() {
-    let mut test_case = AggregateShareTestCase::builder()
+    let test_case = AggregateShareTestCase::builder()
         .build_task(|task_builder| {
             task_builder
                 .with_batch_mode(BatchMode::LeaderSelected {
