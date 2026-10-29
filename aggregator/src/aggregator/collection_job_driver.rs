@@ -299,8 +299,7 @@ impl CollectionJobDriver {
 
                         let mut aggregate_share = AggregateShareComputer::new(&task);
 
-                        // Mark batch aggregations as collected to avoid further aggregation, but
-                        // ignore any expired ones.
+                        // Mark batch aggregations as collected to avoid further aggregation.
                         let batch_aggregations = batch_aggregations
                             .into_iter()
                             .map(|ba| {

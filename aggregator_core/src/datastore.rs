@@ -43,18 +43,21 @@ use tokio_postgres::{IsolationLevel, Row, Statement, ToStatement, error::SqlStat
 use tracing::{Level, error};
 use url::Url;
 
-use self::models::{
-    AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob, AggregationJob,
-    AggregatorRole, AuthenticationTokenType, BatchAggregation, CollectionJob, CollectionJobState,
-    HpkeKeyState, HpkeKeypair, LeaderStoredReport, Lease, OutstandingBatch, ReportAggregation,
-    ReportAggregationMetadata, ReportAggregationMetadataState, UnaggregatedReport,
+use self::{
+    models::{
+        AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob, AggregationJob,
+        AggregatorRole, AuthenticationTokenType, BatchAggregation, CollectionJob,
+        CollectionJobState, ExpirableCollectionJob, HpkeKeyState, HpkeKeypair, LeaderStoredReport,
+        Lease, OutstandingBatch, ReportAggregation, ReportAggregationMetadata,
+        ReportAggregationMetadataState, UnaggregatedReport,
+    },
+    row_ext::RowExt,
 };
 #[cfg(feature = "test-util")]
 use crate::VdafHasAggregationParameter;
 use crate::{
     AsyncAggregator,
     batch_mode::{AccumulableBatchMode, CollectableBatchMode},
-    datastore::{models::ExpirableCollectionJob, row_ext::RowExt},
     http_server::TIME_HISTOGRAM_BOUNDARIES,
     task::{self, AggregatorTask},
     taskprov::PeerAggregator,
