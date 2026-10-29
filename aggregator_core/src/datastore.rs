@@ -20,7 +20,7 @@ use chrono::{DateTime, TimeDelta, Utc};
 use futures::future::try_join_all;
 use janus_core::{
     auth_tokens::AuthenticationToken,
-    hpke::{self},
+    hpke,
     messages::DeriveId,
     time::{Clock, TimeExt},
 };

@@ -75,7 +75,7 @@ pub(super) trait RowExt {
         for<'a> T: TryFrom<&'a [u8]>,
         for<'a> <T as TryFrom<&'a [u8]>>::Error: Debug;
 
-    /// Like [Self::get_bytea_and_convert`] but handles nullable columns.
+    /// Like [`Self::get_bytea_and_convert`] but handles nullable columns.
     fn get_nullable_bytea_and_convert<T>(&self, idx: &'static str) -> Result<Option<T>, Error>
     where
         for<'a> T: TryFrom<&'a [u8]>,
@@ -149,7 +149,7 @@ pub(super) trait RowExt {
         B: BatchMode,
         A: AsyncAggregator<SEED_SIZE>;
 
-    /// Construct an [`AggregateShare`] from the contents of the row.
+    /// Construct an [`AggregateShareJob`] from the contents of the row.
     fn aggregate_share_job<const SEED_SIZE: usize, B, A>(
         &self,
         vdaf: &A,
