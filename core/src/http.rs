@@ -6,7 +6,9 @@ use std::{
 use anyhow::{Context, anyhow};
 use http::{HeaderName, StatusCode, header::RETRY_AFTER};
 use http_api_problem::{HttpApiProblem, PROBLEM_JSON_MEDIA_TYPE};
-use janus_messages::{CollectionJobId, MediaType, TaskId, problem_type::DapProblemType};
+use janus_messages::{
+    AggregateShareId, CollectionJobId, MediaType, TaskId, problem_type::DapProblemType,
+};
 use mime::Mime;
 use reqwest::{Response, header::CONTENT_TYPE};
 use retry_after::RetryAfter;
@@ -225,6 +227,17 @@ pub fn collection_job_location(task_id: &TaskId, job_id: &CollectionJobId) -> (H
     (
         http::header::LOCATION,
         format!("/tasks/{task_id}/collection_jobs/{job_id}"),
+    )
+}
+
+/// Construct an HTTP Location header for the aggregate share.
+pub fn aggregate_share_location(
+    task_id: &TaskId,
+    share_id: &AggregateShareId,
+) -> (HeaderName, String) {
+    (
+        http::header::LOCATION,
+        format!("/tasks/{task_id}/aggregate_shares/{share_id}"),
     )
 }
 

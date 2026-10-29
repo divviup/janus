@@ -78,7 +78,7 @@ use prio::{
 };
 use rand::{RngExt, rng};
 use reqwest::Client;
-use tokio::{select, try_join};
+use tokio::select;
 use tracing::{Level, debug, error, info, warn};
 use url::Url;
 
@@ -762,15 +762,15 @@ impl Aggregator {
     }
 
     /// Handle an aggregate share request. Only supported by the helper. `req_bytes` is an
-    /// encoded [`AggregateShareReq`]. Returns an [`AggregateShare`].
-    async fn handle_put_aggregate_share(
+    /// encoded [`AggregateShareReq`]. Returns the [`AggregateShareId`] and an encoded
+    /// [`AggregateShare`].
+    async fn handle_post_aggregate_share(
         &self,
         task_id: &TaskId,
-        aggregate_share_id: &AggregateShareId,
         req_bytes: &[u8],
         auth_token: Option<AuthenticationToken>,
         taskprov_task_config: Option<&TaskConfiguration>,
-    ) -> Result<AggregateShare, Error> {
+    ) -> Result<(AggregateShareId, Vec<u8>), Error> {
         let task_aggregator = self
             .task_aggregators
             .get(task_id)
@@ -786,19 +786,18 @@ impl Aggregator {
             .await?;
 
         task_aggregator
-            .handle_aggregate_share(
+            .handle_create_aggregate_share(
                 &self.datastore,
                 self.datastore.clock(),
                 self.cfg.batch_aggregation_shard_count,
                 self.cfg.max_future_concurrency,
                 req_bytes,
                 &collector_hpke_config,
-                aggregate_share_id,
             )
             .await
     }
 
-    /// Handle an aggregate share request. Only supported by the helper. Returns an
+    /// Handle a GET request on an aggregate share. Only supported by the helper. Returns an encoded
     /// [`AggregateShare`].
     async fn handle_get_aggregate_share(
         &self,
@@ -806,7 +805,7 @@ impl Aggregator {
         aggregate_share_id: &AggregateShareId,
         auth_token: Option<AuthenticationToken>,
         taskprov_task_config: Option<&TaskConfiguration>,
-    ) -> Result<AggregateShare, Error> {
+    ) -> Result<Vec<u8>, Error> {
         let task_aggregator = self
             .task_aggregators
             .get(task_id)
@@ -1239,7 +1238,7 @@ impl TaskAggregator {
             .await
     }
 
-    async fn handle_aggregate_share(
+    async fn handle_create_aggregate_share(
         &self,
         datastore: &Datastore,
         clock: &dyn Clock,
@@ -1247,10 +1246,9 @@ impl TaskAggregator {
         max_future_concurrency: usize,
         req_bytes: &[u8],
         collector_hpke_config: &HpkeConfig,
-        aggregate_share_id: &AggregateShareId,
-    ) -> Result<AggregateShare, Error> {
+    ) -> Result<(AggregateShareId, Vec<u8>), Error> {
         self.vdaf_ops
-            .handle_aggregate_share(
+            .handle_create_aggregate_share(
                 datastore,
                 clock,
                 Arc::clone(&self.task),
@@ -1258,7 +1256,6 @@ impl TaskAggregator {
                 max_future_concurrency,
                 req_bytes,
                 collector_hpke_config,
-                aggregate_share_id,
             )
             .await
     }
@@ -1268,7 +1265,7 @@ impl TaskAggregator {
         datastore: &Datastore,
         collector_hpke_config: &HpkeConfig,
         aggregate_share_id: &AggregateShareId,
-    ) -> Result<AggregateShare, Error> {
+    ) -> Result<Vec<u8>, Error> {
         self.vdaf_ops
             .handle_get_aggregate_share(
                 datastore,
@@ -3420,7 +3417,7 @@ impl VdafOps {
                 Ok(None)
             }
 
-            CollectionJobState::Poll => {
+            CollectionJobState::Poll { .. } => {
                 debug!(
                     collection_job_id = %collection_job.id(),
                     task_id = %task.id(),
@@ -3434,6 +3431,7 @@ impl VdafOps {
                 client_timestamp_interval,
                 encrypted_helper_aggregate_share,
                 leader_aggregate_share,
+                ..
             } => {
                 // §4.4.4.3: HPKE encrypt aggregate share to the collector. We store the leader
                 //  aggregate share *unencrypted* in the datastore so that we can encrypt
@@ -3491,7 +3489,7 @@ impl VdafOps {
                 *collection_job.id(),
             )),
 
-            CollectionJobState::Deleted => Err(Error::DeletedCollectionJob(
+            CollectionJobState::Deleted { .. } => Err(Error::DeletedCollectionJob(
                 *task.id(),
                 *collection_job.id(),
             )),
@@ -3561,9 +3559,12 @@ impl VdafOps {
                                     .into(),
                             )
                         })?;
-                    if collection_job.state() != &CollectionJobState::Deleted {
+                    if !matches!(collection_job.state(), &CollectionJobState::Deleted { .. }) {
+                        let aggregate_share_id =
+                            collection_job.state().aggregate_share_id().cloned();
                         tx.update_collection_job::<SEED_SIZE, B, A>(
-                            &collection_job.with_state(CollectionJobState::Deleted),
+                            &collection_job
+                                .with_state(CollectionJobState::Deleted { aggregate_share_id }),
                         )
                         .await?;
                     }
@@ -3587,7 +3588,7 @@ impl VdafOps {
         task: Arc<AggregatorTask>,
         collector_hpke_config: &HpkeConfig,
         aggregate_share_id: &AggregateShareId,
-    ) -> Result<AggregateShare, Error> {
+    ) -> Result<Vec<u8>, Error> {
         match task.batch_mode() {
             task::BatchMode::TimeInterval => {
                 vdaf_ops_dispatch!(
@@ -3653,7 +3654,7 @@ impl VdafOps {
         vdaf: Arc<A>,
         collector_hpke_config: &HpkeConfig,
         aggregate_share_id: &AggregateShareId,
-    ) -> Result<AggregateShare, Error> {
+    ) -> Result<Vec<u8>, Error> {
         let aggregate_share_job = datastore
             .run_tx("aggregate_share", |tx| {
                 let (task, vdaf, aggregate_share_id) =
@@ -3678,17 +3679,18 @@ impl VdafOps {
         // NOTE: We have no means by which we can fulfil §4.4.4.3's "Verify total report count" here
         // as we do on the PUT, which is OK, because it should have happened already on the PUT
         // and we have to trust it.
-        aggregate_share_from_job(&task, &aggregate_share_job, collector_hpke_config)
+        aggregate_share_from_job(&task, &aggregate_share_job, collector_hpke_config)?
+            .get_encoded()
+            .map_err(Error::MessageEncode)
     }
 
-    /// Implements the `tasks/{task-id}/aggregate_shares/{aggregate-share-id}` PUT endpoint for
-    /// the helper.
+    /// Implements aggregate share creation for the helper.
     #[tracing::instrument(
-        skip(self, datastore, clock, task, req_bytes, aggregate_share_id),
+        skip(self, datastore, clock, task, req_bytes),
         fields(task_id = ?task.id()),
         err(level = Level::DEBUG)
     )]
-    async fn handle_aggregate_share(
+    async fn handle_create_aggregate_share(
         &self,
         datastore: &Datastore,
         clock: &dyn Clock,
@@ -3697,8 +3699,7 @@ impl VdafOps {
         max_future_concurrency: usize,
         req_bytes: &[u8],
         collector_hpke_config: &HpkeConfig,
-        aggregate_share_id: &AggregateShareId,
-    ) -> Result<AggregateShare, Error> {
+    ) -> Result<(AggregateShareId, Vec<u8>), Error> {
         match task.batch_mode() {
             task::BatchMode::TimeInterval => {
                 vdaf_ops_dispatch!(
@@ -3710,7 +3711,7 @@ impl VdafOps {
                         dp_strategy,
                         DpStrategyType
                     ) => {
-                        Self::handle_aggregate_share_generic::<
+                        Self::handle_create_aggregate_share_generic::<
                             VERIFY_KEY_LENGTH,
                             TimeInterval,
                             DpStrategyType,
@@ -3724,7 +3725,6 @@ impl VdafOps {
                             batch_aggregation_shard_count,
                             max_future_concurrency,
                             collector_hpke_config,
-                            aggregate_share_id,
                             Arc::clone(dp_strategy)
                         ).await
                     }
@@ -3740,7 +3740,7 @@ impl VdafOps {
                         dp_strategy,
                         DpStrategyType
                     ) => {
-                        Self::handle_aggregate_share_generic::<
+                        Self::handle_create_aggregate_share_generic::<
                             VERIFY_KEY_LENGTH,
                             LeaderSelected,
                             DpStrategyType,
@@ -3754,7 +3754,6 @@ impl VdafOps {
                             batch_aggregation_shard_count,
                             max_future_concurrency,
                             collector_hpke_config,
-                            aggregate_share_id,
                             Arc::clone(dp_strategy)
                         ).await
                     }
@@ -3763,7 +3762,9 @@ impl VdafOps {
         }
     }
 
-    async fn handle_aggregate_share_generic<
+    /// Handle creation of an aggregate share, returning the share ID and an encoded
+    /// `AggregateShare`.
+    async fn handle_create_aggregate_share_generic<
         const SEED_SIZE: usize,
         B: CollectableBatchMode,
         S: DifferentialPrivacyStrategy + Clone + Send + Sync + 'static,
@@ -3777,14 +3778,14 @@ impl VdafOps {
         batch_aggregation_shard_count: u64,
         max_future_concurrency: usize,
         collector_hpke_config: &HpkeConfig,
-        aggregate_share_id: &AggregateShareId,
         dp_strategy: Arc<S>,
-    ) -> Result<AggregateShare, Error> {
-        // Decode request.
+    ) -> Result<(AggregateShareId, Vec<u8>), Error> {
+        // Parse the aggregate share request and call an inner method, so we can decorate it with a
+        // tracing span that includes request fields.
         let aggregate_share_req =
             Arc::new(AggregateShareReq::<B>::get_decoded(req_bytes).map_err(Error::MessageDecode)?);
 
-        Self::handle_aggregate_share_inner(
+        Self::handle_create_aggregate_share_inner(
             datastore,
             clock,
             task,
@@ -3793,21 +3794,22 @@ impl VdafOps {
             batch_aggregation_shard_count,
             max_future_concurrency,
             collector_hpke_config,
-            aggregate_share_id,
             dp_strategy,
         )
         .await
     }
 
+    /// Handle creation of an aggregate share, returning the share ID and an encoded
+    /// `AggregateShare`.
     #[tracing::instrument(
         skip_all,
         fields(
-            batch_identifier = %aggregate_share_req.batch_selector().batch_identifier(),
-            request_report_count = aggregate_share_req.report_count()
+            batch_identifier = %req.batch_selector().batch_identifier(),
+            request_report_count = req.report_count()
         ),
         err(level = Level::DEBUG)
     )]
-    async fn handle_aggregate_share_inner<
+    async fn handle_create_aggregate_share_inner<
         const SEED_SIZE: usize,
         B: CollectableBatchMode,
         S: DifferentialPrivacyStrategy + Clone + Send + Sync + 'static,
@@ -3817,45 +3819,36 @@ impl VdafOps {
         clock: &dyn Clock,
         task: Arc<AggregatorTask>,
         vdaf: Arc<A>,
-        aggregate_share_req: Arc<AggregateShareReq<B>>,
+        req: Arc<AggregateShareReq<B>>,
         batch_aggregation_shard_count: u64,
         max_future_concurrency: usize,
         collector_hpke_config: &HpkeConfig,
-        aggregate_share_id: &AggregateShareId,
         dp_strategy: Arc<S>,
-    ) -> Result<AggregateShare, Error> {
+    ) -> Result<(AggregateShareId, Vec<u8>), Error> {
         // DAP-19 §4.6.4: the Helper validates the Collector's extensions independently of the
         // Leader.
-        validate_collection_job_extensions(
-            task.id(),
-            aggregate_share_req.collection_job_req().extensions(),
-        )?;
+        validate_collection_job_extensions(task.id(), req.collection_job_req().extensions())?;
 
         // DAP-19 §4.6.4: the Helper verifies the Leader-chosen batch selector against the query in
         // the CollectionJobReq, which the AAD binds.
         if !B::is_batch_identifier_consistent_with_query(
-            aggregate_share_req.batch_selector().batch_identifier(),
-            aggregate_share_req.collection_job_req().query(),
+            req.batch_selector().batch_identifier(),
+            req.collection_job_req().query(),
         ) {
             return Err(Error::BatchInvalid(
                 *task.id(),
                 format!(
                     "{}, which is inconsistent with the collection job request's query",
-                    aggregate_share_req.batch_selector().batch_identifier()
+                    req.batch_selector().batch_identifier()
                 ),
             ));
         }
 
         // §4.4.4.3: check that the batch interval meets the requirements from §4.6
-        if !B::validate_collection_identifier(
-            aggregate_share_req.batch_selector().batch_identifier(),
-        ) {
+        if !B::validate_collection_identifier(req.batch_selector().batch_identifier()) {
             return Err(Error::BatchInvalid(
                 *task.id(),
-                format!(
-                    "{}",
-                    aggregate_share_req.batch_selector().batch_identifier()
-                ),
+                format!("{}", req.batch_selector().batch_identifier()),
             ));
         }
 
@@ -3866,7 +3859,7 @@ impl VdafOps {
         // all.
         if let (Some(report_expiry_age), Some(batch_interval)) = (
             task.report_expiry_age(),
-            B::to_batch_interval(aggregate_share_req.batch_selector().batch_identifier()),
+            B::to_batch_interval(req.batch_selector().batch_identifier()),
         ) {
             let aggregate_share_expiry_time =
                 batch_interval.start().add_duration(report_expiry_age)?;
@@ -3881,101 +3874,92 @@ impl VdafOps {
             }
         }
 
-        let aggregate_share_id = *aggregate_share_id;
         let aggregate_share_job = datastore
             .run_tx("aggregate_share", |tx| {
-                let (task, vdaf, aggregate_share_req, dp_strategy) = (
+                let (task, vdaf, req, dp_strategy) = (
                     Arc::clone(&task),
                     Arc::clone(&vdaf),
-                    Arc::clone(&aggregate_share_req),
+                    Arc::clone(&req),
                     Arc::clone(&dp_strategy),
                 );
                 Box::pin(async move {
+                    let aggregation_param =
+                        A::AggregationParam::get_decoded(req.aggregation_parameter())?;
+
                     // Check if we have already serviced an aggregate share request with these
-                    // parameters and serve the cached results if so.
-                    let aggregation_param = A::AggregationParam::get_decoded(
-                        aggregate_share_req.aggregation_parameter(),
-                    )?;
-                    if let Some(aggregate_share_job) = tx
-                        .get_aggregate_share_job(
-                            vdaf.as_ref(),
-                            task.id(),
-                            aggregate_share_req.batch_selector().batch_identifier(),
-                            &aggregation_param,
-                        )
-                        .await?
-                    {
-                        // DAP requires duplicate requests to be identical.
-                        if aggregate_share_job.aggregate_share_id() != &aggregate_share_id
-                            || aggregate_share_job.collection_job_req()
-                                != aggregate_share_req.collection_job_req()
-                        {
+                    // parameters.
+                    let mut jobs = B::aggregate_share_jobs_intersecting_batch_identifier(
+                        tx,
+                        vdaf.as_ref(),
+                        &task,
+                        req.batch_selector().batch_identifier(),
+                    )
+                    .await?;
+                    // If there are any jobs intersecting the identifier, then there are two
+                    // possibilities:
+                    //
+                    // - there is a single intersecting job and it exactly matches the incoming
+                    //   identifier. It's not possible for any others job to intersect because the
+                    //   existence of the first job precludes them. We have a benign replayed
+                    //   request and serve up the job we already have, unless the job has expired,
+                    //   in which case we refuse the request. This is a Janus-specific policy since
+                    //   DAP has no notion of expiry or garbage collection.
+                    // - there are one or more more intersecting jobs and none of them exactly match
+                    //   the incoming query. We fail with batch overlap, per §4.4.4-16.
+                    //
+                    // In either case, we don't need to examine anything but the first item in the
+                    // iterator.
+                    if let Some(job) = jobs.next() {
+                        if *job.job().aggregate_share_id() == req.derive_id()? {
+                            debug!(
+                                aggregate_share_id = %job.job().aggregate_share_id(),
+                                aggregate_share_request = ?req,
+                                job_state = ?job.job().state(),
+                                "aggregate share job already exists",
+                            );
+                            debug_assert!(jobs.next().is_none());
+                            if job.expired() {
+                                return Err(datastore::Error::User(
+                                    Error::AggregateShareRequestRejected(
+                                        *task.id(),
+                                        "aggregate share request too late",
+                                    )
+                                    .into(),
+                                ));
+                            }
+                            return Ok(job.take_job());
+                        } else {
                             return Err(datastore::Error::User(
-                                Error::ForbiddenMutation {
-                                    resource_type: "aggregate share job",
-                                    identifier: aggregate_share_job
-                                        .aggregate_share_id()
-                                        .to_string(),
-                                }
-                                .into(),
+                                Error::BatchOverlap(*task.id()).into(),
                             ));
                         }
-
-                        debug!(
-                            ?aggregate_share_req,
-                            "Serving cached aggregate share job result"
-                        );
-                        return Ok(aggregate_share_job);
                     }
 
-                    // No job exists for this batch & aggregation parameter, so any job already
-                    // using this aggregate share ID is for a different batch. Reject it: the poll
-                    // path looks jobs up by ID alone and cannot disambiguate.
-                    if tx
-                        .get_aggregate_share_job_by_id::<SEED_SIZE, B, A>(
-                            vdaf.as_ref(),
-                            task.id(),
-                            aggregate_share_id,
-                        )
-                        .await?
-                        .is_some()
+                    // This is a new aggregate share request, compute & validate the response.
+                    debug!(?req, "Cache miss, computing aggregate share job result");
+                    let batch_aggregations = B::get_batch_aggregations_for_collection_identifier(
+                        tx,
+                        task.id(),
+                        vdaf.as_ref(),
+                        req.batch_selector().batch_identifier(),
+                        &aggregation_param,
+                    )
+                    .await?;
+
+                    if batch_aggregations
+                        .iter()
+                        .any(|ba| ba.aggregation_parameter() != &aggregation_param)
                     {
+                        // §4.4.4-18: fail with invalidMessage on aggregation parameter mismatch
                         return Err(datastore::Error::User(
-                            Error::ForbiddenMutation {
-                                resource_type: "aggregate share job",
-                                identifier: aggregate_share_id.to_string(),
-                            }
+                            Error::InvalidMessage(
+                                Some(*task.id()),
+                                "aggregation parameter mismatch",
+                            )
                             .into(),
                         ));
                     }
 
-                    // This is a new aggregate share request, compute & validate the response.
-                    debug!(
-                        ?aggregate_share_req,
-                        "Cache miss, computing aggregate share job result"
-                    );
-                    let aggregation_param = A::AggregationParam::get_decoded(
-                        aggregate_share_req.aggregation_parameter(),
-                    )?;
-                    let (batch_aggregations, _) = try_join!(
-                        B::get_batch_aggregations_for_collection_identifier(
-                            tx,
-                            task.id(),
-                            vdaf.as_ref(),
-                            aggregate_share_req.batch_selector().batch_identifier(),
-                            &aggregation_param
-                        ),
-                        B::validate_query_count::<SEED_SIZE, A>(
-                            tx,
-                            vdaf.as_ref(),
-                            &task,
-                            aggregate_share_req.batch_selector().batch_identifier(),
-                            &aggregation_param,
-                        )
-                    )?;
-
-                    // Empty batch aggregations cannot contribute to the aggregate share so don't
-                    // bother including them.
                     let mut aggregate_share = AggregateShareComputer::new(&task)
                         .oneshot(&batch_aggregations)
                         .map_err(|e| datastore::Error::User(e.into()))?;
@@ -3988,13 +3972,14 @@ impl VdafOps {
                     )
                     .map_err(|e| datastore::Error::User(e.into()))?;
 
-                    // To ensure that concurrent aggregations don't write into a
-                    // currently-nonexistent batch aggregation, we write (empty) batch
-                    // aggregations for any that have not already been written to storage.
+                    // To ensure that concurrent aggregations don't write into a currently
+                    // nonexistent batch aggregation, BatchAggregationsIterator synthesizes empty
+                    // batch aggregations for any that have not already been written to storage,
+                    // which we then write here.
                     let batch_aggregations_iter = BatchAggregationsIterator::new(
                         &task,
                         batch_aggregation_shard_count,
-                        aggregate_share_req.batch_selector().batch_identifier(),
+                        req.batch_selector().batch_identifier(),
                         &aggregation_param,
                         batch_aggregations.into_iter().map(Cow::Owned),
                     );
@@ -4019,16 +4004,13 @@ impl VdafOps {
                     let aggregate_share_job = AggregateShareJob::<SEED_SIZE, B, A>::new(
                         *task.id(),
                         AggregateShareJobState::Finished,
-                        aggregate_share_req
-                            .batch_selector()
-                            .batch_identifier()
-                            .clone(),
+                        req.batch_selector().batch_identifier().clone(),
                         aggregation_param.clone(),
                         aggregate_share.aggregate_share,
-                        aggregate_share_id,
+                        req.derive_id()?,
                         aggregate_share.report_count,
                         aggregate_share.checksum,
-                        aggregate_share_req.collection_job_req().clone(),
+                        req.collection_job_req().clone(),
                     );
 
                     tx.put_aggregate_share_job(&aggregate_share_job).await?;
@@ -4040,15 +4022,15 @@ impl VdafOps {
 
         // §4.4.4.3: Verify total report count and the checksum we computed against those reported
         // by the leader.
-        if aggregate_share_job.report_count() != aggregate_share_req.report_count()
-            || aggregate_share_job.checksum() != aggregate_share_req.checksum()
+        if aggregate_share_job.report_count() != req.report_count()
+            || aggregate_share_job.checksum() != req.checksum()
         {
             return Err(Error::BatchMismatch(Box::new(BatchMismatch {
                 task_id: *task.id(),
                 own_checksum: *aggregate_share_job.checksum(),
                 own_report_count: aggregate_share_job.report_count(),
-                peer_checksum: *aggregate_share_req.checksum(),
-                peer_report_count: aggregate_share_req.report_count(),
+                peer_checksum: *req.checksum(),
+                peer_report_count: req.report_count(),
             })));
         }
 
@@ -4056,7 +4038,12 @@ impl VdafOps {
         // shares in the datastore so that we can encrypt cached results to the collector HPKE
         // config valid when the current AggregateShareReq was made, and not whatever was valid at
         // the time the aggregate share was first computed.
-        aggregate_share_from_job(&task, &aggregate_share_job, collector_hpke_config)
+        Ok((
+            *aggregate_share_job.aggregate_share_id(),
+            aggregate_share_from_job(&task, &aggregate_share_job, collector_hpke_config)?
+                .get_encoded()
+                .map_err(Error::MessageEncode)?,
+        ))
     }
 
     /// Implements the `tasks/{task-id}/aggregate_shares/{aggregate-share-id}` DELETE endpoint

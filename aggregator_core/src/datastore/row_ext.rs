@@ -720,14 +720,30 @@ impl RowExt for Row {
         let client_timestamp_interval: Option<SqlInterval> = self.get("client_timestamp_interval");
         let helper_aggregate_share_bytes: Option<Vec<u8>> = self.get("helper_aggregate_share");
         let leader_aggregate_share_bytes: Option<Vec<u8>> = self.get("leader_aggregate_share");
-        let aggregate_share_id = AggregateShareId::get_decoded(self.get("aggregate_share_id"))?;
+        let aggregate_share_id_bytes: Option<Vec<u8>> = self.get("aggregate_share_id");
 
         let state = match state {
             CollectionJobStateCode::Start => CollectionJobState::Start,
 
-            CollectionJobStateCode::Poll => CollectionJobState::Poll,
+            CollectionJobStateCode::Poll => {
+                let aggregate_share_id =
+                    AggregateShareId::get_decoded(&aggregate_share_id_bytes.ok_or_else(|| {
+                        Error::DbState(
+                            "collection job in state POLL but aggregate_share_id is NULL"
+                                .to_string(),
+                        )
+                    })?)?;
+                CollectionJobState::Poll { aggregate_share_id }
+            }
 
             CollectionJobStateCode::Finished => {
+                let aggregate_share_id =
+                    AggregateShareId::get_decoded(&aggregate_share_id_bytes.ok_or_else(|| {
+                        Error::DbState(
+                            "collection job in state POLL but aggregate_share_id is NULL"
+                                .to_string(),
+                        )
+                    })?)?;
                 let report_count = u64::try_from(report_count.ok_or_else(|| {
                     Error::DbState(
                         "collection job in state FINISHED but report_count is NULL".to_string(),
@@ -757,6 +773,7 @@ impl RowExt for Row {
                     })?,
                 )?;
                 CollectionJobState::Finished {
+                    aggregate_share_id,
                     report_count,
                     client_timestamp_interval,
                     encrypted_helper_aggregate_share,
@@ -766,13 +783,17 @@ impl RowExt for Row {
 
             CollectionJobStateCode::Abandoned => CollectionJobState::Abandoned,
 
-            CollectionJobStateCode::Deleted => CollectionJobState::Deleted,
+            CollectionJobStateCode::Deleted => {
+                let aggregate_share_id = aggregate_share_id_bytes
+                    .map(|bytes| AggregateShareId::get_decoded(&bytes))
+                    .transpose()?;
+                CollectionJobState::Deleted { aggregate_share_id }
+            }
         };
 
         Ok(CollectionJob::new(
             task_id,
             collection_job_id,
-            aggregate_share_id,
             query,
             aggregation_param,
             batch_identifier,

@@ -447,7 +447,10 @@ CREATE TABLE collection_jobs(
     client_timestamp_interval     INT8RANGE,
     helper_aggregate_share        BYTEA,                          -- the helper's encrypted aggregate share (HpkeCiphertext, only if in state FINISHED)
     leader_aggregate_share        BYTEA,                          -- the leader's unencrypted aggregate share (opaque VDAF message, only if in state FINISHED)
-    aggregate_share_id            BYTEA NOT NULL,                 -- the 16-byte AggregateShareID as defined by DAP
+    -- The 16-byte AggregateShareID as defined by DAP. Chosen by the helper. Populated only if in
+    -- state POLL or FINISHED, that is, only after the helper has at least assigned an aggregate
+    -- share ID.
+    aggregate_share_id BYTEA,
 
     step_attempts  BIGINT NOT NULL DEFAULT 0,  -- the number of attempts to step the collection job without making progress, regardless of whether the lease was successfully released or not
 

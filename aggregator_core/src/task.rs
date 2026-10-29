@@ -7,6 +7,7 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Utc};
 use educe::Educe;
 use janus_core::{
+    UrlExt,
     auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
     task_config::build_task_configuration,
     url_for_join,
@@ -594,25 +595,32 @@ impl AggregatorTask {
         }
     }
 
-    /// Returns the URI at which the helper aggregate shares resource can be accessed.
-    pub fn aggregate_shares_uri(
-        &self,
-        aggregate_share_id: &AggregateShareId,
-    ) -> Result<Option<Url>, Error> {
+    /// Returns the URI for aggregate share creation in the helper.
+    pub fn aggregate_share_creation_uri(&self) -> Result<Option<Url>, Error> {
         if matches!(
             self.aggregator_parameters,
             AggregatorTaskParameters::Leader { .. }
         ) {
             Ok(Some(url_for_join(self.peer_aggregator_endpoint())?.join(
-                &format!(
-                    "{}/aggregate_shares/{}",
-                    self.tasks_path(),
-                    aggregate_share_id,
-                ),
+                &format!("{}/aggregate_shares", self.tasks_path()),
             )?))
         } else {
             Ok(None)
         }
+    }
+
+    /// Returns the URI for an aggregate share in the helper.
+    pub fn aggregate_share_uri(
+        &self,
+        aggregate_share_id: &AggregateShareId,
+    ) -> Result<Option<Url>, Error> {
+        Ok(match self.aggregate_share_creation_uri()? {
+            Some(uri) => Some(
+                uri.ensure_trailing_slash()
+                    .join(&format!("{aggregate_share_id}"))?,
+            ),
+            None => None,
+        })
     }
 
     /// Returns the aggregator [`AuthenticationToken`] for this task, used by the leader to
@@ -1240,25 +1248,32 @@ pub mod test_util {
             Ok(uri)
         }
 
-        /// Returns the URI at which the helper aggregate shares resource can be accessed.
-        pub fn aggregate_shares_uri(
+        /// Returns the URI for the helper aggregate share creation resource.
+        pub fn aggregate_share_creation_uri(&self) -> Result<Url, Error> {
+            Ok(self
+                .helper_aggregator_endpoint()
+                .join(&format!("{}/aggregate_shares", self.tasks_path()))?)
+        }
+
+        /// Returns the URI for a helper aggregate share resource.
+        pub fn aggregate_share_uri(
             &self,
             aggregate_share_id: &AggregateShareId,
         ) -> Result<Url, Error> {
-            Ok(self.helper_aggregator_endpoint().join(&format!(
-                "{}/aggregate_shares/{aggregate_share_id}",
-                self.tasks_path()
-            ))?)
+            Ok(self
+                .aggregate_share_creation_uri()?
+                .ensure_trailing_slash()
+                .join(&aggregate_share_id.to_string())?)
         }
 
-        /// Returns the URI for the leader collection job creation resource.
+        /// Returns the URI at which the leader collection job creation resource.
         pub fn collection_job_creation_uri(&self) -> Result<Url, Error> {
             Ok(self
                 .leader_aggregator_endpoint()
                 .join(&format!("{}/collection_jobs", self.tasks_path()))?)
         }
 
-        /// Returns the URI for the leader collection job resource.
+        /// Returns the URI for leader collection job resource.
         pub fn collection_job_uri(
             &self,
             collection_job_id: &CollectionJobId,
@@ -1903,7 +1918,7 @@ mod tests {
                 task.report_upload_uri().unwrap(),
                 task.aggregation_job_uri(&random(), None).unwrap(),
                 task.collection_job_uri(&random()).unwrap(),
-                task.aggregate_shares_uri(&random()).unwrap(),
+                task.aggregate_share_uri(&random()).unwrap(),
             ] {
                 // Check that path starts with / so it is suitable for use with mockito and that any
                 // path components in the aggregator endpoint are still present.

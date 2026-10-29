@@ -202,15 +202,16 @@ where
     B: CollectableBatchMode,
     A: AsyncAggregator<SEED_SIZE>,
 {
-    pub(crate) fn new<
-        InputIterator: IntoIterator<Item = Cow<'a, BatchAggregation<SEED_SIZE, B, A>>>,
-    >(
+    pub(crate) fn new<InputIterator>(
         task: &AggregatorTask,
         batch_aggregation_shard_count: u64,
         batch_identifier: &B::BatchIdentifier,
         aggregation_param: &A::AggregationParam,
         real_batch_aggregations: InputIterator,
-    ) -> Self {
+    ) -> Self
+    where
+        InputIterator: IntoIterator<Item = Cow<'a, BatchAggregation<SEED_SIZE, B, A>>>,
+    {
         // Construct iterator over all possible batch aggregations for the collection identifier.
         let expected_batch_aggregations = iproduct!(
             B::batch_identifiers_for_collection_identifier(batch_identifier),

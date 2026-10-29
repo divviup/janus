@@ -171,6 +171,12 @@ pub enum Error {
     TooManyRequests,
     #[error("request timed out waiting in queue")]
     RequestTimeout,
+    /// A helper HTTP response was invalid.
+    #[error("invalid {resource_type} response from helper: {description}")]
+    InvalidHelperResponse {
+        resource_type: &'static str,
+        description: Box<dyn std::error::Error + Send + Sync>,
+    },
 }
 
 /// A newtype around `Arc<Error>`. This is needed to host a customized implementation of
@@ -360,6 +366,7 @@ impl Error {
             Error::TooManyRequests => "too_many_requests",
             Error::RequestTimeout => "request_timeout",
             Error::BadContentType(_) => "bad_content_type",
+            Error::InvalidHelperResponse { .. } => "invalid_helper_response",
         }
     }
 }
