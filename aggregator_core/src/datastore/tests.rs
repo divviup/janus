@@ -52,12 +52,12 @@ use crate::{
     datastore::{
         Crypter, Datastore, Error, RowExt, SUPPORTED_SCHEMA_VERSIONS, Transaction,
         models::{
-            AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob, AggregationJob,
-            AggregationJobState, BatchAggregation, BatchAggregationState, CollectionJob,
-            CollectionJobState, CollectionJobStateCode, HpkeKeyState, HpkeKeypair,
-            LeaderStoredReport, Lease, OutstandingBatch, ReportAggregation,
-            ReportAggregationMetadata, ReportAggregationMetadataState, ReportAggregationState,
-            SqlInterval,
+            AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob,
+            AggregateShareJobState, AggregationJob, AggregationJobState, BatchAggregation,
+            BatchAggregationState, CollectionJob, CollectionJobState, CollectionJobStateCode,
+            HpkeKeyState, HpkeKeypair, LeaderStoredReport, Lease, OutstandingBatch,
+            ReportAggregation, ReportAggregationMetadata, ReportAggregationMetadataState,
+            ReportAggregationState, SqlInterval,
         },
         schema_versions_template,
         test_util::{
@@ -6402,6 +6402,7 @@ async fn roundtrip_aggregate_share_job_time_interval(ephemeral_datastore: Epheme
 
                 let aggregate_share_job = AggregateShareJob::new(
                     *task.id(),
+                    AggregateShareJobState::Finished,
                     Interval::minimal(START_TIME).unwrap(),
                     dummy::AggregationParam(11),
                     dummy::AggregateShare(42),
@@ -6601,6 +6602,7 @@ async fn roundtrip_aggregate_share_job_leader_selected(ephemeral_datastore: Ephe
 
                 let aggregate_share_job = AggregateShareJob::new(
                     *task.id(),
+                    AggregateShareJobState::Finished,
                     batch_id,
                     dummy::AggregationParam(11),
                     dummy::AggregateShare(42),
@@ -6728,6 +6730,128 @@ async fn roundtrip_aggregate_share_job_leader_selected(ephemeral_datastore: Ephe
                 .await
                 .unwrap(),
                 Vec::new()
+            );
+
+            Ok(())
+        })
+    })
+    .await
+    .unwrap();
+}
+
+#[rstest_reuse::apply(schema_versions_template)]
+#[tokio::test]
+async fn delete_aggregate_share_job(ephemeral_datastore: EphemeralDatastore) {
+    install_test_trace_subscriber();
+
+    let clock = MockClock::new(START_TIMESTAMP);
+    let ds = ephemeral_datastore.datastore(clock.clone()).await;
+
+    ds.run_tx("test-delete-aggregate-share-job", |tx| {
+        Box::pin(async move {
+            let task = TaskBuilder::new(
+                task::BatchMode::TimeInterval,
+                AggregationMode::Synchronous,
+                VdafInstance::Fake { rounds: 1 },
+            )
+            .with_time_precision(TIME_PRECISION)
+            .with_report_expiry_age(Some(REPORT_EXPIRY_AGE_DURATION))
+            .build()
+            .helper_view()
+            .unwrap();
+            tx.put_aggregator_task(&task).await.unwrap();
+
+            tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                *task.id(),
+                Interval::new(START_TIME, Duration::from_time_precision_units(10)).unwrap(),
+                dummy::AggregationParam(11),
+                0,
+                Interval::new(START_TIME, Duration::from_time_precision_units(10)).unwrap(),
+                BatchAggregationState::Aggregating {
+                    aggregate_share: Some(dummy::AggregateShare(0)),
+                    report_count: 1,
+                    checksum: ReportIdChecksum::default(),
+                    aggregation_jobs_created: 7,
+                    aggregation_jobs_terminated: 5,
+                },
+            ))
+            .await
+            .unwrap();
+
+            let aggregate_share_job = AggregateShareJob::new(
+                *task.id(),
+                AggregateShareJobState::Finished,
+                Interval::minimal(START_TIME).unwrap(),
+                dummy::AggregationParam(11),
+                dummy::AggregateShare(42),
+                random(),
+                10,
+                ReportIdChecksum::get_decoded(&[1; 32]).unwrap(),
+                CollectionJobReq::new(
+                    Query::new_time_interval(
+                        Interval::new(START_TIME, Duration::from_time_precision_units(10)).unwrap(),
+                    ),
+                    dummy::AggregationParam(11).get_encoded().unwrap(),
+                ),
+            );
+
+            tx.put_aggregate_share_job::<0, TimeInterval, dummy::Vdaf>(&aggregate_share_job)
+                .await
+                .unwrap();
+
+            tx.delete_aggregate_share_job(task.id(), *aggregate_share_job.aggregate_share_id())
+                .await
+                .unwrap();
+
+            // Job state should be updated to deleted, but otherwise unchanged
+            let want_aggregate_share_job = aggregate_share_job
+                .clone()
+                .with_state(AggregateShareJobState::Deleted);
+
+            let got_aggregate_share_job = tx
+                .get_aggregate_share_job::<0, TimeInterval, dummy::Vdaf>(
+                    &dummy::Vdaf::new(1),
+                    aggregate_share_job.task_id(),
+                    aggregate_share_job.batch_interval(),
+                    aggregate_share_job.aggregation_parameter(),
+                )
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(want_aggregate_share_job, got_aggregate_share_job);
+
+            let got_aggregate_share_jobs = tx
+                .get_aggregate_share_jobs_intersecting_interval::<0, dummy::Vdaf>(
+                    &dummy::Vdaf::new(1),
+                    want_aggregate_share_job.task_id(),
+                    &Interval::new(START_TIME, Duration::from_time_precision_units(10)).unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                got_aggregate_share_jobs,
+                vec![want_aggregate_share_job.clone()]
+            );
+
+            let got_aggregate_share_job = tx
+                .get_aggregate_share_job_by_id::<0, TimeInterval, dummy::Vdaf>(
+                    &dummy::Vdaf::new(1),
+                    want_aggregate_share_job.task_id(),
+                    *want_aggregate_share_job.aggregate_share_id(),
+                )
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(got_aggregate_share_job, want_aggregate_share_job);
+
+            assert_eq!(
+                tx.get_aggregate_share_jobs_for_task::<0, TimeInterval, dummy::Vdaf>(
+                    &dummy::Vdaf::new(1),
+                    want_aggregate_share_job.task_id(),
+                )
+                .await
+                .unwrap(),
+                vec![want_aggregate_share_job],
             );
 
             Ok(())
@@ -7840,6 +7964,7 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
         } else {
             tx.put_aggregate_share_job::<0, B, dummy::Vdaf>(&AggregateShareJob::new(
                 *task.id(),
+                AggregateShareJobState::Finished,
                 batch_identifier.clone(),
                 dummy::AggregationParam(0),
                 dummy::AggregateShare(11),

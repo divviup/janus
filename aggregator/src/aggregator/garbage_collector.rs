@@ -179,9 +179,9 @@ mod tests {
     use janus_aggregator_core::{
         datastore::{
             models::{
-                AggregateShareJob, AggregationJob, AggregationJobState, BatchAggregation,
-                BatchAggregationState, CollectionJob, CollectionJobState, LeaderStoredReport,
-                ReportAggregation, ReportAggregationState,
+                AggregateShareJob, AggregateShareJobState, AggregationJob, AggregationJobState,
+                BatchAggregation, BatchAggregationState, CollectionJob, CollectionJobState,
+                LeaderStoredReport, ReportAggregation, ReportAggregationState,
             },
             test_util::ephemeral_datastore,
         },
@@ -488,6 +488,7 @@ mod tests {
                     tx.put_aggregate_share_job(
                         &AggregateShareJob::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
+                            AggregateShareJobState::Finished,
                             batch_identifier,
                             dummy::AggregationParam(0),
                             dummy::AggregateShare(11),
@@ -886,6 +887,7 @@ mod tests {
                     tx.put_aggregate_share_job(
                         &AggregateShareJob::<0, LeaderSelected, dummy::Vdaf>::new(
                             *task.id(),
+                            AggregateShareJobState::Finished,
                             batch_id,
                             dummy::AggregationParam(0),
                             dummy::AggregateShare(11),

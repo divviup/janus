@@ -882,6 +882,7 @@ impl RowExt for Row {
         let aggregate_share_id = AggregateShareId::get_decoded(self.get("aggregate_share_id"))?;
         Ok(AggregateShareJob::new(
             *task_id,
+            self.get("state"),
             batch_identifier,
             aggregation_param,
             helper_aggregate_share,

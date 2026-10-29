@@ -2066,6 +2066,8 @@ impl<Job: Clone + Debug + PartialEq + Eq> ExpirableJob<Job> {
 pub struct AggregateShareJob<const SEED_SIZE: usize, B: BatchMode, A: AsyncAggregator<SEED_SIZE>> {
     /// The task ID for this aggregate share.
     task_id: TaskId,
+    /// The state of this job.
+    state: AggregateShareJobState,
     /// The batch identifier for the batch covered by the aggregate share.
     batch_identifier: B::BatchIdentifier,
     /// The VDAF aggregation parameter used to verify and aggregate input shares.
@@ -2097,6 +2099,7 @@ impl<const SEED_SIZE: usize, B: BatchMode, A: AsyncAggregator<SEED_SIZE>>
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         task_id: TaskId,
+        state: AggregateShareJobState,
         batch_identifier: B::BatchIdentifier,
         aggregation_parameter: A::AggregationParam,
         helper_aggregate_share: A::AggregateShare,
@@ -2107,6 +2110,7 @@ impl<const SEED_SIZE: usize, B: BatchMode, A: AsyncAggregator<SEED_SIZE>>
     ) -> Self {
         Self {
             task_id,
+            state,
             batch_identifier,
             aggregation_parameter,
             helper_aggregate_share,
@@ -2115,6 +2119,17 @@ impl<const SEED_SIZE: usize, B: BatchMode, A: AsyncAggregator<SEED_SIZE>>
             checksum,
             collection_job_req,
         }
+    }
+
+    /// The state of the aggregate share job.
+    pub fn state(&self) -> AggregateShareJobState {
+        self.state
+    }
+
+    /// Set the state of the job.
+    #[cfg(feature = "test-util")]
+    pub fn with_state(self, state: AggregateShareJobState) -> Self {
+        Self { state, ..self }
     }
 
     /// Gets the task ID associated with this aggregate share job.
@@ -2179,6 +2194,15 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>>
     pub fn batch_id(&self) -> &BatchId {
         self.batch_identifier()
     }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, FromSql, ToSql)]
+#[postgres(name = "aggregate_share_job_state")]
+pub enum AggregateShareJobState {
+    #[postgres(name = "FINISHED")]
+    Finished,
+    #[postgres(name = "DELETED")]
+    Deleted,
 }
 
 /// An outstanding batch, which is a batch which has not yet started collection. Such a batch may

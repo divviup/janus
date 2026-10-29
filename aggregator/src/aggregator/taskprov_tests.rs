@@ -13,8 +13,9 @@ use janus_aggregator_core::{
     datastore::{
         Datastore,
         models::{
-            AggregateShareJob, AggregationJob, AggregationJobState, BatchAggregation,
-            BatchAggregationState, HpkeKeyState, ReportAggregation, ReportAggregationState,
+            AggregateShareJob, AggregateShareJobState, AggregationJob, AggregationJobState,
+            BatchAggregation, BatchAggregationState, HpkeKeyState, ReportAggregation,
+            ReportAggregationState,
         },
         test_util::{EphemeralDatastore, ephemeral_datastore},
     },
@@ -1124,6 +1125,7 @@ async fn taskprov_aggregate_continue() {
                 tx.put_aggregate_share_job::<0, LeaderSelected, dummy::Vdaf>(
                     &AggregateShareJob::new(
                         *task.id(),
+                        AggregateShareJobState::Finished,
                         batch_id,
                         aggregation_param,
                         transcript.helper_aggregate_share,
