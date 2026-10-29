@@ -474,7 +474,7 @@ CREATE INDEX collection_jobs_interval_containment_index ON collection_jobs USING
 CREATE TYPE AGGREGATE_SHARE_JOB_STATE AS ENUM(
     -- The job is finished and its results are available for the leader.
     'FINISHED',
-    -- The job has been deleted. Its results are gone and it may not be re-run.
+    -- The job has been deleted. It may not be re-run.
     'DELETED'
 );
 
@@ -507,6 +507,8 @@ CREATE TABLE aggregate_share_jobs(
     -- creation/update records
     -- when the row was created
     created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    -- when the row was last changed
+    updated_at  TIMESTAMP WITH TIME ZONE NOT NULL,
     -- the name of the transaction that last updated the row
     updated_by TEXT NOT NULL,
 

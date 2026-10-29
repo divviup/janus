@@ -3949,17 +3949,18 @@ WHERE task_id = $1
 INSERT INTO aggregate_share_jobs (
     task_id, state, batch_identifier, batch_interval, aggregation_param,
     helper_aggregate_share, aggregate_share_id, report_count, checksum,
-    collection_job_req, created_at, updated_by
+    collection_job_req, created_at, updated_at, updated_by
 )
-VALUES ($1, 'FINISHED', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+VALUES ($1, 'FINISHED', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 ON CONFLICT(task_id, batch_identifier, aggregation_param) DO UPDATE
     SET (
         helper_aggregate_share, aggregate_share_id, report_count, checksum,
-        collection_job_req, created_at, updated_by
+        collection_job_req, created_at, updated_at, updated_by, state
     ) = (
         excluded.helper_aggregate_share, excluded.aggregate_share_id,
         excluded.report_count, excluded.checksum, excluded.collection_job_req,
-        excluded.created_at, excluded.updated_by
+        excluded.created_at, excluded.updated_at, excluded.updated_by,
+        excluded.state
     )
     WHERE COALESCE(
               LOWER(aggregate_share_jobs.batch_interval),
@@ -3968,7 +3969,7 @@ ON CONFLICT(task_id, batch_identifier, aggregation_param) DO UPDATE
                WHERE ba.task_id = aggregate_share_jobs.task_id
                  AND ba.batch_identifier = aggregate_share_jobs.batch_identifier
                  AND ba.aggregation_param = aggregate_share_jobs.aggregation_param),
-              0) < $12",
+              0) < $13",
             )
             .await?;
         check_insert(
@@ -3990,6 +3991,7 @@ ON CONFLICT(task_id, batch_identifier, aggregation_param) DO UPDATE
                     /* collection_job_req */
                     &aggregate_share_job.collection_job_req().get_encoded()?,
                     /* created_at */ &now,
+                    /* updated_at */ &now,
                     /* updated_by */ &self.name,
                     /* threshold */
                     &task_info.report_expiry_threshold(now)?,
@@ -4015,7 +4017,10 @@ ON CONFLICT(task_id, batch_identifier, aggregation_param) DO UPDATE
             .prepare_cached(
                 "-- delete_aggregate_share_job()
 UPDATE aggregate_share_jobs
-SET state = 'DELETED'
+SET
+    state = 'DELETED',
+    updated_at = $3,
+    updated_by = $4
 WHERE task_id = $1
   AND aggregate_share_id = $2",
             )
@@ -4026,6 +4031,8 @@ WHERE task_id = $1
                 &[
                     /* task_id */ &task_info.pkey,
                     /* aggregate_share_id */ &aggregate_share_id.get_encoded()?,
+                    /* updated_at */ &self.clock.now(),
+                    /* updated_by */ &self.name,
                 ],
             )
             .await?,

@@ -2196,11 +2196,19 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>>
     }
 }
 
+/// Possible states of an aggregate share job.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, FromSql, ToSql)]
 #[postgres(name = "aggregate_share_job_state")]
 pub enum AggregateShareJobState {
+    /// The job has run to completion and results are available.
+    ///
+    /// Since Janus always handles aggregate share jobs synchronously, jobs get created directly
+    /// into this state. Jobs that are invalid or unserviceable don't get created at all.
     #[postgres(name = "FINISHED")]
     Finished,
+    /// The job has been deleted.
+    ///
+    /// Its results are not available. It may not be re-run, to prevent replay attacks.
     #[postgres(name = "DELETED")]
     Deleted,
 }

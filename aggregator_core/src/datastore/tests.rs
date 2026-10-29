@@ -6854,6 +6854,13 @@ async fn delete_aggregate_share_job(ephemeral_datastore: EphemeralDatastore) {
                 vec![want_aggregate_share_job],
             );
 
+            tx.check_timestamp_columns(
+                "aggregate_share_jobs",
+                "test-delete-aggregate-share-job",
+                true,
+            )
+            .await;
+
             Ok(())
         })
     })
