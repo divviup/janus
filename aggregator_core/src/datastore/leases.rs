@@ -72,7 +72,7 @@ WHERE collection_jobs.task_id = $1
             ],
         )
         .await?
-        .map(|row| maybe_leased_collection_job_from_row(&row))
+        .map(|row| row.maybe_leased_collection_job())
         .transpose()
     }
 
@@ -121,7 +121,7 @@ WHERE collection_jobs.task_id = $1
         self.query(&stmt, &[/* task ID */ &task_info.pkey, /* now */ &now])
             .await?
             .iter()
-            .map(maybe_leased_collection_job_from_row)
+            .map(|row| row.maybe_leased_collection_job())
             .collect()
     }
 
@@ -171,7 +171,7 @@ WHERE aggregation_jobs.task_id = $1
             ],
         )
         .await?
-        .map(|row| maybe_leased_aggregation_job_from_row(&row))
+        .map(|row| row.maybe_leased_aggregation_job())
         .transpose()
     }
 
@@ -218,7 +218,7 @@ WHERE aggregation_jobs.task_id = $1
         )
         .await?
         .iter()
-        .map(maybe_leased_aggregation_job_from_row)
+        .map(|row| row.maybe_leased_aggregation_job())
         .collect()
     }
 }
@@ -241,69 +241,79 @@ impl<T> MaybeLease<T> {
     }
 }
 
-fn maybe_leased_collection_job_from_row(
-    row: &Row,
-) -> Result<MaybeLease<AcquiredCollectionJob>, Error> {
-    let lease_expiry_time = row.try_get("lease_expiry")?;
-    let lease_token = row.get_nullable_bytea_and_convert::<LeaseToken>("lease_token")?;
-    let lease_attempts = row.get_bigint_and_convert("lease_attempts")?;
+/// Extensions for constructing leases from database rows.
+pub(super) trait LeaseRowExt {
+    fn maybe_leased_collection_job(&self) -> Result<MaybeLease<AcquiredCollectionJob>, Error>;
 
-    Ok(MaybeLease {
-        leased: acquired_collection_job_from_row(row)?,
-        lease_expiry_time,
-        lease_token,
-        lease_attempts,
-    })
+    fn acquired_collection_job(&self) -> Result<AcquiredCollectionJob, Error>;
+
+    fn maybe_leased_aggregation_job(&self) -> Result<MaybeLease<AcquiredAggregationJob>, Error>;
+
+    fn acquired_aggregation_job(&self) -> Result<AcquiredAggregationJob, Error>;
 }
 
-pub(crate) fn acquired_collection_job_from_row(row: &Row) -> Result<AcquiredCollectionJob, Error> {
-    let task_id = TaskId::get_decoded(row.get("task_id"))?;
-    let collection_job_id = row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
-    let query_type = row.try_get::<_, Json<task::BatchMode>>("batch_mode")?.0;
-    let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
-    let time_precision = TimePrecision::from_seconds(row.get_bigint_and_convert("time_precision")?);
-    let encoded_batch_identifier = row.get("batch_identifier");
-    let encoded_aggregation_param = row.get("aggregation_param");
-    let step_attempts = row.get_bigint_and_convert("step_attempts")?;
+impl LeaseRowExt for Row {
+    fn maybe_leased_collection_job(&self) -> Result<MaybeLease<AcquiredCollectionJob>, Error> {
+        let lease_expiry_time = self.try_get("lease_expiry")?;
+        let lease_token = self.get_nullable_bytea_and_convert::<LeaseToken>("lease_token")?;
+        let lease_attempts = self.get_bigint_and_convert("lease_attempts")?;
 
-    Ok(AcquiredCollectionJob::new(
-        task_id,
-        collection_job_id,
-        query_type,
-        vdaf,
-        time_precision,
-        encoded_batch_identifier,
-        encoded_aggregation_param,
-        step_attempts,
-    ))
-}
+        Ok(MaybeLease {
+            leased: self.acquired_collection_job()?,
+            lease_expiry_time,
+            lease_token,
+            lease_attempts,
+        })
+    }
 
-fn maybe_leased_aggregation_job_from_row(
-    row: &Row,
-) -> Result<MaybeLease<AcquiredAggregationJob>, Error> {
-    let lease_expiry_time = row.try_get("lease_expiry")?;
-    let lease_token = row.get_nullable_bytea_and_convert::<LeaseToken>("lease_token")?;
-    let lease_attempts = row.get_bigint_and_convert("lease_attempts")?;
+    fn acquired_collection_job(&self) -> Result<AcquiredCollectionJob, Error> {
+        let task_id = TaskId::get_decoded(self.get("task_id"))?;
+        let collection_job_id =
+            self.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
+        let query_type = self.try_get::<_, Json<task::BatchMode>>("batch_mode")?.0;
+        let vdaf = self.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
+        let time_precision =
+            TimePrecision::from_seconds(self.get_bigint_and_convert("time_precision")?);
+        let encoded_batch_identifier = self.get("batch_identifier");
+        let encoded_aggregation_param = self.get("aggregation_param");
+        let step_attempts = self.get_bigint_and_convert("step_attempts")?;
 
-    Ok(MaybeLease {
-        leased: acquired_aggregation_job_from_row(row)?,
-        lease_expiry_time,
-        lease_token,
-        lease_attempts,
-    })
-}
+        Ok(AcquiredCollectionJob::new(
+            task_id,
+            collection_job_id,
+            query_type,
+            vdaf,
+            time_precision,
+            encoded_batch_identifier,
+            encoded_aggregation_param,
+            step_attempts,
+        ))
+    }
 
-pub(crate) fn acquired_aggregation_job_from_row(
-    row: &Row,
-) -> Result<AcquiredAggregationJob, Error> {
-    let task_id = TaskId::get_decoded(row.get("task_id"))?;
-    let aggregation_job_id = row.get_bytea_and_convert::<AggregationJobId>("aggregation_job_id")?;
-    let query_type = row.try_get::<_, Json<task::BatchMode>>("batch_mode")?.0;
-    let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
-    Ok(AcquiredAggregationJob::new(
-        task_id,
-        aggregation_job_id,
-        query_type,
-        vdaf,
-    ))
+    fn maybe_leased_aggregation_job(&self) -> Result<MaybeLease<AcquiredAggregationJob>, Error> {
+        let lease_expiry_time = self.try_get("lease_expiry")?;
+        let lease_token = self.get_nullable_bytea_and_convert::<LeaseToken>("lease_token")?;
+        let lease_attempts = self.get_bigint_and_convert("lease_attempts")?;
+
+        Ok(MaybeLease {
+            leased: self.acquired_aggregation_job()?,
+            lease_expiry_time,
+            lease_token,
+            lease_attempts,
+        })
+    }
+
+    fn acquired_aggregation_job(&self) -> Result<AcquiredAggregationJob, Error> {
+        let task_id = TaskId::get_decoded(self.get("task_id"))?;
+        let aggregation_job_id =
+            self.get_bytea_and_convert::<AggregationJobId>("aggregation_job_id")?;
+        let query_type = self.try_get::<_, Json<task::BatchMode>>("batch_mode")?.0;
+        let vdaf = self.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
+        Ok(AcquiredAggregationJob::new(
+            task_id,
+            aggregation_job_id,
+            query_type,
+            vdaf,
+        ))
+    }
 }
