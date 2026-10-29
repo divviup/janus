@@ -559,6 +559,53 @@ async fn recreate_deleted_collection_job_leader_selected() {
 }
 
 #[tokio::test]
+async fn create_expired_collection_job_time_interval() {
+    let expiry = Duration::from_time_precision_units(20);
+    let test_case = CollectionJobTestCase::builder()
+        .build_task(|tb| {
+            tb.with_batch_mode(BatchMode::TimeInterval)
+                .with_report_expiry_age(Some(expiry))
+        })
+        .build()
+        .await;
+
+    let now = Time::from_seconds_since_epoch(
+        test_case.clock().now().as_seconds_since_epoch(),
+        test_case.task.time_precision(),
+    );
+
+    test_case
+        .setup_time_interval_batch(
+            now.sub_duration(&Duration::from_time_precision_units(3))
+                .unwrap(),
+        )
+        .await;
+    let queried_interval = Interval::new(
+        now.sub_duration(&Duration::from_time_precision_units(10))
+            .unwrap(),
+        Duration::from_time_precision_units(10),
+    )
+    .unwrap();
+
+    // Advance clock far enough for the batch aggregations etc. to expire.
+    test_case.clock().advance(TimeDelta::seconds(
+        2 * expiry.as_seconds(test_case.task.time_precision()) as i64,
+    ));
+
+    let request = CollectionJobReq::new(
+        Query::new_time_interval(queried_interval),
+        dummy::AggregationParam::default().get_encoded().unwrap(),
+    );
+
+    // Creating a collection job for expired data should be refused.
+    let mut response = test_case.post_collection_job(&request).await;
+    test_case.check_collection_job_rejection_response(
+        response.status(),
+        take_problem_details(&mut response).await,
+    );
+}
+
+#[tokio::test]
 async fn recreate_expired_collection_job_time_interval() {
     let expiry = Duration::from_time_precision_units(20);
     let mut test_case = CollectionJobTestCase::builder()
@@ -604,14 +651,16 @@ async fn recreate_expired_collection_job_time_interval() {
         take_problem_details(&mut response).await,
     );
 
-    // Re-creating the job with a mutated request should fail with batchOverlap.
+    // Re-creating the job with a mutated request should also be refused.
     let mutant_request = CollectionJobReq::new(
         request.query().clone(),
         dummy::AggregationParam(17).get_encoded().unwrap(),
     );
     let mut response = test_case.post_collection_job(&mutant_request).await;
-    test_case
-        .check_batch_overlap_response(response.status(), take_problem_details(&mut response).await);
+    test_case.check_collection_job_rejection_response(
+        response.status(),
+        take_problem_details(&mut response).await,
+    );
 }
 
 #[tokio::test]

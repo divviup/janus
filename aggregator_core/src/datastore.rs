@@ -54,7 +54,7 @@ use crate::VdafHasAggregationParameter;
 use crate::{
     AsyncAggregator,
     batch_mode::{AccumulableBatchMode, CollectableBatchMode},
-    datastore::row_ext::RowExt,
+    datastore::{models::ExpirableCollectionJob, row_ext::RowExt},
     http_server::TIME_HISTOGRAM_BOUNDARIES,
     task::{self, AggregatorTask},
     taskprov::PeerAggregator,
@@ -2555,7 +2555,7 @@ WHERE collection_jobs.task_id = $1
         vdaf: &A,
         task_id: &TaskId,
         query: &Query<LeaderSelected>,
-    ) -> Result<Option<(CollectionJob<SEED_SIZE, LeaderSelected, A>, bool)>, Error> {
+    ) -> Result<Option<ExpirableCollectionJob<SEED_SIZE, LeaderSelected, A>>, Error> {
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
             None => return Ok(None),
@@ -2596,7 +2596,7 @@ WHERE cj.task_id = $1 AND cj.query = $2",
                 row.get_bytea_and_convert("collection_job_id")?,
             )?;
 
-            Ok((job, row.get("expired")))
+            Ok(ExpirableCollectionJob::new(job, row.get("expired")))
         })
         .transpose()
     }
@@ -2711,19 +2711,17 @@ WHERE task_id = $1
 
     /// Collection jobs whose batch intervals intersect with the given interval.
     ///
-    /// Applies only to time-interval tasks. The returned tuple includes a boolean which is true if
-    /// the collection job is expired.
+    /// Applies only to time-interval tasks.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
-    #[allow(clippy::type_complexity)]
-    pub async fn get_collection_jobs_intersecting_interval<
-        const SEED_SIZE: usize,
-        A: AsyncAggregator<SEED_SIZE>,
-    >(
+    pub async fn get_collection_jobs_intersecting_interval<const SEED_SIZE: usize, A>(
         &self,
         vdaf: &A,
         task_id: &TaskId,
         batch_interval: &Interval,
-    ) -> Result<Vec<(CollectionJob<SEED_SIZE, TimeInterval, A>, bool)>, Error> {
+    ) -> Result<Vec<ExpirableCollectionJob<SEED_SIZE, TimeInterval, A>>, Error>
+    where
+        A: AsyncAggregator<SEED_SIZE>,
+    {
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
             None => return Ok(Vec::new()),
@@ -2737,7 +2735,7 @@ SELECT
     report_count, client_timestamp_interval, helper_aggregate_share,
     leader_aggregate_share, aggregate_share_id, batch_interval,
     -- batch_interval will always be set for time interval tasks
-    LOWER(batch_interval) < $3 as expired
+    LOWER(batch_interval) < $3 AS expired
 FROM collection_jobs
 WHERE task_id = $1
   AND batch_interval && $2",
@@ -2761,7 +2759,7 @@ WHERE task_id = $1
                 row.get_bytea_and_convert("collection_job_id")?,
             )?;
 
-            Ok((job, row.get("expired")))
+            Ok(ExpirableCollectionJob::new(job, row.get("expired")))
         })
         .collect()
     }

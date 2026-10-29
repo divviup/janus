@@ -185,15 +185,13 @@ impl CollectionJobDriver {
                         // Read the task & collection job.
                         //
                         // Also, try to read an existing, already-FINISHED collection job for the
-                        // same batch & aggregation parameter, so that we
-                        // can reuse an already-computed
-                        // result if available.
+                        // same batch & aggregation parameter, so that we can reuse an
+                        // already-computed result if available.
                         //
-                        // Also, look for unaggregated reports & count the number of
-                        // created/terminated aggregation jobs relevant to
-                        // the collection job, so that we can determine if
-                        // we are read to complete the collection job in the case there is no
-                        // preexisting FINISHED collection job.
+                        // Also, look for unaggregated reports & count the number of created or
+                        // terminated aggregation jobs relevant to the collection job, so that we
+                        // can determine if we are ready to complete the collection job in the case
+                        // there is no preexisting FINISHED collection job.
                         let (
                             task,
                             collection_job,
@@ -260,8 +258,7 @@ impl CollectionJobDriver {
 
                         // If we found a matching finished collection job, borrow its state & exit
                         // early. We don't need to update the batch aggregations because handling
-                        // for the finished collection job will have done so
-                        // already.
+                        // for the finished collection job will have done so already.
                         if let Some(finished_collection_job) = finished_collection_job {
                             let collection_job =
                                 collection_job.with_state(finished_collection_job.state().clone());
@@ -274,10 +271,9 @@ impl CollectionJobDriver {
                         }
 
                         // Check if any aggregation jobs relevant to this collection job are
-                        // incomplete, and whether there are reports still
-                        // waiting to be associated to an aggregation job.
-                        // If so, we have to wait before we can compute the final
-                        // aggregate value.
+                        // incomplete, and whether there are reports still waiting to be associated
+                        // to an aggregation job. If so, we have to wait before we can compute the
+                        // final aggregate value.
                         if interval_has_unaggregated_reports
                             || agg_jobs_created != agg_jobs_terminated
                         {
@@ -289,8 +285,8 @@ impl CollectionJobDriver {
                         }
 
                         // There is no pre-existing finished collection job, but the collection job
-                        // is ready to be completed. Read batch aggregations
-                        // so that we can compute the final aggregate value.
+                        // is ready to be completed. Read batch aggregations so that we can compute
+                        // the final aggregate value.
                         let batch_aggregations =
                             B::get_batch_aggregations_for_collection_identifier(
                                 tx,
@@ -303,22 +299,11 @@ impl CollectionJobDriver {
 
                         let mut aggregate_share = AggregateShareComputer::new(&task);
 
-                        // Mark batch aggregations as collected to avoid further aggregation. (We
-                        // don't need to do this if there is a FINISHED
-                        // collection job since that job will have marked
-                        // the batch aggregations.)
-                        //
-                        // To ensure that concurrent aggregations don't write into a
-                        // currently-nonexistent batch aggregation, we write (empty) batch
-                        // aggregations for any that have not already been
-                        // written to storage. We do this transactionally to
-                        // avoid the possibility of overwriting other transactions'
-                        // updates to batch aggregations.
+                        // Mark batch aggregations as collected to avoid further aggregation, but
+                        // ignore any expired ones.
                         let batch_aggregations = batch_aggregations
                             .into_iter()
                             .map(|ba| {
-                                // Empty batch aggregations cannot contribute to the aggregate share
-                                // so don't bother including them.
                                 aggregate_share
                                     .update(&ba)
                                     .map_err(|e| datastore::Error::User(e.into()))?;
@@ -330,6 +315,13 @@ impl CollectionJobDriver {
                             .finalize()
                             .map_err(|e| datastore::Error::User(e.into()))?;
 
+                        // To ensure that concurrent aggregations don't write into a currently
+                        // nonexistent batch aggregation, BatchAggregationsIterator synthesizes
+                        // empty batch aggregations for any that have not already been written to
+                        // storage, which we then write here.
+                        //
+                        // We do this transactionally to avoid the possibility of overwriting other
+                        // transactions' updates to batch aggregations.
                         let batch_aggregations_iter = BatchAggregationsIterator::new(
                             &task,
                             batch_aggregation_shard_count,
@@ -340,8 +332,7 @@ impl CollectionJobDriver {
 
                         // Rather than awaiting all the futures at once, which can cause heap growth
                         // proportional to the number of batch aggregations to write, put them into
-                        // an buffered stream so that they get run in groups
-                        // of bounded size. #3857
+                        // a buffered stream so that they get run in groups of bounded size. #3857
                         futures::stream::iter(batch_aggregations_iter.clone().map(Ok))
                             .try_for_each_concurrent(
                                 max_future_concurrency,

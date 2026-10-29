@@ -4,12 +4,12 @@ use janus_aggregator_core::{
     batch_mode::{AccumulableBatchMode, CollectableBatchMode as CoreCollectableBatchMode},
     datastore::{
         self, Transaction,
-        models::{CollectionJob, LeaderStoredReport},
+        models::{ExpirableCollectionJob, LeaderStoredReport},
     },
     task::AggregatorTask,
 };
 use janus_messages::{
-    CollectionJobReq, Role,
+    Query, Role,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
 };
 
@@ -89,26 +89,24 @@ pub trait CollectableBatchMode: CoreCollectableBatchMode + AccumulableBatchMode 
         aggregation_param: &A::AggregationParam,
     ) -> Result<(), datastore::Error>;
 
-    /// Find any collection jobs that intersect with the request's query.
+    /// Find any collection jobs that intersect with the query.
     ///
-    /// The iterator yields collection jobs and booleans which are true if the collection job is
-    /// expired.
+    /// The iterator yields collection jobs.
     ///
     /// For time interval batch mode, multiple collection jobs could have queries that overlap with
     /// the query's time interval. For leader selected batch mode, the query is a batch ID, so only
     /// zero or one collection job will ever be returned.
-    async fn collection_jobs_intersecting_query<
-        const SEED_SIZE: usize,
-        A: AsyncAggregator<SEED_SIZE>,
-    >(
+    async fn collection_jobs_intersecting_query<const SEED_SIZE: usize, A>(
         tx: &Transaction<'_>,
         vdaf: &A,
         task: &AggregatorTask,
-        request: &CollectionJobReq<Self>,
+        request: &Query<Self>,
     ) -> Result<
-        impl Iterator<Item = (CollectionJob<SEED_SIZE, Self, A>, bool)> + Send + Sync,
+        impl Iterator<Item = ExpirableCollectionJob<SEED_SIZE, Self, A>> + Send + Sync,
         datastore::Error,
-    >;
+    >
+    where
+        A: AsyncAggregator<SEED_SIZE>;
 }
 
 #[async_trait]
@@ -131,11 +129,11 @@ impl CollectableBatchMode for TimeInterval {
                 )
                 .await?
                 .into_iter()
-                .map(|(job, _)| {
-                    if job.batch_interval() != collect_interval {
+                .map(|job| {
+                    if job.job().batch_interval() != collect_interval {
                         found_overlapping_nonequal_interval = true;
                     }
-                    job.take_aggregation_parameter()
+                    job.take_job().take_aggregation_parameter()
                 })
                 .collect(),
 
@@ -188,17 +186,13 @@ impl CollectableBatchMode for TimeInterval {
         tx: &Transaction<'_>,
         vdaf: &A,
         task: &AggregatorTask,
-        request: &CollectionJobReq<Self>,
+        query: &Query<Self>,
     ) -> Result<
-        impl Iterator<Item = (CollectionJob<SEED_SIZE, Self, A>, bool)> + Send + Sync,
+        impl Iterator<Item = ExpirableCollectionJob<SEED_SIZE, Self, A>> + Send + Sync,
         datastore::Error,
     > {
         Ok(tx
-            .get_collection_jobs_intersecting_interval::<SEED_SIZE, A>(
-                vdaf,
-                task.id(),
-                request.query().query_body(),
-            )
+            .get_collection_jobs_intersecting_interval(vdaf, task.id(), query.query_body())
             .await?
             .into_iter())
     }
@@ -255,13 +249,13 @@ impl CollectableBatchMode for LeaderSelected {
         tx: &Transaction<'_>,
         vdaf: &A,
         task: &AggregatorTask,
-        request: &CollectionJobReq<Self>,
+        query: &Query<Self>,
     ) -> Result<
-        impl Iterator<Item = (CollectionJob<SEED_SIZE, Self, A>, bool)> + Send + Sync,
+        impl Iterator<Item = ExpirableCollectionJob<SEED_SIZE, Self, A>> + Send + Sync,
         datastore::Error,
     > {
         Ok(tx
-            .get_collection_job_by_query(vdaf, task.id(), request.query())
+            .get_collection_job_by_query(vdaf, task.id(), query)
             .await?
             .into_iter())
     }

@@ -1209,7 +1209,12 @@ impl TaskAggregator {
         req_bytes: &[u8],
     ) -> Result<(CollectionJobId, Option<Vec<u8>>), Error> {
         self.vdaf_ops
-            .handle_create_collection_job(datastore, Arc::clone(&self.task), req_bytes)
+            .handle_create_collection_job(
+                datastore,
+                datastore.clock(),
+                Arc::clone(&self.task),
+                req_bytes,
+            )
             .await
     }
 
@@ -3122,56 +3127,45 @@ impl VdafOps {
 
     /// Handle requests to the leader to create a collection job.
     #[tracing::instrument(
-        skip(self, datastore, task, collection_req_bytes),
+        skip(self, datastore, task, req_bytes),
         fields(task_id = ?task.id()),
         err(level = Level::DEBUG)
     )]
     async fn handle_create_collection_job(
         &self,
         datastore: &Datastore,
+        clock: &dyn Clock,
         task: Arc<AggregatorTask>,
-        collection_req_bytes: &[u8],
-    ) -> Result<(CollectionJobId, Option<Vec<u8>>), Error> {
-        match task.batch_mode() {
-            task::BatchMode::TimeInterval => {
-                vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
-                    Self::handle_create_collection_job_generic::<
-                        VERIFY_KEY_LENGTH,
-                        TimeInterval,
-                        VdafType,
-                    >(datastore, task, Arc::clone(vdaf), collection_req_bytes)
-                    .await
-                })
-            }
-            task::BatchMode::LeaderSelected { .. } => {
-                vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
-                    Self::handle_create_collection_job_generic::<
-                        VERIFY_KEY_LENGTH,
-                        LeaderSelected,
-                        VdafType,
-                    >(datastore, task, Arc::clone(vdaf), collection_req_bytes)
-                    .await
-                })
-            }
-        }
-    }
-
-    async fn handle_create_collection_job_generic<
-        const SEED_SIZE: usize,
-        B: CollectableBatchMode,
-        A: AsyncAggregator<SEED_SIZE>,
-    >(
-        datastore: &Datastore,
-        task: Arc<AggregatorTask>,
-        vdaf: Arc<A>,
         req_bytes: &[u8],
     ) -> Result<(CollectionJobId, Option<Vec<u8>>), Error> {
         // Parse the collection job request and call an inner method, so we can decorate it with a
         // tracing span that includes request fields.
-        let req =
-            Arc::new(CollectionJobReq::<B>::get_decoded(req_bytes).map_err(Error::MessageDecode)?);
-
-        Self::handle_create_collection_job_inner(datastore, task, vdaf, req).await
+        match task.batch_mode() {
+            task::BatchMode::TimeInterval => {
+                vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
+                    let req = CollectionJobReq::get_decoded(req_bytes)
+                        .map_err(Error::MessageDecode)?;
+                    let batch_interval = *req.query().query_body();
+                    Self::handle_create_collection_job_generic::<
+                        VERIFY_KEY_LENGTH,
+                        TimeInterval,
+                        VdafType,
+                    >(datastore, clock, task, Arc::clone(vdaf), Arc::new(req), Some(batch_interval))
+                        .await
+                })
+            }
+            task::BatchMode::LeaderSelected { .. } => {
+                vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
+                    let req = Arc::new(CollectionJobReq::get_decoded(req_bytes)
+                        .map_err(Error::MessageDecode)?);
+                    Self::handle_create_collection_job_generic::<
+                        VERIFY_KEY_LENGTH,
+                        LeaderSelected,
+                        VdafType,
+                    >(datastore, clock, task, Arc::clone(vdaf), req, None).await
+                })
+            }
+        }
     }
 
     /// Handle creation of a collection job, returning the job ID and possibly an encoded
@@ -3181,11 +3175,13 @@ impl VdafOps {
         fields(query = ?req.query().query_body()),
         err(level = Level::DEBUG)
     )]
-    async fn handle_create_collection_job_inner<const SEED_SIZE: usize, B, A>(
+    async fn handle_create_collection_job_generic<const SEED_SIZE: usize, B, A>(
         datastore: &Datastore,
+        clock: &dyn Clock,
         task: Arc<AggregatorTask>,
         vdaf: Arc<A>,
         req: Arc<CollectionJobReq<B>>,
+        batch_interval: Option<Interval>,
     ) -> Result<(CollectionJobId, Option<Vec<u8>>), Error>
     where
         B: CollectableBatchMode,
@@ -3195,12 +3191,33 @@ impl VdafOps {
         A::AggregationParam::get_decoded(req.aggregation_parameter())
             .map_err(Error::MessageDecode)?;
 
+        // Reject requests for collection jobs that are eligible for GC, to prevent replay
+        // attacks. This check catches time interval aggregate shares that never existed at all.
+        if let (Some(report_expiry_age), Some(batch_interval)) =
+            (task.report_expiry_age(), batch_interval)
+        {
+            let collection_job_expiry_time =
+                batch_interval.end().add_duration(report_expiry_age)?;
+            if clock
+                .now()
+                .is_after(&collection_job_expiry_time, task.time_precision())
+            {
+                return Err(Error::CollectionJobRequestRejected(
+                    *task.id(),
+                    "collection job request too late",
+                ));
+            }
+        }
+
         let (collection_job_id, response) = datastore
             .run_tx("collect", move |tx| {
                 let (task, vdaf, req) = (Arc::clone(&task), Arc::clone(&vdaf), Arc::clone(&req));
                 Box::pin(async move {
-                    let mut jobs = B::collection_jobs_intersecting_query::<SEED_SIZE, A>(
-                        tx, &vdaf, &task, &req,
+                    let mut jobs = B::collection_jobs_intersecting_query(
+                        tx,
+                        vdaf.as_ref(),
+                        &task,
+                        req.query(),
                     )
                     .await?;
                     // If there are any collection jobs intersecting the incoming query, then there
@@ -3209,22 +3226,24 @@ impl VdafOps {
                     // - there is a single intersecting job and it exactly matches the incoming
                     //   query. It's not possible for any others jobs to intersect because the
                     //   existence of the first job precludes them. We have a benign replayed
-                    //   request and serve up the job we already have.
+                    //   request and serve up the job we already have, unless the job has expired,
+                    //   in which case we refuse the request. This is a Janus-specific policy since
+                    //   DAP has no notion of expiry or garbage collection.
                     // - there are one or more more intersecting jobs and none of them exactly match
-                    //   the incoming query. We fail with batch overlap.
+                    //   the incoming query. We fail with batch overlap, per §4.6.1-8.6.1.
                     //
                     // In either case, we don't need to examine anything but the first item in the
                     // iterator.
-                    if let Some((job, expired)) = jobs.next() {
-                        if *job.id() == req.derive_id()? {
+                    if let Some(job) = jobs.next() {
+                        if *job.job().id() == req.derive_id()? {
                             debug!(
-                                collection_job_id = %job.id(),
+                                collection_job_id = %job.job().id(),
                                 collect_request = ?req,
-                                job_state = ?job.state(),
+                                job_state = ?job.job().state(),
                                 "collection job already exists",
                             );
                             debug_assert!(jobs.next().is_none());
-                            if expired {
+                            if job.expired() {
                                 return Err(datastore::Error::User(
                                     Error::CollectionJobRequestRejected(
                                         *task.id(),
@@ -3234,8 +3253,8 @@ impl VdafOps {
                                 ));
                             }
                             return Ok((
-                                *job.id(),
-                                Self::collection_job_resp_from_job(&task, &job)
+                                *job.job().id(),
+                                Self::collection_job_resp_from_job(&task, job.job())
                                     .map_err(|e| datastore::Error::User(e.into()))?,
                             ));
                         } else {
@@ -3247,6 +3266,7 @@ impl VdafOps {
 
                     // We found no collection jobs matching the query. Assign a batch identifier and
                     // create a new collection job.
+                    debug!(collect_request = ?req, "Cache miss, creating new collection job");
                     let collection_identifier =
                         B::batch_identifier_for_query(tx, &task, req.query())
                             .await?
@@ -3269,7 +3289,6 @@ impl VdafOps {
                         ));
                     }
 
-                    debug!(collect_request = ?req, "Cache miss, creating new collection job");
                     let report_count =
                         B::count_client_reports(tx, &task, &collection_identifier).await?;
 

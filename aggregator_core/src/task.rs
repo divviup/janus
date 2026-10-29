@@ -1251,16 +1251,14 @@ pub mod test_util {
             ))?)
         }
 
-        /// Returns the URI at which the leader resource for collection job creation can be
-        /// accessed.
+        /// Returns the URI for the leader collection job creation resource.
         pub fn collection_job_creation_uri(&self) -> Result<Url, Error> {
             Ok(self
                 .leader_aggregator_endpoint()
                 .join(&format!("{}/collection_jobs", self.tasks_path()))?)
         }
 
-        /// Returns the URI at which the leader resource for the specified collection job ID can be
-        /// accessed.
+        /// Returns the URI for the leader collection job resource.
         pub fn collection_job_uri(
             &self,
             collection_job_id: &CollectionJobId,
