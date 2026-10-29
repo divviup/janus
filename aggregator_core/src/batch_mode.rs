@@ -28,6 +28,12 @@ pub trait AccumulableBatchMode: BatchMode {
     /// batch mode does not represent batch identifiers as an interval.
     fn to_batch_interval(batch_identifier: &Self::BatchIdentifier) -> Option<&Interval>;
 
+    /// Represent the query as an interval of time, if the batch mode allows it.
+    fn query_to_batch_interval(_query: &Query<Self>) -> Option<Interval> {
+        // Unsupported by default.
+        None
+    }
+
     /// Downgrade a batch identifier into a partial batch identifier.
     fn downgrade_batch_identifier(
         batch_identifier: &Self::BatchIdentifier,
@@ -53,6 +59,11 @@ impl AccumulableBatchMode for TimeInterval {
 
     fn to_batch_interval(collection_identifier: &Self::BatchIdentifier) -> Option<&Interval> {
         Some(collection_identifier)
+    }
+
+    /// Represent the query as an interval of time, if the batch mode allows it.
+    fn query_to_batch_interval(query: &Query<TimeInterval>) -> Option<Interval> {
+        Some(*query.batch_interval())
     }
 
     fn downgrade_batch_identifier(

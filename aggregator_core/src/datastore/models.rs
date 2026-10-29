@@ -2026,6 +2026,39 @@ pub enum CollectionJobStateCode {
     Deleted,
 }
 
+/// A [`CollectionJob`] that may be expired.
+pub type ExpirableCollectionJob<const SEED_SIZE: usize, B, A> =
+    ExpirableJob<CollectionJob<SEED_SIZE, B, A>>;
+
+/// A job that may be expired.
+#[derive(Clone, Educe)]
+#[educe(Debug, PartialEq, Eq)]
+pub struct ExpirableJob<Job: Clone + Debug + PartialEq + Eq> {
+    job: Job,
+    expired: bool,
+}
+
+impl<Job: Clone + Debug + PartialEq + Eq> ExpirableJob<Job> {
+    pub fn new(job: Job, expired: bool) -> Self {
+        Self { job, expired }
+    }
+
+    /// The job.
+    pub fn job(&self) -> &Job {
+        &self.job
+    }
+
+    /// Take ownership of the job.
+    pub fn take_job(self) -> Job {
+        self.job
+    }
+
+    /// Whether the job is expired.
+    pub fn expired(&self) -> bool {
+        self.expired
+    }
+}
+
 /// AggregateShareJob represents a row in the `aggregate_share_jobs` table, used by helpers to
 /// store the results of handling an AggregateShareReq from the leader.
 #[derive(Clone, Educe)]

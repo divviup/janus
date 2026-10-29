@@ -3916,7 +3916,7 @@ async fn get_collection_jobs_including_or_intersecting_time(
                 async |want_first_job: bool, want_second_job: bool, interval: Interval| {
                     let mut saw_first_job = false;
                     let mut saw_second_job = false;
-                    for (job, expired) in tx
+                    for job in tx
                         .get_collection_jobs_intersecting_interval(
                             &dummy::Vdaf::default(),
                             task.id(),
@@ -3925,15 +3925,15 @@ async fn get_collection_jobs_including_or_intersecting_time(
                         .await
                         .unwrap()
                     {
-                        if job.id() == first_collection_job.id() {
+                        if job.job().id() == first_collection_job.id() {
                             saw_first_job = true;
-                        } else if job.id() == second_collection_job.id() {
+                        } else if job.job().id() == second_collection_job.id() {
                             saw_second_job = true;
                         } else {
                             panic!("unexpected collection job {job:?}");
                         }
 
-                        assert!(!expired);
+                        assert!(!job.expired());
                     }
                     assert_eq!(want_first_job, saw_first_job);
                     assert_eq!(want_second_job, saw_second_job);
@@ -4215,13 +4215,13 @@ async fn get_collection_jobs_by_query_leader_selected(ephemeral_datastore: Ephem
                             .unwrap();
 
                         if want_first_job || want_second_job {
-                            let (job, expired) = job.unwrap();
+                            let job = job.unwrap();
 
-                            assert!(!expired);
+                            assert!(!job.expired());
                             if want_first_job {
-                                assert_eq!(job.id(), first_collection_job.id());
+                                assert_eq!(job.job().id(), first_collection_job.id());
                             } else if want_second_job {
-                                assert_eq!(job.id(), second_collection_job.id());
+                                assert_eq!(job.job().id(), second_collection_job.id());
                             }
                         } else {
                             assert!(job.is_none());
@@ -4259,13 +4259,13 @@ async fn get_collection_jobs_by_query_leader_selected(ephemeral_datastore: Ephem
                             .unwrap();
 
                         if want_first_job || want_second_job {
-                            let (job, expired) = job.unwrap();
+                            let job = job.unwrap();
 
-                            assert!(expired);
+                            assert!(job.expired());
                             if want_first_job {
-                                assert_eq!(job.id(), &first_collection_job_id);
+                                assert_eq!(job.job().id(), &first_collection_job_id);
                             } else if want_second_job {
-                                assert_eq!(job.id(), &second_collection_job_id);
+                                assert_eq!(job.job().id(), &second_collection_job_id);
                             }
                         } else {
                             assert!(job.is_none());
