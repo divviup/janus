@@ -100,7 +100,7 @@ pub trait CollectableBatchMode: CoreCollectableBatchMode + AccumulableBatchMode 
         tx: &Transaction<'_>,
         vdaf: &A,
         task: &AggregatorTask,
-        request: &Query<Self>,
+        query: &Query<Self>,
     ) -> Result<
         impl Iterator<Item = ExpirableCollectionJob<SEED_SIZE, Self, A>> + Send + Sync,
         datastore::Error,

@@ -3202,14 +3202,16 @@ impl VdafOps {
         A::AggregationParam::get_decoded(req.aggregation_parameter())
             .map_err(Error::MessageDecode)?;
 
-        // Reject requests for collection jobs that are eligible for GC, to prevent replay
-        // attacks. This check catches time interval collection jobs that never existed at all.
+        // If any part of the request pertains to data that is eligible for GC aka expired, then
+        // reject the request since we can't tell anymore whether it is a replay attack.
+        // When creating collection jobs, we'll check for intersection with expired jobs, but this
+        // check catches attempts to re-run time interval collection jobs that never existed at all.
         if let (Some(report_expiry_age), Some(batch_interval)) = (
             task.report_expiry_age(),
             B::query_to_batch_interval(req.query()),
         ) {
             let collection_job_expiry_time =
-                batch_interval.end().add_duration(report_expiry_age)?;
+                batch_interval.start().add_duration(report_expiry_age)?;
             if clock
                 .now()
                 .is_after(&collection_job_expiry_time, task.time_precision())
@@ -3872,14 +3874,17 @@ impl VdafOps {
             ));
         }
 
-        // Reject requests for aggregation shares that are eligible for GC, to prevent replay
-        // attacks.
+        // If any part of the request pertains to data that is eligible for GC aka expired, then
+        // reject the request since we can't tell anymore whether it is a replay attack.
+        // When creating collection jobs, we'll check for intersection with expired jobs, but this
+        // check catches attempts to re-run time interval aggregate share jobs that never existed at
+        // all.
         if let Some(report_expiry_age) = task.report_expiry_age() {
             if let Some(batch_interval) =
                 B::to_batch_interval(aggregate_share_req.batch_selector().batch_identifier())
             {
                 let aggregate_share_expiry_time =
-                    batch_interval.end().add_duration(report_expiry_age)?;
+                    batch_interval.start().add_duration(report_expiry_age)?;
                 if clock
                     .now()
                     .is_after(&aggregate_share_expiry_time, task.time_precision())
