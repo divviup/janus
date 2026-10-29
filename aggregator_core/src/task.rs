@@ -1357,6 +1357,8 @@ pub mod test_util {
     pub struct TaskBuilder(Task);
 
     impl TaskBuilder {
+        pub const DEFAULT_TIME_PRECISION: TimePrecision = TimePrecision::from_hours(8);
+
         /// Create a [`TaskBuilder`] from the provided values, with arbitrary values for the other
         /// task parameters. Defaults to using `AuthenticationToken::Bearer` for the aggregator and
         /// collector authentication tokens.
@@ -1394,8 +1396,7 @@ pub mod test_util {
                 /* task_interval */ None,
                 /* report_expiry_age */ None,
                 /* Min batch size */ 1,
-                /* Time precision */
-                TimePrecision::from_hours(8),
+                Self::DEFAULT_TIME_PRECISION,
                 /* Tolerable clock skew */
                 Duration::ZERO, // If ZERO, we'll copy the time precision at build time
                 /* Collector HPKE keypair */ HpkeKeypair::test(),

@@ -369,11 +369,16 @@ pub struct ReportIdChecksum([u8; Self::LEN]);
 impl ReportIdChecksum {
     /// LEN is the length of a report ID checksum in bytes.
     pub const LEN: usize = 32;
+
+    /// Create a `ReportIdChecksum` from the array.
+    pub const fn from_array(checksum: [u8; Self::LEN]) -> Self {
+        Self(checksum)
+    }
 }
 
 impl From<[u8; Self::LEN]> for ReportIdChecksum {
     fn from(checksum: [u8; Self::LEN]) -> Self {
-        Self(checksum)
+        Self::from_array(checksum)
     }
 }
 

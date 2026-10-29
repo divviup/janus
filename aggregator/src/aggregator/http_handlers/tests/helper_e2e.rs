@@ -1,7 +1,7 @@
 use assert_matches::assert_matches;
 use http::StatusCode;
-use janus_aggregator_core::task::{AggregationMode, BatchMode, test_util::TaskBuilder};
-use janus_core::{report_id::ReportIdChecksumExt, vdaf::VdafInstance};
+use janus_aggregator_core::task::BatchMode;
+use janus_core::report_id::ReportIdChecksumExt;
 use janus_messages::{
     AggregateShareId, AggregateShareReq, AggregationJobExtension, AggregationJobInitializeReq,
     AggregationJobResp, BatchSelector, CollectionJobReq, Query, ReportError, ReportIdChecksum,
@@ -16,8 +16,7 @@ use rand::random;
 use crate::aggregator::{
     aggregation_job_init::test_util::{VerifyInitGenerator, put_aggregation_job},
     http_handlers::{
-        test_util::{HttpHandlerTest, take_response_body},
-        tests::aggregate_share::put_aggregate_share_request,
+        test_util::take_response_body, tests::aggregate_share::AggregateShareTestCase,
     },
 };
 
@@ -25,34 +24,24 @@ use crate::aggregator::{
 /// reports cannot be aggregated with the same aggregation parameter into multiple batches.
 #[tokio::test]
 async fn helper_aggregation_report_share_replay() {
-    let HttpHandlerTest {
-        clock,
-        ephemeral_datastore: _ephemeral_datastore,
-        datastore,
-        router,
-        hpke_keypair,
-        ..
-    } = HttpHandlerTest::new().await;
+    let test_case = AggregateShareTestCase::builder()
+        .build_task(|task_builder| {
+            task_builder
+                .with_batch_mode(BatchMode::LeaderSelected {
+                    batch_time_window_size: None,
+                })
+                .with_min_batch_size(1)
+        })
+        .build()
+        .await;
 
-    let task = TaskBuilder::new(
-        BatchMode::LeaderSelected {
-            batch_time_window_size: None,
-        },
-        AggregationMode::Synchronous,
-        VdafInstance::Fake { rounds: 1 },
-    )
-    .with_min_batch_size(1)
-    .build();
     let vdaf = dummy::Vdaf::new(1);
     let agg_param = dummy::AggregationParam(0);
 
-    let helper_task = task.helper_view().unwrap();
-    datastore.put_aggregator_task(&helper_task).await.unwrap();
-
     let verify_init_generator = VerifyInitGenerator::new(
-        clock.clone(),
-        helper_task.clone(),
-        hpke_keypair.config().clone(),
+        test_case.test.clock.clone(),
+        test_case.task.helper_view().unwrap(),
+        test_case.test.hpke_keypair.config().clone(),
         vdaf.clone(),
         agg_param,
     );
@@ -106,8 +95,13 @@ async fn helper_aggregation_report_share_replay() {
     );
 
     // Make aggregation job initialization requests, and check the verify step results.
-    let mut response =
-        put_aggregation_job(&task, &aggregation_job_id_1, &agg_init_req_1, &router).await;
+    let mut response = put_aggregation_job(
+        &test_case.task,
+        &aggregation_job_id_1,
+        &agg_init_req_1,
+        &test_case.test.router,
+    )
+    .await;
     assert_eq!(response.status(), StatusCode::CREATED);
     let agg_init_resp_1 =
         AggregationJobResp::get_decoded(take_response_body(&mut response).await.as_ref()).unwrap();
@@ -124,8 +118,13 @@ async fn helper_aggregation_report_share_replay() {
         VerifyStepResult::Continue { .. }
     );
 
-    let mut response =
-        put_aggregation_job(&task, &aggregation_job_id_2, &agg_init_req_2, &router).await;
+    let mut response = put_aggregation_job(
+        &test_case.task,
+        &aggregation_job_id_2,
+        &agg_init_req_2,
+        &test_case.test.router,
+    )
+    .await;
     assert_eq!(response.status(), StatusCode::CREATED);
     let agg_init_resp_2 =
         AggregationJobResp::get_decoded(take_response_body(&mut response).await.as_ref()).unwrap();
@@ -144,21 +143,13 @@ async fn helper_aggregation_report_share_replay() {
 
     // Make aggregate share requests. If these succeed, then the helper's report_count and checksum
     // match those in the requests.
-    let response = put_aggregate_share_request(
-        &task,
-        &agg_share_req_1,
-        &AggregateShareId::from([0u8; 16]),
-        &router,
-    )
-    .await;
+    let response = test_case
+        .put_aggregate_share_request(&agg_share_req_1, &AggregateShareId::from([0u8; 16]))
+        .await;
     assert_eq!(response.status(), StatusCode::OK);
 
-    let response = put_aggregate_share_request(
-        &task,
-        &agg_share_req_2,
-        &AggregateShareId::from([1u8; 16]),
-        &router,
-    )
-    .await;
+    let response = test_case
+        .put_aggregate_share_request(&agg_share_req_2, &AggregateShareId::from([1u8; 16]))
+        .await;
     assert_eq!(response.status(), StatusCode::OK);
 }
