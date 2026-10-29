@@ -67,12 +67,10 @@ where
 
     /// The leader's states and messages computed throughout the protocol run. Indexed by the
     /// aggregation job step.
-    #[allow(clippy::type_complexity)]
     pub leader_verify_transitions: Vec<VerifyTransition<VERIFY_KEY_LENGTH, V>>,
 
     /// The helper's states and messages computed throughout the protocol run. Indexed by the
     /// aggregation job step.
-    #[allow(clippy::type_complexity)]
     pub helper_verify_transitions: Vec<VerifyTransition<VERIFY_KEY_LENGTH, V>>,
 
     /// The leader's computed output share.
