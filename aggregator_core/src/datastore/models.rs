@@ -2208,7 +2208,7 @@ pub enum AggregateShareJobState {
     Finished,
     /// The job has been deleted.
     ///
-    /// Its results are not available. It may not be re-run, to prevent replay attacks.
+    /// It may not be re-run.
     #[postgres(name = "DELETED")]
     Deleted,
 }

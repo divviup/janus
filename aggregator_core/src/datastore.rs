@@ -3951,7 +3951,7 @@ INSERT INTO aggregate_share_jobs (
     helper_aggregate_share, aggregate_share_id, report_count, checksum,
     collection_job_req, created_at, updated_at, updated_by
 )
-VALUES ($1, 'FINISHED', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 ON CONFLICT(task_id, batch_identifier, aggregation_param) DO UPDATE
     SET (
         helper_aggregate_share, aggregate_share_id, report_count, checksum,
@@ -3969,7 +3969,7 @@ ON CONFLICT(task_id, batch_identifier, aggregation_param) DO UPDATE
                WHERE ba.task_id = aggregate_share_jobs.task_id
                  AND ba.batch_identifier = aggregate_share_jobs.batch_identifier
                  AND ba.aggregation_param = aggregate_share_jobs.aggregation_param),
-              0) < $13",
+              0) < $14",
             )
             .await?;
         check_insert(
@@ -3977,6 +3977,7 @@ ON CONFLICT(task_id, batch_identifier, aggregation_param) DO UPDATE
                 &stmt,
                 &[
                     /* task_id */ &task_info.pkey,
+                    /* state */ &aggregate_share_job.state(),
                     /* batch_identifier */
                     &aggregate_share_job.batch_identifier().get_encoded()?,
                     /* batch_interval */ &batch_interval,
@@ -3993,8 +3994,7 @@ ON CONFLICT(task_id, batch_identifier, aggregation_param) DO UPDATE
                     /* created_at */ &now,
                     /* updated_at */ &now,
                     /* updated_by */ &self.name,
-                    /* threshold */
-                    &task_info.report_expiry_threshold(now)?,
+                    /* threshold */ &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,
