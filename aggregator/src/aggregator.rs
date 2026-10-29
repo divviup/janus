@@ -3138,8 +3138,6 @@ impl VdafOps {
         task: Arc<AggregatorTask>,
         req_bytes: &[u8],
     ) -> Result<(CollectionJobId, Option<Vec<u8>>), Error> {
-        // Parse the collection job request and call an inner method, so we can decorate it with a
-        // tracing span that includes request fields.
         match task.batch_mode() {
             task::BatchMode::TimeInterval => {
                 vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
