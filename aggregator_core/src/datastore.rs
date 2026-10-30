@@ -47,9 +47,9 @@ use self::{
     models::{
         AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob, AggregationJob,
         AggregatorRole, AuthenticationTokenType, BatchAggregation, CollectionJob,
-        CollectionJobState, ExpirableCollectionJob, HpkeKeyState, HpkeKeypair, LeaderStoredReport,
-        Lease, OutstandingBatch, ReportAggregation, ReportAggregationMetadata,
-        ReportAggregationMetadataState, UnaggregatedReport,
+        CollectionJobState, ExpirableAggregateShareJob, ExpirableCollectionJob, HpkeKeyState,
+        HpkeKeypair, LeaderStoredReport, Lease, OutstandingBatch, ReportAggregation,
+        ReportAggregationMetadata, ReportAggregationMetadataState, UnaggregatedReport,
     },
     row_ext::RowExt,
 };
@@ -2891,7 +2891,6 @@ WHERE task_id = $1
         self.put_collection_job(&CollectionJob::<SEED_SIZE, B, A>::new(
             *task_id,
             collection_job_id,
-            random(),
             req.query().clone(),
             A::AggregationParam::get_decoded(req.aggregation_parameter())
                 .map_err(|_| Error::InvalidParameter("invalid aggregation parameter"))?,
@@ -2926,9 +2925,9 @@ WHERE task_id = $1
             .prepare_cached(
                 "-- put_collection_job()
 INSERT INTO collection_jobs
-    (task_id, collection_job_id, aggregate_share_id, query, aggregation_param,
+    (task_id, collection_job_id, query, aggregation_param,
     batch_identifier, batch_interval, state, created_at, updated_at, updated_by)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 ON CONFLICT(task_id, collection_job_id) DO UPDATE
     SET (
         query, aggregation_param, batch_identifier,
@@ -2945,7 +2944,7 @@ ON CONFLICT(task_id, collection_job_id) DO UPDATE
                WHERE ba.task_id = collection_jobs.task_id
                  AND ba.batch_identifier = collection_jobs.batch_identifier
                  AND ba.aggregation_param = collection_jobs.aggregation_param),
-              0) < $12",
+              0) < $11",
             )
             .await?;
 
@@ -2955,8 +2954,6 @@ ON CONFLICT(task_id, collection_job_id) DO UPDATE
                 &[
                     /* task_id */ &task_info.pkey,
                     /* collection_job_id */ collection_job.id().as_ref(),
-                    /* aggregate_share_id */
-                    &collection_job.aggregate_share_id().get_encoded()?,
                     /* query */ &collection_job.query().get_encoded()?,
                     /* aggregation_param */
                     &collection_job.aggregation_parameter().get_encoded()?,
@@ -3141,6 +3138,7 @@ WHERE task_id = $4
         let now = self.clock.now();
 
         let (
+            aggregate_share_id,
             report_count,
             client_timestamp_interval,
             leader_aggregate_share,
@@ -3153,6 +3151,7 @@ WHERE task_id = $4
             }
 
             CollectionJobState::Finished {
+                aggregate_share_id,
                 report_count,
                 client_timestamp_interval,
                 encrypted_helper_aggregate_share,
@@ -3164,6 +3163,7 @@ WHERE task_id = $4
                 let helper_aggregate_share = Some(encrypted_helper_aggregate_share.get_encoded()?);
 
                 (
+                    Some(aggregate_share_id.get_encoded()?),
                     report_count,
                     client_timestamp_interval,
                     leader_aggregate_share,
@@ -3171,9 +3171,21 @@ WHERE task_id = $4
                 )
             }
 
-            CollectionJobState::Poll
-            | CollectionJobState::Abandoned
-            | CollectionJobState::Deleted => (None, None, None, None),
+            CollectionJobState::Poll { aggregate_share_id } => (
+                Some(aggregate_share_id.get_encoded()?),
+                None,
+                None,
+                None,
+                None,
+            ),
+            CollectionJobState::Deleted { aggregate_share_id } => (
+                aggregate_share_id.map(|id| id.get_encoded()).transpose()?,
+                None,
+                None,
+                None,
+                None,
+            ),
+            CollectionJobState::Abandoned => (None, None, None, None, None),
         };
 
         let stmt = self
@@ -3185,10 +3197,11 @@ UPDATE collection_jobs SET
     client_timestamp_interval = $3,
     leader_aggregate_share = $4,
     helper_aggregate_share = $5,
-    updated_at = $6,
-    updated_by = $7
-WHERE task_id = $8
-  AND collection_job_id = $9
+    aggregate_share_id = $6,
+    updated_at = $7,
+    updated_by = $8
+WHERE task_id = $9
+  AND collection_job_id = $10
   AND COALESCE(
           LOWER(batch_interval),
           (SELECT MAX(UPPER(ba.client_timestamp_interval))
@@ -3196,7 +3209,7 @@ WHERE task_id = $8
            WHERE ba.task_id = collection_jobs.task_id
              AND ba.batch_identifier = collection_jobs.batch_identifier
              AND ba.aggregation_param = collection_jobs.aggregation_param),
-          0) >= $10",
+          0) >= $11",
             )
             .await?;
 
@@ -3205,16 +3218,16 @@ WHERE task_id = $8
                 &stmt,
                 &[
                     /* state */ &collection_job.state().collection_job_state_code(),
-                    /* report_count */ &report_count,
-                    /* client_timestamp_interval */ &client_timestamp_interval,
-                    /* leader_aggregate_share */ &leader_aggregate_share,
-                    /* helper_aggregate_share */ &helper_aggregate_share,
+                    &report_count,
+                    &client_timestamp_interval,
+                    &leader_aggregate_share,
+                    &helper_aggregate_share,
+                    &aggregate_share_id,
                     /* updated_at */ &now,
                     /* updated_by */ &self.name,
                     /* task_id */ &task_info.pkey,
                     /* collection_job_id */ &collection_job.id().as_ref(),
-                    /* threshold */
-                    &task_info.report_expiry_threshold(now)?,
+                    /* threshold */ &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,
@@ -3653,20 +3666,19 @@ WHERE task_id = $10
         )
     }
 
-    /// Fetch an [`AggregateShareJob`] from the datastore corresponding to given parameters, or
-    /// `None` if no such job exists.
+    /// Returns the aggregate share job matching the query and whether it is expired.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
-    pub async fn get_aggregate_share_job<
-        const SEED_SIZE: usize,
-        B: BatchMode,
-        A: AsyncAggregator<SEED_SIZE>,
-    >(
+    pub async fn get_aggregate_share_job<const SEED_SIZE: usize, B, A>(
         &self,
         vdaf: &A,
         task_id: &TaskId,
         batch_identifier: &B::BatchIdentifier,
         aggregation_parameter: &A::AggregationParam,
-    ) -> Result<Option<AggregateShareJob<SEED_SIZE, B, A>>, Error> {
+    ) -> Result<Option<ExpirableAggregateShareJob<SEED_SIZE, B, A>>, Error>
+    where
+        B: BatchMode,
+        A: AsyncAggregator<SEED_SIZE>,
+    {
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
             None => return Ok(None),
@@ -3675,19 +3687,21 @@ WHERE task_id = $10
         let stmt = self
             .prepare_cached(
                 "-- get_aggregate_share_job()
-SELECT state, helper_aggregate_share, report_count, checksum, aggregate_share_id, collection_job_req
-FROM aggregate_share_jobs
-WHERE task_id = $1
-  AND batch_identifier = $2
-  AND aggregation_param = $3
-  AND COALESCE(
-          LOWER(batch_interval),
-          (SELECT MAX(UPPER(client_timestamp_interval))
-           FROM batch_aggregations ba
-           WHERE ba.task_id = aggregate_share_jobs.task_id
-             AND ba.batch_identifier = aggregate_share_jobs.batch_identifier
-             AND ba.aggregation_param = aggregate_share_jobs.aggregation_param),
-          0) >= $4",
+SELECT asj.state, asj.helper_aggregate_share, asj.report_count, asj.checksum,
+    asj.aggregate_share_id, asj.collection_job_req, COALESCE(
+        LOWER(batch_interval),
+        (SELECT MAX(UPPER(client_timestamp_interval))
+         FROM batch_aggregations AS ba
+         WHERE ba.task_id = asj.task_id
+            AND ba.batch_identifier = asj.batch_identifier
+            AND ba.aggregation_param = asj.aggregation_param
+        ),
+        0
+    ) < $4 AS expired
+FROM aggregate_share_jobs AS asj
+WHERE asj.task_id = $1
+  AND asj.batch_identifier = $2
+  AND asj.aggregation_param = $3",
             )
             .await?;
         self.query_opt(
@@ -3702,12 +3716,14 @@ WHERE task_id = $1
         )
         .await?
         .map(|row| {
-            row.aggregate_share_job(
+            let job = row.aggregate_share_job(
                 vdaf,
                 task_id,
                 batch_identifier.clone(),
                 aggregation_parameter.clone(),
-            )
+            )?;
+
+            Ok(ExpirableAggregateShareJob::new(job, row.get("expired")))
         })
         .transpose()
     }
@@ -3767,18 +3783,20 @@ WHERE task_id = $1
         .transpose()
     }
 
-    /// Returns all aggregate share jobs for the given task whose collect intervals intersect with
-    /// the given interval. Applies only to time-interval tasks.
+    /// Aggregate share jobs whose batch intervals intersect with the given interval.
+    ///
+    /// Applies only to time-interval tasks. The returned tuple includes a boolean indicating
+    /// whether the job is expired.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
-    pub async fn get_aggregate_share_jobs_intersecting_interval<
-        const SEED_SIZE: usize,
-        A: AsyncAggregator<SEED_SIZE>,
-    >(
+    pub async fn get_aggregate_share_jobs_intersecting_interval<const SEED_SIZE: usize, A>(
         &self,
         vdaf: &A,
         task_id: &TaskId,
         interval: &Interval,
-    ) -> Result<Vec<AggregateShareJob<SEED_SIZE, TimeInterval, A>>, Error> {
+    ) -> Result<Vec<ExpirableAggregateShareJob<SEED_SIZE, TimeInterval, A>>, Error>
+    where
+        A: AsyncAggregator<SEED_SIZE>,
+    {
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
             None => return Ok(Vec::new()),
@@ -3789,11 +3807,12 @@ WHERE task_id = $1
                 "-- get_aggregate_share_jobs_intersecting_interval()
 SELECT
     state, batch_identifier, aggregation_param, helper_aggregate_share, report_count,
-    checksum, aggregate_share_id, collection_job_req
+    checksum, aggregate_share_id, collection_job_req,
+    -- batch_interval will always be set for time interval tasks
+    LOWER(batch_interval) < $3 AS expired
 FROM aggregate_share_jobs
 WHERE task_id = $1
-  AND batch_interval && $2
-  AND LOWER(aggregate_share_jobs.batch_interval) >= $3",
+  AND batch_interval && $2",
             )
             .await?;
         self.query(
@@ -3807,12 +3826,14 @@ WHERE task_id = $1
         .await?
         .into_iter()
         .map(|row| {
-            row.aggregate_share_job(
+            let job = row.aggregate_share_job(
                 vdaf,
                 task_id,
                 Interval::get_decoded(row.get("batch_identifier"))?,
                 A::AggregationParam::get_decoded(row.get("aggregation_param"))?,
-            )
+            )?;
+
+            Ok(ExpirableAggregateShareJob::new(job, row.get("expired")))
         })
         .collect()
     }
@@ -3829,7 +3850,7 @@ WHERE task_id = $1
         vdaf: &A,
         task_id: &TaskId,
         batch_id: &BatchId,
-    ) -> Result<Vec<AggregateShareJob<SEED_SIZE, LeaderSelected, A>>, Error> {
+    ) -> Result<Vec<ExpirableAggregateShareJob<SEED_SIZE, LeaderSelected, A>>, Error> {
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
             None => return Ok(Vec::new()),
@@ -3839,18 +3860,16 @@ WHERE task_id = $1
             .prepare_cached(
                 "-- get_aggregate_share_jobs_by_batch_id()
 SELECT
-    state, aggregation_param, helper_aggregate_share, report_count, checksum, aggregate_share_id,
-    collection_job_req
-FROM aggregate_share_jobs
-WHERE task_id = $1
-  AND batch_identifier = $2
-  AND COALESCE(
-          (SELECT MAX(UPPER(client_timestamp_interval))
-           FROM batch_aggregations ba
-           WHERE ba.task_id = aggregate_share_jobs.task_id
-             AND ba.batch_identifier = aggregate_share_jobs.batch_identifier
-             AND ba.aggregation_param = aggregate_share_jobs.aggregation_param),
-          0) >= $3",
+    asj.state, asj.aggregation_param, asj.helper_aggregate_share, asj.report_count, asj.checksum,
+    asj.aggregate_share_id, asj.collection_job_req, (
+        SELECT MAX(UPPER(ba.client_timestamp_interval))
+        FROM batch_aggregations AS ba
+        WHERE ba.task_id = asj.task_id
+            AND ba.batch_identifier = asj.batch_identifier
+            AND ba.aggregation_param = asj.aggregation_param
+    ) < $3 AS expired
+FROM aggregate_share_jobs AS asj
+WHERE task_id = $1 AND batch_identifier = $2",
             )
             .await?;
         self.query(
@@ -3864,12 +3883,14 @@ WHERE task_id = $1
         .await?
         .into_iter()
         .map(|row| {
-            row.aggregate_share_job(
+            let job = row.aggregate_share_job(
                 vdaf,
                 task_id,
                 *batch_id,
                 A::AggregationParam::get_decoded(row.get("aggregation_param"))?,
-            )
+            )?;
+
+            Ok(ExpirableAggregateShareJob::new(job, row.get("expired")))
         })
         .collect()
     }

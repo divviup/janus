@@ -1449,6 +1449,11 @@ impl<const SEED_SIZE: usize, B: BatchMode, A: AsyncAggregator<SEED_SIZE>>
         Self { state, ..self }
     }
 
+    /// Whether this batch aggregation has been collected.
+    pub fn is_collected(&self) -> bool {
+        self.state().state_code() == BatchAggregationStateCode::Collected
+    }
+
     /// Returns this batch aggregation, marked as collected. The batch aggregation state is kept.
     /// Returns an error only if called on an already-scrubbed batch aggregation.
     pub fn collected(self) -> Result<Self, Error> {
@@ -1805,8 +1810,6 @@ pub struct CollectionJob<const SEED_SIZE: usize, B: BatchMode, A: AsyncAggregato
     task_id: TaskId,
     /// The unique identifier for the collection job.
     collection_job_id: CollectionJobId,
-    /// The Aggregate Share ID to be used when communicating with the Helper.
-    aggregate_share_id: AggregateShareId,
     /// The Query that was sent to create this collection job.
     query: Query<B>,
     /// The VDAF aggregation parameter used to verify and aggregate input shares.
@@ -1825,7 +1828,6 @@ impl<const SEED_SIZE: usize, B: BatchMode, A: AsyncAggregator<SEED_SIZE>>
     pub fn new(
         task_id: TaskId,
         collection_job_id: CollectionJobId,
-        aggregate_share_id: AggregateShareId,
         query: Query<B>,
         aggregation_parameter: A::AggregationParam,
         batch_identifier: B::BatchIdentifier,
@@ -1834,7 +1836,6 @@ impl<const SEED_SIZE: usize, B: BatchMode, A: AsyncAggregator<SEED_SIZE>>
         Self {
             task_id,
             collection_job_id,
-            aggregate_share_id,
             query,
             aggregation_parameter,
             batch_identifier,
@@ -1873,8 +1874,18 @@ impl<const SEED_SIZE: usize, B: BatchMode, A: AsyncAggregator<SEED_SIZE>>
     }
 
     /// Return the aggregate share's ID in use for this collection job.
+    ///
+    /// Panics if no aggregate share ID is known for the job.
+    #[cfg(feature = "test-util")]
+    #[track_caller]
     pub fn aggregate_share_id(&self) -> &AggregateShareId {
-        &self.aggregate_share_id
+        match self.state() {
+            CollectionJobState::Poll { aggregate_share_id }
+            | CollectionJobState::Finished {
+                aggregate_share_id, ..
+            } => aggregate_share_id,
+            state => panic!("collection job in unexpected state {state:?}"),
+        }
     }
 
     /// Returns the aggregation parameter associated with this collection job.
@@ -1929,9 +1940,16 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>>
 #[derive(Clone, Educe)]
 #[educe(Debug)]
 pub enum CollectionJobState<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> {
+    /// The collection job has been scheduled but not yet run.
     Start,
-    Poll,
+    /// The helper is being polled for its aggregate share.
+    Poll {
+        /// The aggregate share ID assigned by the helper.
+        aggregate_share_id: AggregateShareId,
+    },
     Finished {
+        /// The aggregate share ID assigned by the helper.
+        aggregate_share_id: AggregateShareId,
         /// The number of reports included in this collection job.
         report_count: u64,
         /// The minimal interval containing the timestamps of all reports included in this
@@ -1944,17 +1962,35 @@ pub enum CollectionJobState<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE
         leader_aggregate_share: A::AggregateShare,
     },
     Abandoned,
-    Deleted,
+    Deleted {
+        /// The aggregate share ID assigned by the helper.
+        ///
+        /// This is `None` if the collection job did not progress far enough to be assigned an
+        /// aggregate share ID.
+        aggregate_share_id: Option<AggregateShareId>,
+    },
 }
 
 impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> CollectionJobState<SEED_SIZE, A> {
     pub fn collection_job_state_code(&self) -> CollectionJobStateCode {
         match self {
             Self::Start => CollectionJobStateCode::Start,
-            Self::Poll => CollectionJobStateCode::Poll,
+            Self::Poll { .. } => CollectionJobStateCode::Poll,
             Self::Finished { .. } => CollectionJobStateCode::Finished,
             Self::Abandoned => CollectionJobStateCode::Abandoned,
-            Self::Deleted => CollectionJobStateCode::Deleted,
+            Self::Deleted { .. } => CollectionJobStateCode::Deleted,
+        }
+    }
+
+    /// The aggregate share ID, if any in this state.
+    pub fn aggregate_share_id(&self) -> Option<&AggregateShareId> {
+        match self {
+            Self::Poll { aggregate_share_id }
+            | Self::Finished {
+                aggregate_share_id, ..
+            } => Some(aggregate_share_id),
+            Self::Deleted { aggregate_share_id } => aggregate_share_id.as_ref(),
+            _ => None,
         }
     }
 }
@@ -1968,10 +2004,10 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> Display
             "{}",
             match self {
                 Self::Start => "start",
-                Self::Poll => "poll",
+                Self::Poll { .. } => "poll",
                 Self::Finished { .. } => "finished",
                 Self::Abandoned => "abandoned",
-                Self::Deleted => "deleted",
+                Self::Deleted { .. } => "deleted",
             }
         )
     }
@@ -1983,24 +2019,43 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> PartialEq
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (
+                Self::Poll {
+                    aggregate_share_id: self_aggregate_share_id,
+                },
+                Self::Poll {
+                    aggregate_share_id: other_aggregate_share_id,
+                },
+            ) => self_aggregate_share_id == other_aggregate_share_id,
+            (
                 Self::Finished {
+                    aggregate_share_id: self_aggregate_share_id,
                     report_count: self_report_count,
                     client_timestamp_interval: self_client_timestamp_interval,
                     encrypted_helper_aggregate_share: self_helper_agg_share,
                     leader_aggregate_share: self_leader_agg_share,
                 },
                 Self::Finished {
+                    aggregate_share_id: other_aggregate_share_id,
                     report_count: other_report_count,
                     client_timestamp_interval: other_client_timestamp_interval,
                     encrypted_helper_aggregate_share: other_helper_agg_share,
                     leader_aggregate_share: other_leader_agg_share,
                 },
             ) => {
-                self_report_count == other_report_count
+                self_aggregate_share_id == other_aggregate_share_id
+                    && self_report_count == other_report_count
                     && self_client_timestamp_interval == other_client_timestamp_interval
                     && self_helper_agg_share == other_helper_agg_share
                     && self_leader_agg_share == other_leader_agg_share
             }
+            (
+                Self::Deleted {
+                    aggregate_share_id: self_aggregate_share_id,
+                },
+                Self::Deleted {
+                    aggregate_share_id: other_aggregate_share_id,
+                },
+            ) => self_aggregate_share_id == other_aggregate_share_id,
             _ => core::mem::discriminant(self) == core::mem::discriminant(other),
         }
     }
@@ -2212,6 +2267,10 @@ pub enum AggregateShareJobState {
     #[postgres(name = "DELETED")]
     Deleted,
 }
+
+/// An [`AggregateShareJob`] that may be expired.
+pub type ExpirableAggregateShareJob<const SEED_SIZE: usize, B, A> =
+    ExpirableJob<AggregateShareJob<SEED_SIZE, B, A>>;
 
 /// An outstanding batch, which is a batch which has not yet started collection. Such a batch may
 /// have additional reports allocated to it. Only applies to leader-selected batches.

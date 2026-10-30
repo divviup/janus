@@ -1,7 +1,9 @@
 //! Extensions and utilities for items from `janus_messages`.
 
-use aws_lc_rs::digest::{SHA256, digest};
-use janus_messages::{CollectionJobId, CollectionJobReq, batch_mode::BatchMode};
+use aws_lc_rs::digest::{Context, SHA256, digest};
+use janus_messages::{
+    AggregateShareId, AggregateShareReq, CollectionJobId, CollectionJobReq, batch_mode::BatchMode,
+};
 use prio::codec::Encode;
 
 /// Errors from deriving IDs.
@@ -20,6 +22,31 @@ pub trait DeriveId {
     type Identifier;
 
     fn derive_id(&self) -> Result<Self::Identifier, DeriveIdError>;
+}
+
+impl<B: BatchMode> DeriveId for AggregateShareReq<B> {
+    type Identifier = AggregateShareId;
+
+    fn derive_id(&self) -> Result<Self::Identifier, DeriveIdError> {
+        // We don't incorporate the request's report count or checksum into the derived ID because
+        // those don't identify the aggregate share.
+        //
+        // In particular, if an aggregate share request for a given batch selector and collection
+        // job req fail because the leader's count or checksum values don't match what the helper
+        // computes, we want it to be possible for a later request with corrected count and checksum
+        // values to succeed.
+        //
+        // If the report count and checksum contributed to the aggregate share ID, then we would
+        // treat the second request as being a batchOverlap with the first.
+        let mut ctx = Context::new(&SHA256);
+        ctx.update(&self.collection_job_req().get_encoded()?);
+        ctx.update(&self.batch_selector().get_encoded()?);
+        let digest = ctx.finish();
+
+        Ok(AggregateShareId::try_from(
+            &digest.as_ref()[..AggregateShareId::LEN],
+        )?)
+    }
 }
 
 impl<B: BatchMode> DeriveId for CollectionJobReq<B> {

@@ -6,7 +6,7 @@ use backon::{Backoff, BackoffBuilder, ExponentialBackoff, ExponentialBuilder, Re
 use bytes::Bytes;
 use futures::Future;
 use http::{HeaderMap, HeaderValue};
-use janus_messages::{CollectionJobId, TaskId};
+use janus_messages::{AggregateShareId, CollectionJobId, TaskId};
 use reqwest::StatusCode;
 use tracing::{debug, warn};
 
@@ -159,13 +159,35 @@ pub trait HeaderMapExt {
     /// malformed.
     fn ids_from_collection_job_location(
         &self,
-    ) -> Result<Option<(TaskId, CollectionJobId)>, HeaderMapExtError>;
+    ) -> Result<Option<(TaskId, CollectionJobId)>, HeaderMapExtError> {
+        self.ids_from_job_location("collection_jobs")
+    }
+
+    /// Parse task and aggregate share ID from HTTP "Location" header.
+    ///
+    /// Returns `Ok(None)` if the header is absent, or an error if the header is present but
+    /// malformed.
+    fn ids_from_aggregate_share_location(
+        &self,
+    ) -> Result<Option<(TaskId, AggregateShareId)>, HeaderMapExtError> {
+        self.ids_from_job_location("aggregate_shares")
+    }
+
+    /// Parse task and job ID from HTTP "Location" header.
+    ///
+    /// Returns `Ok(None)` if the header is absent, or an error if the header is present but
+    /// malformed.
+    fn ids_from_job_location<JobId: FromStr<Err = janus_messages::Error>>(
+        &self,
+        middle_path_component: &'static str,
+    ) -> Result<Option<(TaskId, JobId)>, HeaderMapExtError>;
 }
 
 impl HeaderMapExt for HeaderMap {
-    fn ids_from_collection_job_location(
+    fn ids_from_job_location<JobId: FromStr<Err = janus_messages::Error>>(
         &self,
-    ) -> Result<Option<(TaskId, CollectionJobId)>, HeaderMapExtError> {
+        middle_path_component: &'static str,
+    ) -> Result<Option<(TaskId, JobId)>, HeaderMapExtError> {
         let mut location_headers = self.get_all(http::header::LOCATION).iter();
         let location_header = match location_headers.next() {
             Some(l) => l,
@@ -194,12 +216,12 @@ impl HeaderMapExt for HeaderMap {
             })
         };
 
-        let collection_job_id = CollectionJobId::from_str(next_component()?)
-            .map_err(|e| HeaderMapExtError::Messages("malformed collection job ID", e))?;
+        let job_id = JobId::from_str(next_component()?)
+            .map_err(|e| HeaderMapExtError::Messages("malformed job ID", e))?;
 
-        if !next_component()?.eq("collection_jobs") {
+        if !next_component()?.eq(middle_path_component) {
             return Err(HeaderMapExtError::MalformedLocationHeader(
-                "location header missing collection_jobs component",
+                "location header missing middle path component",
                 location_header.clone(),
             ));
         }
@@ -214,7 +236,7 @@ impl HeaderMapExt for HeaderMap {
             ));
         }
 
-        Ok(Some((task_id, collection_job_id)))
+        Ok(Some((task_id, job_id)))
     }
 }
 

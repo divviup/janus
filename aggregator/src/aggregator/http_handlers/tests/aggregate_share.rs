@@ -15,13 +15,14 @@ use janus_core::{
     auth_tokens::test_util::WithAuthenticationToken,
     hpke::{self, HpkeApplicationInfo, Label},
     report_id::ReportIdChecksumExt,
+    retries::HeaderMapExt,
     time::{Clock, DateTimeExt, MockClock, TimeExt},
     vdaf::VdafInstance,
 };
 use janus_messages::{
     AggregateShare as AggregateShareMessage, AggregateShareAad, AggregateShareId,
     AggregateShareReq, BatchId, BatchSelector, CollectionJobExtension, CollectionJobExtensionType,
-    CollectionJobReq, Duration, Interval, MediaType, Query, ReportIdChecksum, Role, Time,
+    CollectionJobReq, Duration, Interval, MediaType, Query, ReportIdChecksum, Role, TaskId, Time,
     TimePrecision,
     batch_mode::{self, LeaderSelected, TimeInterval},
 };
@@ -63,19 +64,13 @@ impl AggregateShareTestCase {
         }
     }
 
-    pub(super) async fn put_aggregate_share_request<B: batch_mode::BatchMode>(
+    pub(super) async fn post_aggregate_share_request<B: batch_mode::BatchMode>(
         &self,
         request: &AggregateShareReq<B>,
-        aggregate_share_id: &AggregateShareId,
     ) -> http::Response<Body> {
         let req = Request::builder()
-            .method("PUT")
-            .uri(
-                self.task
-                    .aggregate_shares_uri(aggregate_share_id)
-                    .unwrap()
-                    .path(),
-            )
+            .method("POST")
+            .uri(self.task.aggregate_share_creation_uri().unwrap().path())
             .with_authentication_token(self.task.aggregator_auth_token())
             .header(
                 http::header::CONTENT_TYPE,
@@ -92,7 +87,7 @@ impl AggregateShareTestCase {
     ) -> http::Response<Body> {
         let req = Request::get(
             self.task
-                .aggregate_shares_uri(aggregate_share_id)
+                .aggregate_share_uri(aggregate_share_id)
                 .unwrap()
                 .path(),
         )
@@ -108,7 +103,7 @@ impl AggregateShareTestCase {
     ) -> http::Response<Body> {
         let req = Request::delete(
             self.task
-                .aggregate_shares_uri(aggregate_share_id)
+                .aggregate_share_uri(aggregate_share_id)
                 .unwrap()
                 .path(),
         )
@@ -169,29 +164,6 @@ impl AggregateShareTestCase {
                  "type": "urn:ietf:params:ppm:dap:error:batchOverlap",
                  "title": "The queried batch overlaps with a previously queried batch.",
                  "taskid": format!("{}", self.task.id()),
-            })
-        );
-    }
-
-    #[track_caller]
-    pub(super) fn check_forbidden_mutation_response(
-        &self,
-        status: StatusCode,
-        problem_details: serde_json::Value,
-        aggregate_share_id: &AggregateShareId,
-    ) {
-        assert_eq!(status, StatusCode::CONFLICT);
-        assert_eq!(
-            problem_details,
-            json!({
-                "status": StatusCode::CONFLICT.as_u16(),
-                "type": "https://docs.divviup.org/references/janus-errors#forbidden-mutation",
-                "title": "Forbidden mutation of an immutable resource.",
-                "detail": format!(
-                    "The aggregate share job {aggregate_share_id} already exists and cannot be \
-                     modified. Use a new identifier instead of re-sending this one with changed \
-                     parameters."
-                ),
             })
         );
     }
@@ -419,9 +391,7 @@ async fn aggregate_share_request_to_leader() {
         ReportIdChecksum::default(),
     );
 
-    let mut response = test_case
-        .put_aggregate_share_request(&request, &AggregateShareId::from([0u8; 16]))
-        .await;
+    let mut response = test_case.post_aggregate_share_request(&request).await;
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert_eq!(
@@ -433,6 +403,19 @@ async fn aggregate_share_request_to_leader() {
             "taskid": format!("{}", test_case.task.id()),
         })
     );
+}
+
+/// Parse task ID and collection job ID out of response location header.
+///
+/// Panics if header is missing from response or value is malformed.
+pub(super) fn ids_from_aggregate_share_response(
+    response: &http::Response<Body>,
+) -> (TaskId, AggregateShareId) {
+    response
+        .headers()
+        .ids_from_aggregate_share_location()
+        .unwrap()
+        .unwrap()
 }
 
 #[tokio::test]
@@ -481,30 +464,25 @@ async fn aggregate_share_request_invalid_batch_interval() {
 
     // Test that a request for an invalid batch fails. (Specifically, the batch interval is too
     // small.)
-    let mut response = test_case
-        .put_aggregate_share_request(&request, &AggregateShareId::from([0u8; 16]))
-        .await;
+    let mut response = test_case.post_aggregate_share_request(&request).await;
     test_case
         .check_batch_invalid_response(response.status(), take_problem_details(&mut response).await);
 
     // Test that a request for a too-old batch fails.
     let mut response = test_case
-        .put_aggregate_share_request(
-            &AggregateShareReq::new(
-                CollectionJobReq::new(
-                    Query::new_time_interval(
-                        Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
-                    ),
-                    Vec::new(),
-                ),
-                BatchSelector::new_time_interval(
+        .post_aggregate_share_request(&AggregateShareReq::new(
+            CollectionJobReq::new(
+                Query::new_time_interval(
                     Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
                 ),
-                0,
-                ReportIdChecksum::default(),
+                Vec::new(),
             ),
-            &AggregateShareId::from([0u8; 16]),
-        )
+            BatchSelector::new_time_interval(
+                Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
+            ),
+            0,
+            ReportIdChecksum::default(),
+        ))
         .await;
     test_case.check_aggregate_share_rejection_response(
         response.status(),
@@ -537,9 +515,7 @@ async fn aggregate_share_request() {
         ReportIdChecksum::default(),
     );
 
-    let mut response = test_case
-        .put_aggregate_share_request(&request, &AggregateShareId::from([0u8; 16]))
-        .await;
+    let mut response = test_case.post_aggregate_share_request(&request).await;
     test_case.check_invalid_batch_size_response(
         response.status(),
         take_problem_details(&mut response).await,
@@ -689,9 +665,7 @@ async fn aggregate_share_request() {
         5,
         ReportIdChecksum::default(),
     );
-    let mut response = test_case
-        .put_aggregate_share_request(&request, &AggregateShareId::from([0u8; 16]))
-        .await;
+    let mut response = test_case.post_aggregate_share_request(&request).await;
     test_case.check_invalid_batch_size_response(
         response.status(),
         take_problem_details(&mut response).await,
@@ -701,8 +675,8 @@ async fn aggregate_share_request() {
     struct MisalignedRequestTestCase<B: janus_messages::batch_mode::BatchMode> {
         name: &'static str,
         // Each case needs its own ID: a batch mismatch still persists the job, so reusing one
-        // would bind a single ID to two batches.
-        aggregate_share_id: AggregateShareId,
+        // would bind a single ID to two batches. Since share IDs are derived from the request, we
+        // make sure to use a distinct checksum in each case.
         request: AggregateShareReq<B>,
         expected_checksum: ReportIdChecksum,
         expected_report_count: u64,
@@ -710,7 +684,6 @@ async fn aggregate_share_request() {
     for misaligned_request in [
         MisalignedRequestTestCase {
             name: "Interval is big enough but the checksums don't match",
-            aggregate_share_id: AggregateShareId::from([1u8; 16]),
             request: AggregateShareReq::new(
                 CollectionJobReq::new(
                     Query::new_time_interval(
@@ -737,7 +710,6 @@ async fn aggregate_share_request() {
         },
         MisalignedRequestTestCase {
             name: "Interval is big enough but report count doesn't match",
-            aggregate_share_id: AggregateShareId::from([2u8; 16]),
             request: AggregateShareReq::new(
                 CollectionJobReq::new(
                     Query::new_time_interval(
@@ -764,10 +736,7 @@ async fn aggregate_share_request() {
         },
     ] {
         let mut response = test_case
-            .put_aggregate_share_request(
-                &misaligned_request.request,
-                &misaligned_request.aggregate_share_id,
-            )
+            .post_aggregate_share_request(&misaligned_request.request)
             .await;
 
         assert_eq!(
@@ -802,10 +771,9 @@ async fn aggregate_share_request() {
     // good.
     // These cover the same batches as the misaligned requests above, so they address the same
     // aggregate share resources and reuse their IDs.
-    for (label, aggregate_share_id, request, expected_result) in [
+    for (label, request, expected_result) in [
         (
             "first and second batches",
-            AggregateShareId::from([1u8; 16]),
             AggregateShareReq::new(
                 CollectionJobReq::new(
                     Query::new_time_interval(
@@ -831,7 +799,6 @@ async fn aggregate_share_request() {
         ),
         (
             "third and fourth batches",
-            AggregateShareId::from([2u8; 16]),
             AggregateShareReq::new(
                 CollectionJobReq::new(
                     Query::new_time_interval(
@@ -860,9 +827,15 @@ async fn aggregate_share_request() {
         // Request the aggregate share multiple times. If the request parameters don't change,
         // then there is no query count violation and all requests should succeed.
         for iteration in 0..3 {
-            let mut response = test_case
-                .put_aggregate_share_request(&request, &aggregate_share_id)
-                .await;
+            let mut response = test_case.post_aggregate_share_request(&request).await;
+
+            if response.status() != StatusCode::OK {
+                println!("status: {:?}", response.status());
+                println!(
+                    "problem details: {:?}",
+                    take_problem_details(&mut response).await
+                );
+            }
 
             assert_eq!(
                 response.status(),
@@ -965,7 +938,7 @@ async fn aggregate_share_request() {
         ReportIdChecksum::get_decoded(&[8 ^ 4 ^ 3 ^ 2; 32]).unwrap(),
     );
     let mut response = test_case
-        .put_aggregate_share_request(&all_batch_request, &AggregateShareId::from([5u8; 16]))
+        .post_aggregate_share_request(&all_batch_request)
         .await;
     test_case
         .check_batch_overlap_response(response.status(), take_problem_details(&mut response).await);
@@ -1017,27 +990,17 @@ async fn aggregate_share_request() {
         ),
     ] {
         let mut response = test_case
-            .put_aggregate_share_request(
-                &query_count_violation_request,
-                &AggregateShareId::from([6u8; 16]),
-            )
+            .post_aggregate_share_request(&query_count_violation_request)
             .await;
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        assert_eq!(
+        test_case.check_batch_overlap_response(
+            response.status(),
             take_problem_details(&mut response).await,
-            json!({
-                "status": StatusCode::BAD_REQUEST.as_u16(),
-                "type": "urn:ietf:params:ppm:dap:error:invalidMessage",
-                "title": "The message type for a response was incorrect or the payload was malformed.",
-                "detail": "batch has already been collected with another aggregation parameter",
-                "taskid": format!("{}", test_case.task.id()),
-            })
         );
     }
 }
 
 #[tokio::test]
-async fn aggregate_share_request_duplicate_with_different_id() {
+async fn aggregate_share_request_idempotence() {
     // Set up batch aggregations that will be used for the duplicate requests
     let batch_interval = Interval::minimal(Time::from_time_precision_units(0)).unwrap();
     let aggregation_param = dummy::AggregationParam(0);
@@ -1059,29 +1022,23 @@ async fn aggregate_share_request_duplicate_with_different_id() {
         AggregateShareTestCase::CHECKSUM,
     );
 
-    let aggregate_share_id_1 = AggregateShareId::from([1u8; 16]);
-    let aggregate_share_id_2 = AggregateShareId::from([2u8; 16]);
-
     // First request with aggregate_share_id_1 should succeed
-    let response = test_case
-        .put_aggregate_share_request(&request, &aggregate_share_id_1)
-        .await;
-
+    let response = test_case.post_aggregate_share_request(&request).await;
     assert_eq!(response.status(), StatusCode::OK);
+    let (task_id, aggregate_share_id_1) = ids_from_aggregate_share_response(&response);
+    assert_eq!(&task_id, test_case.task.id());
 
-    // Second request with same parameters but different aggregate share ID should fail
-    let mut response = test_case
-        .put_aggregate_share_request(&request, &aggregate_share_id_2)
-        .await;
-    test_case.check_forbidden_mutation_response(
-        response.status(),
-        take_problem_details(&mut response).await,
-        &aggregate_share_id_1,
-    );
+    // Second request with same parameters but different aggregate share ID should succeed because
+    // POST is idempotent
+    let response = test_case.post_aggregate_share_request(&request).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let (task_id, aggregate_share_id_2) = ids_from_aggregate_share_response(&response);
+    assert_eq!(&task_id, test_case.task.id());
+    assert_eq!(aggregate_share_id_1, aggregate_share_id_2);
 }
 
 #[tokio::test]
-async fn aggregate_share_request_get_poll_after_put() {
+async fn aggregate_share_request_get_poll_after_post() {
     // Set up batch aggregations that will be used for the duplicate requests
     let batch_interval = Interval::minimal(Time::from_time_precision_units(0)).unwrap();
     let aggregation_param = dummy::AggregationParam(0);
@@ -1103,15 +1060,11 @@ async fn aggregate_share_request_get_poll_after_put() {
         AggregateShareTestCase::CHECKSUM,
     );
 
-    let aggregate_share_id = AggregateShareId::from([42u8; 16]);
-
     // Send the request. We'll ignore the details of the response and check that polling still
     // works.
-    let response = test_case
-        .put_aggregate_share_request(&request, &aggregate_share_id)
-        .await;
-
+    let response = test_case.post_aggregate_share_request(&request).await;
     assert_eq!(response.status(), StatusCode::OK);
+    let (_, aggregate_share_id) = ids_from_aggregate_share_response(&response);
 
     // Try to GET the first ID again. It should be OK.
     let response = test_case.get_aggregate_share(&aggregate_share_id).await;
@@ -1136,7 +1089,7 @@ async fn aggregate_share_request_get_poll_after_put() {
 }
 
 #[tokio::test]
-async fn aggregate_share_request_get_poll_after_put_leader_selected() {
+async fn aggregate_share_request_get_poll_after_post_leader_selected() {
     let batch_id = BatchId::from([9u8; 32]);
     let client_timestamp_interval = Interval::minimal(Time::from_time_precision_units(0)).unwrap();
     let aggregation_param = dummy::AggregationParam(0);
@@ -1160,13 +1113,10 @@ async fn aggregate_share_request_get_poll_after_put_leader_selected() {
         AggregateShareTestCase::CHECKSUM,
     );
 
-    let aggregate_share_id = AggregateShareId::from([42u8; 16]);
-
-    // PUT binds the forwarded CollectionJobReq; poll (GET) reuses the stored copy.
-    let response = test_case
-        .put_aggregate_share_request(&request, &aggregate_share_id)
-        .await;
+    // POST binds the forwarded CollectionJobReq; poll (GET) reuses the stored copy.
+    let response = test_case.post_aggregate_share_request(&request).await;
     assert_eq!(response.status(), StatusCode::OK);
+    let (_, aggregate_share_id) = ids_from_aggregate_share_response(&response);
 
     let mut response = test_case.get_aggregate_share(&aggregate_share_id).await;
     assert_eq!(response.status(), StatusCode::OK);
@@ -1208,11 +1158,9 @@ async fn aggregate_share_request_narrower_selector_than_query() {
         AggregateShareTestCase::CHECKSUM,
     );
 
-    let aggregate_share_id = AggregateShareId::from([42u8; 16]);
-    let response = test_case
-        .put_aggregate_share_request(&request, &aggregate_share_id)
-        .await;
+    let response = test_case.post_aggregate_share_request(&request).await;
     assert_eq!(response.status(), StatusCode::OK);
+    let (_, aggregate_share_id) = ids_from_aggregate_share_response(&response);
 
     let mut response = test_case.get_aggregate_share(&aggregate_share_id).await;
     assert_eq!(response.status(), StatusCode::OK);
@@ -1271,7 +1219,6 @@ async fn aggregate_share_request_duplicate_with_different_query() {
         .build()
         .await;
 
-    let aggregate_share_id = AggregateShareId::from([42u8; 16]);
     let request_for_query = |duration| {
         AggregateShareReq::new(
             CollectionJobReq::new(
@@ -1291,18 +1238,15 @@ async fn aggregate_share_request_duplicate_with_different_query() {
     };
 
     let response = test_case
-        .put_aggregate_share_request(&request_for_query(10), &aggregate_share_id)
+        .post_aggregate_share_request(&request_for_query(10))
         .await;
     assert_eq!(response.status(), StatusCode::OK);
 
     let mut response = test_case
-        .put_aggregate_share_request(&request_for_query(20), &aggregate_share_id)
+        .post_aggregate_share_request(&request_for_query(20))
         .await;
-    test_case.check_forbidden_mutation_response(
-        response.status(),
-        take_problem_details(&mut response).await,
-        &aggregate_share_id,
-    );
+    test_case
+        .check_batch_overlap_response(response.status(), take_problem_details(&mut response).await);
 }
 
 // One aggregate share ID must not be bound to two batches: the poll path looks jobs up by ID
@@ -1357,7 +1301,6 @@ async fn aggregate_share_request_same_id_different_batch() {
         .await
         .unwrap();
 
-    let aggregate_share_id = AggregateShareId::from([42u8; 16]);
     let request_for_batch = |batch_interval| {
         AggregateShareReq::new(
             CollectionJobReq::new(
@@ -1371,18 +1314,18 @@ async fn aggregate_share_request_same_id_different_batch() {
     };
 
     let response = test_case
-        .put_aggregate_share_request(&request_for_batch(first_interval), &aggregate_share_id)
+        .post_aggregate_share_request(&request_for_batch(first_interval))
         .await;
     assert_eq!(response.status(), StatusCode::OK);
+    let (_, aggregate_share_id_1) = ids_from_aggregate_share_response(&response);
 
-    let mut response = test_case
-        .put_aggregate_share_request(&request_for_batch(second_interval), &aggregate_share_id)
+    let response = test_case
+        .post_aggregate_share_request(&request_for_batch(second_interval))
         .await;
-    test_case.check_forbidden_mutation_response(
-        response.status(),
-        take_problem_details(&mut response).await,
-        &aggregate_share_id,
-    );
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_, aggregate_share_id_2) = ids_from_aggregate_share_response(&response);
+
+    assert_ne!(aggregate_share_id_1, aggregate_share_id_2);
 }
 
 // Proves the TaskConfiguration in the aggregate-share AAD works: a mismatched one must not open
@@ -1413,9 +1356,7 @@ async fn aggregate_share_aad_task_configuration_mismatch_fails() {
         AggregateShareTestCase::CHECKSUM,
     );
 
-    let mut response = test_case
-        .put_aggregate_share_request(&request, &AggregateShareId::from([7u8; 16]))
-        .await;
+    let mut response = test_case.post_aggregate_share_request(&request).await;
     assert_eq!(response.status(), StatusCode::OK);
     let aggregate_share_resp: AggregateShareMessage = decode_response_body(&mut response).await;
 
@@ -1524,9 +1465,7 @@ async fn aggregate_share_request_batch_selector_inconsistent_with_query() {
             ReportIdChecksum::default(),
         );
 
-        let mut response = test_case
-            .put_aggregate_share_request(&request, &AggregateShareId::from([0u8; 16]))
-            .await;
+        let mut response = test_case.post_aggregate_share_request(&request).await;
         test_case.check_batch_invalid_response(
             response.status(),
             take_problem_details(&mut response).await,
@@ -1563,9 +1502,7 @@ async fn aggregate_share_request_unsupported_extension() {
         ReportIdChecksum::default(),
     );
 
-    let mut response = test_case
-        .put_aggregate_share_request(&request, &AggregateShareId::from([0u8; 16]))
-        .await;
+    let mut response = test_case.post_aggregate_share_request(&request).await;
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert_eq!(
@@ -1609,29 +1546,32 @@ async fn recreate_deleted_aggregate_share_time_interval() {
         AggregateShareTestCase::CHECKSUM,
     );
 
-    let aggregate_share_id = AggregateShareId::from([42u8; 16]);
-    let mut response = test_case
-        .put_aggregate_share_request(&request, &aggregate_share_id)
-        .await;
+    let mut response = test_case.post_aggregate_share_request(&request).await;
     assert_eq!(response.status(), StatusCode::OK);
     decode_response_body::<AggregateShareMessage>(&mut response).await;
+    let (_, aggregate_share_id) = ids_from_aggregate_share_response(&response);
 
     let mut response = test_case.delete_aggregate_share(&aggregate_share_id).await;
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
     assert!(take_response_body(&mut response).await.is_empty());
 
-    // Re-creating the aggregate share with an identical request should be refused because it has
-    // been deleted.
-    let mut response = test_case
-        .put_aggregate_share_request(&request, &aggregate_share_id)
-        .await;
+    let mut response = test_case.get_aggregate_share(&aggregate_share_id).await;
     test_case.check_unrecognized_aggregate_share_response(
         response.status(),
         take_problem_details(&mut response).await,
         &aggregate_share_id,
     );
 
-    // Re-creating the aggregate share with a mutated request should fail with forbidden mutation.
+    // Re-creating the aggregate share with an identical request should be refused because it has
+    // been deleted.
+    let mut response = test_case.post_aggregate_share_request(&request).await;
+    test_case.check_unrecognized_aggregate_share_response(
+        response.status(),
+        take_problem_details(&mut response).await,
+        &aggregate_share_id,
+    );
+
+    // Re-creating the aggregate share with a mutated request should fail with batch overlap.
     let mutant_request = AggregateShareReq::new(
         CollectionJobReq::new(
             request.collection_job_req().query().clone(),
@@ -1642,13 +1582,10 @@ async fn recreate_deleted_aggregate_share_time_interval() {
         AggregateShareTestCase::CHECKSUM,
     );
     let mut response = test_case
-        .put_aggregate_share_request(&mutant_request, &aggregate_share_id)
+        .post_aggregate_share_request(&mutant_request)
         .await;
-    test_case.check_forbidden_mutation_response(
-        response.status(),
-        take_problem_details(&mut response).await,
-        &aggregate_share_id,
-    );
+    test_case
+        .check_batch_overlap_response(response.status(), take_problem_details(&mut response).await);
 }
 
 #[tokio::test]
@@ -1678,29 +1615,32 @@ async fn recreate_deleted_aggregate_share_leader_selected() {
         AggregateShareTestCase::CHECKSUM,
     );
 
-    let aggregate_share_id = AggregateShareId::from([42u8; 16]);
-    let mut response = test_case
-        .put_aggregate_share_request(&request, &aggregate_share_id)
-        .await;
+    let mut response = test_case.post_aggregate_share_request(&request).await;
     assert_eq!(response.status(), StatusCode::OK);
+    let (_, aggregate_share_id) = ids_from_aggregate_share_response(&response);
     decode_response_body::<AggregateShareMessage>(&mut response).await;
 
     let mut response = test_case.delete_aggregate_share(&aggregate_share_id).await;
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
     assert!(take_response_body(&mut response).await.is_empty());
 
-    // Re-creating the aggregate share with an identical request should be refused because it has
-    // been deleted.
-    let mut response = test_case
-        .put_aggregate_share_request(&request, &aggregate_share_id)
-        .await;
+    let mut response = test_case.get_aggregate_share(&aggregate_share_id).await;
     test_case.check_unrecognized_aggregate_share_response(
         response.status(),
         take_problem_details(&mut response).await,
         &aggregate_share_id,
     );
 
-    // Re-creating the aggregate share with a mutated request should fail with forbidden mutation.
+    // Re-creating the aggregate share with an identical request should be refused because it has
+    // been deleted.
+    let mut response = test_case.post_aggregate_share_request(&request).await;
+    test_case.check_unrecognized_aggregate_share_response(
+        response.status(),
+        take_problem_details(&mut response).await,
+        &aggregate_share_id,
+    );
+
+    // Re-creating the aggregate share with a mutated request should fail with batchOverlap.
     let mutant_request = AggregateShareReq::new(
         CollectionJobReq::new(
             request.collection_job_req().query().clone(),
@@ -1711,17 +1651,72 @@ async fn recreate_deleted_aggregate_share_leader_selected() {
         AggregateShareTestCase::CHECKSUM,
     );
     let mut response = test_case
-        .put_aggregate_share_request(&mutant_request, &aggregate_share_id)
+        .post_aggregate_share_request(&mutant_request)
         .await;
-    test_case.check_forbidden_mutation_response(
+    test_case
+        .check_batch_overlap_response(response.status(), take_problem_details(&mut response).await);
+}
+
+#[tokio::test]
+async fn create_expired_aggregate_share_time_interval() {
+    let clock = MockClock::default();
+    let now = Time::from_seconds_since_epoch(
+        clock.now().as_seconds_since_epoch(),
+        &TaskBuilder::DEFAULT_TIME_PRECISION,
+    );
+    let expiry = Duration::from_time_precision_units(20);
+
+    let selected_interval = Interval::minimal(
+        now.sub_duration(&Duration::from_time_precision_units(3))
+            .unwrap(),
+    )
+    .unwrap();
+    let queried_interval = Interval::new(
+        now.sub_duration(&Duration::from_time_precision_units(10))
+            .unwrap(),
+        Duration::from_time_precision_units(10),
+    )
+    .unwrap();
+    let aggregation_param = dummy::AggregationParam(0);
+
+    let test_case = AggregateShareTestCase::builder()
+        .with_clock(clock.clone())
+        .build_task(|tb| tb.with_report_expiry_age(Some(expiry)))
+        .with_time_interval_batch_aggregation(TimeIntervalBatchAggregationSetup {
+            batch_interval: selected_interval,
+            aggregation_param,
+        })
+        .build()
+        .await;
+
+    assert_eq!(
+        &TaskBuilder::DEFAULT_TIME_PRECISION,
+        test_case.task.time_precision()
+    );
+
+    // Advance clock far enough for the batch aggregations etc. to expire.
+    clock.advance(TimeDelta::seconds(
+        expiry.as_seconds(test_case.task.time_precision()) as i64,
+    ));
+
+    // Creating an aggregate share for expired data should be refused.
+    let request = AggregateShareReq::new(
+        CollectionJobReq::new(
+            Query::new_time_interval(queried_interval),
+            aggregation_param.get_encoded().unwrap(),
+        ),
+        BatchSelector::new_time_interval(selected_interval),
+        AggregateShareTestCase::REPORT_COUNT,
+        AggregateShareTestCase::CHECKSUM,
+    );
+    let mut response = test_case.post_aggregate_share_request(&request).await;
+    test_case.check_aggregate_share_rejection_response(
         response.status(),
         take_problem_details(&mut response).await,
-        &aggregate_share_id,
     );
 }
 
 #[tokio::test]
-#[ignore = "test will be fixed in #4950"]
 async fn recreate_expired_aggregate_share_time_interval() {
     let clock = MockClock::default();
     let now = Time::from_seconds_since_epoch(
@@ -1769,11 +1764,9 @@ async fn recreate_expired_aggregate_share_time_interval() {
         AggregateShareTestCase::CHECKSUM,
     );
 
-    let aggregate_share_id = AggregateShareId::from([42u8; 16]);
-    let mut response = test_case
-        .put_aggregate_share_request(&request, &aggregate_share_id)
-        .await;
+    let mut response = test_case.post_aggregate_share_request(&request).await;
     assert_eq!(response.status(), StatusCode::OK);
+    let (_, aggregate_share_id) = ids_from_aggregate_share_response(&response);
     decode_response_body::<AggregateShareMessage>(&mut response).await;
 
     let mut response = test_case.get_aggregate_share(&aggregate_share_id).await;
@@ -1782,7 +1775,7 @@ async fn recreate_expired_aggregate_share_time_interval() {
 
     // Advance clock far enough for the aggregate share to expire.
     clock.advance(TimeDelta::seconds(
-        expiry.as_seconds(test_case.task.time_precision()) as i64,
+        2 * expiry.as_seconds(test_case.task.time_precision()) as i64,
     ));
 
     assert_eq!(
@@ -1794,15 +1787,13 @@ async fn recreate_expired_aggregate_share_time_interval() {
     );
 
     // Re-creating the aggregate share with an identical request should be refused.
-    let mut response = test_case
-        .put_aggregate_share_request(&request, &aggregate_share_id)
-        .await;
+    let mut response = test_case.post_aggregate_share_request(&request).await;
     test_case.check_aggregate_share_rejection_response(
         response.status(),
         take_problem_details(&mut response).await,
     );
 
-    // Re-creating the aggregate share with a mutated request should fail with forbidden mutation.
+    // Re-creating the aggregate share with a mutated request should also be refused.
     let mutant_request = AggregateShareReq::new(
         CollectionJobReq::new(
             request.collection_job_req().query().clone(),
@@ -1813,17 +1804,15 @@ async fn recreate_expired_aggregate_share_time_interval() {
         AggregateShareTestCase::CHECKSUM,
     );
     let mut response = test_case
-        .put_aggregate_share_request(&mutant_request, &aggregate_share_id)
+        .post_aggregate_share_request(&mutant_request)
         .await;
-    test_case.check_forbidden_mutation_response(
+    test_case.check_aggregate_share_rejection_response(
         response.status(),
         take_problem_details(&mut response).await,
-        &aggregate_share_id,
     );
 }
 
 #[tokio::test]
-#[ignore = "test will be fixed in #4950"]
 async fn recreate_expired_aggregate_share_leader_selected() {
     let clock = MockClock::default();
     let now = Time::from_seconds_since_epoch(
@@ -1869,11 +1858,9 @@ async fn recreate_expired_aggregate_share_leader_selected() {
         AggregateShareTestCase::CHECKSUM,
     );
 
-    let aggregate_share_id = AggregateShareId::from([42u8; 16]);
-    let mut response = test_case
-        .put_aggregate_share_request(&request, &aggregate_share_id)
-        .await;
+    let mut response = test_case.post_aggregate_share_request(&request).await;
     assert_eq!(response.status(), StatusCode::OK);
+    let (_, aggregate_share_id) = ids_from_aggregate_share_response(&response);
     decode_response_body::<AggregateShareMessage>(&mut response).await;
 
     let mut response = test_case.get_aggregate_share(&aggregate_share_id).await;
@@ -1882,7 +1869,7 @@ async fn recreate_expired_aggregate_share_leader_selected() {
 
     // Advance clock far enough for the aggregate share to expire.
     clock.advance(TimeDelta::seconds(
-        expiry.as_seconds(test_case.task.time_precision()) as i64,
+        2 * expiry.as_seconds(test_case.task.time_precision()) as i64,
     ));
 
     assert_eq!(
@@ -1894,15 +1881,13 @@ async fn recreate_expired_aggregate_share_leader_selected() {
     );
 
     // Re-creating the aggregate share with an identical request should be refused.
-    let mut response = test_case
-        .put_aggregate_share_request(&request, &aggregate_share_id)
-        .await;
+    let mut response = test_case.post_aggregate_share_request(&request).await;
     test_case.check_aggregate_share_rejection_response(
         response.status(),
         take_problem_details(&mut response).await,
     );
 
-    // Re-creating the aggregate share with a mutated request should fail with forbidden mutation.
+    // Re-creating the aggregate share with a mutated request should fail with batchOverlap.
     let mutant_request = AggregateShareReq::new(
         CollectionJobReq::new(
             request.collection_job_req().query().clone(),
@@ -1913,11 +1898,8 @@ async fn recreate_expired_aggregate_share_leader_selected() {
         AggregateShareTestCase::CHECKSUM,
     );
     let mut response = test_case
-        .put_aggregate_share_request(&mutant_request, &aggregate_share_id)
+        .post_aggregate_share_request(&mutant_request)
         .await;
-    test_case.check_forbidden_mutation_response(
-        response.status(),
-        take_problem_details(&mut response).await,
-        &aggregate_share_id,
-    );
+    test_case
+        .check_batch_overlap_response(response.status(), take_problem_details(&mut response).await);
 }
