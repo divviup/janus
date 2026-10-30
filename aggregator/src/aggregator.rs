@@ -30,8 +30,9 @@ use janus_aggregator_core::{
     datastore::{
         self, Datastore, Error as DatastoreError, Transaction,
         models::{
-            AggregateShareJob, AggregationJob, AggregationJobState, CollectionJob,
-            CollectionJobState, LeaderStoredReport, ReportAggregation, ReportAggregationState,
+            AggregateShareJob, AggregateShareJobState, AggregationJob, AggregationJobState,
+            CollectionJob, CollectionJobState, LeaderStoredReport, ReportAggregation,
+            ReportAggregationState,
         },
         task_counters::TaskAggregationCounter,
     },
@@ -3677,23 +3678,7 @@ impl VdafOps {
         // NOTE: We have no means by which we can fulfil §4.4.4.3's "Verify total report count" here
         // as we do on the PUT, which is OK, because it should have happened already on the PUT
         // and we have to trust it.
-        let encrypted_aggregate_share = hpke::seal(
-            collector_hpke_config,
-            &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
-            &aggregate_share_job
-                .helper_aggregate_share()
-                .get_encoded()
-                .map_err(Error::MessageEncode)?,
-            &AggregateShareAad::new(
-                *task.id(),
-                task.task_configuration(),
-                aggregate_share_job.collection_job_req().clone(),
-            )
-            .get_encoded()
-            .map_err(Error::MessageEncode)?,
-        )?;
-
-        Ok(AggregateShare::new(encrypted_aggregate_share))
+        aggregate_share_from_job(&task, &aggregate_share_job, collector_hpke_config)
     }
 
     /// Implements the `tasks/{task-id}/aggregate_shares/{aggregate-share-id}` PUT endpoint for
@@ -3879,21 +3864,20 @@ impl VdafOps {
         // When creating collection jobs, we'll check for intersection with expired jobs, but this
         // check catches attempts to re-run time interval aggregate share jobs that never existed at
         // all.
-        if let Some(report_expiry_age) = task.report_expiry_age() {
-            if let Some(batch_interval) =
-                B::to_batch_interval(aggregate_share_req.batch_selector().batch_identifier())
+        if let (Some(report_expiry_age), Some(batch_interval)) = (
+            task.report_expiry_age(),
+            B::to_batch_interval(aggregate_share_req.batch_selector().batch_identifier()),
+        ) {
+            let aggregate_share_expiry_time =
+                batch_interval.start().add_duration(report_expiry_age)?;
+            if clock
+                .now()
+                .is_after(&aggregate_share_expiry_time, task.time_precision())
             {
-                let aggregate_share_expiry_time =
-                    batch_interval.start().add_duration(report_expiry_age)?;
-                if clock
-                    .now()
-                    .is_after(&aggregate_share_expiry_time, task.time_precision())
-                {
-                    return Err(Error::AggregateShareRequestRejected(
-                        *task.id(),
-                        "aggregate share request too late",
-                    ));
-                }
+                return Err(Error::AggregateShareRequestRejected(
+                    *task.id(),
+                    "aggregate share request too late",
+                ));
             }
         }
 
@@ -4034,6 +4018,7 @@ impl VdafOps {
                     // result.
                     let aggregate_share_job = AggregateShareJob::<SEED_SIZE, B, A>::new(
                         *task.id(),
+                        AggregateShareJobState::Finished,
                         aggregate_share_req
                             .batch_selector()
                             .batch_identifier()
@@ -4071,23 +4056,7 @@ impl VdafOps {
         // shares in the datastore so that we can encrypt cached results to the collector HPKE
         // config valid when the current AggregateShareReq was made, and not whatever was valid at
         // the time the aggregate share was first computed.
-        let encrypted_aggregate_share = hpke::seal(
-            collector_hpke_config,
-            &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
-            &aggregate_share_job
-                .helper_aggregate_share()
-                .get_encoded()
-                .map_err(Error::MessageEncode)?,
-            &AggregateShareAad::new(
-                *task.id(),
-                task.task_configuration(),
-                aggregate_share_req.collection_job_req().clone(),
-            )
-            .get_encoded()
-            .map_err(Error::MessageEncode)?,
-        )?;
-
-        Ok(AggregateShare::new(encrypted_aggregate_share))
+        aggregate_share_from_job(&task, &aggregate_share_job, collector_hpke_config)
     }
 
     /// Implements the `tasks/{task-id}/aggregate_shares/{aggregate-share-id}` DELETE endpoint
@@ -4180,6 +4149,45 @@ fn write_task_aggregation_counter(
             );
         }
     });
+}
+
+/// Construct an `AggregateShare` from an `AggregateShareJob`.
+fn aggregate_share_from_job<const SEED_SIZE: usize, B, A>(
+    task: &AggregatorTask,
+    job: &AggregateShareJob<SEED_SIZE, B, A>,
+    collector_hpke_config: &HpkeConfig,
+) -> Result<AggregateShare, Error>
+where
+    B: CollectableBatchMode,
+    A: AsyncAggregator<SEED_SIZE>,
+{
+    if job.state() == AggregateShareJobState::Deleted {
+        return Err(Error::UnrecognizedAggregateShareId(
+            *task.id(),
+            *job.aggregate_share_id(),
+        ));
+    }
+
+    // §4.4.4.3: HPKE encrypt aggregate share to the collector. We store *unencrypted* aggregate
+    // shares in the datastore so that we can encrypt cached results to the collector HPKE
+    // config valid when the current AggregateShareReq was made, and not whatever was valid at
+    // the time the aggregate share was first computed.
+    let encrypted_aggregate_share = hpke::seal(
+        collector_hpke_config,
+        &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
+        &job.helper_aggregate_share()
+            .get_encoded()
+            .map_err(Error::MessageEncode)?,
+        &AggregateShareAad::new(
+            *task.id(),
+            task.task_configuration(),
+            job.collection_job_req().clone(),
+        )
+        .get_encoded()
+        .map_err(Error::MessageEncode)?,
+    )?;
+
+    Ok(AggregateShare::new(encrypted_aggregate_share))
 }
 
 #[derive(Clone)]

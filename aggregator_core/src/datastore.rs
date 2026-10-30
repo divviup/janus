@@ -3675,7 +3675,7 @@ WHERE task_id = $10
         let stmt = self
             .prepare_cached(
                 "-- get_aggregate_share_job()
-SELECT helper_aggregate_share, report_count, checksum, aggregate_share_id, collection_job_req
+SELECT state, helper_aggregate_share, report_count, checksum, aggregate_share_id, collection_job_req
 FROM aggregate_share_jobs
 WHERE task_id = $1
   AND batch_identifier = $2
@@ -3734,7 +3734,7 @@ WHERE task_id = $1
             .prepare_cached(
                 "-- get_aggregate_share_job_by_id()
 SELECT 
-    helper_aggregate_share, batch_identifier, aggregation_param, report_count,
+    state, helper_aggregate_share, batch_identifier, aggregation_param, report_count,
     checksum, aggregate_share_id, collection_job_req
 FROM aggregate_share_jobs
 WHERE task_id = $1
@@ -3742,7 +3742,7 @@ WHERE task_id = $1
   AND COALESCE(
           LOWER(batch_interval),
           (SELECT MAX(UPPER(client_timestamp_interval))
-           FROM batch_aggregations ba
+           FROM batch_aggregations AS ba
            WHERE ba.task_id = aggregate_share_jobs.task_id
              AND ba.batch_identifier = aggregate_share_jobs.batch_identifier
              AND ba.aggregation_param = aggregate_share_jobs.aggregation_param),
@@ -3788,7 +3788,7 @@ WHERE task_id = $1
             .prepare_cached(
                 "-- get_aggregate_share_jobs_intersecting_interval()
 SELECT
-    batch_identifier, aggregation_param, helper_aggregate_share, report_count,
+    state, batch_identifier, aggregation_param, helper_aggregate_share, report_count,
     checksum, aggregate_share_id, collection_job_req
 FROM aggregate_share_jobs
 WHERE task_id = $1
@@ -3839,7 +3839,7 @@ WHERE task_id = $1
             .prepare_cached(
                 "-- get_aggregate_share_jobs_by_batch_id()
 SELECT
-    aggregation_param, helper_aggregate_share, report_count, checksum, aggregate_share_id,
+    state, aggregation_param, helper_aggregate_share, report_count, checksum, aggregate_share_id,
     collection_job_req
 FROM aggregate_share_jobs
 WHERE task_id = $1
@@ -3893,7 +3893,7 @@ WHERE task_id = $1
             .prepare_cached(
                 "-- get_aggregate_share_jobs_for_task()
 SELECT
-    batch_identifier, aggregation_param, helper_aggregate_share, report_count,
+    state, batch_identifier, aggregation_param, helper_aggregate_share, report_count,
     checksum, aggregate_share_id, collection_job_req
 FROM aggregate_share_jobs
 WHERE task_id = $1
@@ -3947,19 +3947,20 @@ WHERE task_id = $1
             .prepare_cached(
                 "-- put_aggregate_share_job()
 INSERT INTO aggregate_share_jobs (
-    task_id, batch_identifier, batch_interval, aggregation_param,
+    task_id, state, batch_identifier, batch_interval, aggregation_param,
     helper_aggregate_share, aggregate_share_id, report_count, checksum,
-    collection_job_req, created_at, updated_by
+    collection_job_req, created_at, updated_at, updated_by
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 ON CONFLICT(task_id, batch_identifier, aggregation_param) DO UPDATE
     SET (
         helper_aggregate_share, aggregate_share_id, report_count, checksum,
-        collection_job_req, created_at, updated_by
+        collection_job_req, created_at, updated_at, updated_by, state
     ) = (
         excluded.helper_aggregate_share, excluded.aggregate_share_id,
         excluded.report_count, excluded.checksum, excluded.collection_job_req,
-        excluded.created_at, excluded.updated_by
+        excluded.created_at, excluded.updated_at, excluded.updated_by,
+        excluded.state
     )
     WHERE COALESCE(
               LOWER(aggregate_share_jobs.batch_interval),
@@ -3968,7 +3969,7 @@ ON CONFLICT(task_id, batch_identifier, aggregation_param) DO UPDATE
                WHERE ba.task_id = aggregate_share_jobs.task_id
                  AND ba.batch_identifier = aggregate_share_jobs.batch_identifier
                  AND ba.aggregation_param = aggregate_share_jobs.aggregation_param),
-              0) < $12",
+              0) < $14",
             )
             .await?;
         check_insert(
@@ -3976,6 +3977,7 @@ ON CONFLICT(task_id, batch_identifier, aggregation_param) DO UPDATE
                 &stmt,
                 &[
                     /* task_id */ &task_info.pkey,
+                    /* state */ &aggregate_share_job.state(),
                     /* batch_identifier */
                     &aggregate_share_job.batch_identifier().get_encoded()?,
                     /* batch_interval */ &batch_interval,
@@ -3990,9 +3992,9 @@ ON CONFLICT(task_id, batch_identifier, aggregation_param) DO UPDATE
                     /* collection_job_req */
                     &aggregate_share_job.collection_job_req().get_encoded()?,
                     /* created_at */ &now,
+                    /* updated_at */ &now,
                     /* updated_by */ &self.name,
-                    /* threshold */
-                    &task_info.report_expiry_threshold(now)?,
+                    /* threshold */ &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,
@@ -4014,7 +4016,11 @@ ON CONFLICT(task_id, batch_identifier, aggregation_param) DO UPDATE
         let stmt = self
             .prepare_cached(
                 "-- delete_aggregate_share_job()
-DELETE FROM aggregate_share_jobs
+UPDATE aggregate_share_jobs
+SET
+    state = 'DELETED',
+    updated_at = $3,
+    updated_by = $4
 WHERE task_id = $1
   AND aggregate_share_id = $2",
             )
@@ -4025,6 +4031,8 @@ WHERE task_id = $1
                 &[
                     /* task_id */ &task_info.pkey,
                     /* aggregate_share_id */ &aggregate_share_id.get_encoded()?,
+                    /* updated_at */ &self.clock.now(),
+                    /* updated_by */ &self.name,
                 ],
             )
             .await?,

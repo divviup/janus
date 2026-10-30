@@ -470,24 +470,47 @@ CREATE INDEX collection_jobs_task_id_batch_id ON collection_jobs(task_id, batch_
 CREATE INDEX collection_jobs_state_and_lease_expiry ON collection_jobs(state, lease_expiry) WHERE state = 'START';
 CREATE INDEX collection_jobs_interval_containment_index ON collection_jobs USING gist (task_id, batch_interval);
 
+-- Possible states of aggregate share jobs
+CREATE TYPE AGGREGATE_SHARE_JOB_STATE AS ENUM(
+    -- The job is finished and its results are available for the leader.
+    'FINISHED',
+    -- The job has been deleted. It may not be re-run.
+    'DELETED'
+);
+
 -- The helper's view of aggregate share jobs.
 CREATE TABLE aggregate_share_jobs(
-    id                              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
-    task_id                         BIGINT NOT NULL,    -- the task ID being collected
-    batch_identifier                BYTEA NOT NULL,     -- encoded batch mode-specific batch identifier (corresponds to identifier in BatchSelector)
+    -- artificial ID, internal-only
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    -- The state of the job.
+    state AGGREGATE_SHARE_JOB_STATE NOT NULL,
+    -- the task ID being collected
+    task_id BIGINT NOT NULL,
+    -- encoded batch mode-specific batch identifier (corresponds to identifier in BatchSelector)
+    batch_identifier BYTEA NOT NULL,
     -- Batch interval, in time precision units, containing the reports included in this aggregate
     -- share. Populated only for time-interval tasks. Will always match batch_identifier.
-    batch_interval                  INT8RANGE,
-    aggregation_param               BYTEA NOT NULL,     -- the aggregation parameter (opaque VDAF message)
-    helper_aggregate_share          BYTEA NOT NULL,     -- the helper's unencrypted aggregate share
-    report_count                    BIGINT NOT NULL,    -- the count of reports included helper_aggregate_share
-    checksum                        BYTEA NOT NULL,     -- the checksum over the reports included in helper_aggregate_share
-    aggregate_share_id              BYTEA NOT NULL,     -- the 16-byte AggregateShareID as defined by DAP
-    collection_job_req              BYTEA NOT NULL,     -- the collector's verbatim CollectionJobReq
+    batch_interval INT8RANGE,
+    -- the aggregation parameter (opaque VDAF message)
+    aggregation_param BYTEA NOT NULL,
+    -- the helper's unencrypted aggregate share
+    helper_aggregate_share BYTEA NOT NULL,
+    -- the count of reports included helper_aggregate_share
+    report_count BIGINT NOT NULL,
+    -- the checksum over the reports included in helper_aggregate_share
+    checksum BYTEA NOT NULL,
+    -- the 16-byte AggregateShareID as defined by DAP
+    aggregate_share_id BYTEA NOT NULL,
+    -- the collector's verbatim CollectionJobReq
+    collection_job_req BYTEA NOT NULL,
 
     -- creation/update records
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL,  -- when the row was created
-    updated_by TEXT NOT NULL,       -- the name of the transaction that last updated the row
+    -- when the row was created
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    -- when the row was last changed
+    updated_at  TIMESTAMP WITH TIME ZONE NOT NULL,
+    -- the name of the transaction that last updated the row
+    updated_by TEXT NOT NULL,
 
     CONSTRAINT aggregate_share_jobs_unique_task_id_batch_id_aggregation_param UNIQUE(task_id, batch_identifier, aggregation_param),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE

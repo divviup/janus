@@ -1581,7 +1581,6 @@ async fn aggregate_share_request_unsupported_extension() {
 }
 
 #[tokio::test]
-#[ignore = "test will be fixed in #4950"]
 async fn recreate_deleted_aggregate_share_time_interval() {
     let selected_interval = Interval::minimal(Time::from_time_precision_units(3)).unwrap();
     let queried_interval = Interval::new(
@@ -1653,7 +1652,6 @@ async fn recreate_deleted_aggregate_share_time_interval() {
 }
 
 #[tokio::test]
-#[ignore = "test will be fixed in #4950"]
 async fn recreate_deleted_aggregate_share_leader_selected() {
     let selected_interval = Interval::minimal(Time::from_time_precision_units(3)).unwrap();
     let aggregation_param = dummy::AggregationParam(0);
