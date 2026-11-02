@@ -13,13 +13,13 @@ use janus_aggregator_core::{
         models::{AcquiredCollectionJob, BatchAggregation, CollectionJobState, Lease},
     },
     http_server::TIME_HISTOGRAM_BOUNDARIES,
-    task,
+    task::{self},
 };
 use janus_core::{
     http::{check_content_type, parse_retry_after_to_duration},
     retries::{
-        ExponentialWithTotalDelayBuilder, HttpResponse, is_retryable_http_client_error,
-        is_retryable_http_status,
+        ExponentialWithTotalDelayBuilder, HeaderMapExt, HttpResponse,
+        is_retryable_http_client_error, is_retryable_http_status,
     },
     time::Clock,
     vdaf_dispatch,
@@ -39,10 +39,13 @@ use prio::{
 use reqwest::Method;
 use tokio::try_join;
 use tracing::{error, info, warn};
+use url::Url;
 
 use crate::aggregator::{
-    BatchAggregationsIterator, Error, RequestBody, aggregate_share::AggregateShareComputer,
-    batch_mode::CollectableBatchMode, http_handlers::AGGREGATE_SHARES_ROUTE,
+    BatchAggregationsIterator, Error, RequestBody,
+    aggregate_share::AggregateShareComputer,
+    batch_mode::CollectableBatchMode,
+    http_handlers::{AGGREGATE_SHARE_CREATION_ROUTE, AGGREGATE_SHARE_ROUTE},
     send_request_to_helper,
 };
 
@@ -365,9 +368,59 @@ impl CollectionJobDriver {
             None => return Ok(()),
         };
 
+        let aggregate_share_request =
+            async |method: Method,
+                   uri: Option<Url>,
+                   route: &'static str,
+                   body: Option<RequestBody>| {
+                let http_response = send_request_to_helper(
+                    &self.http_client,
+                    self.backoff
+                        .with_max_delay(lease.remaining_lease_duration(&clock.now(), 0)),
+                    method,
+                    uri.ok_or_else(|| {
+                        Error::InvalidConfiguration(
+                            "task is not leader and has no aggregate share URI",
+                        )
+                    })?,
+                    route,
+                    body,
+                    // The only way a task wouldn't have an aggregator auth token in it is in the
+                    // taskprov case, and Janus never acts as the leader with
+                    // taskprov enabled.
+                    task.aggregator_auth_token().ok_or_else(|| {
+                        Error::InvalidConfiguration("no aggregator auth token in task")
+                    })?,
+                    &self.metrics.http_request_duration_histogram,
+                )
+                .await?;
+
+                let aggregate_share_id = if let Some((task_id, aggregate_share_id)) = http_response
+                    .headers()
+                    .ids_from_aggregate_share_location()
+                    .map_err(|e| Error::InvalidHelperResponse {
+                        resource_type: "aggregate share",
+                        description: e.into(),
+                    })? {
+                    if task_id != *task.id() {
+                        return Err(Error::InvalidHelperResponse {
+                            resource_type: "aggregate share",
+                            description: format!("unexpected task ID {task_id} in helper response")
+                                .into(),
+                        });
+                    }
+
+                    Some(aggregate_share_id)
+                } else {
+                    None
+                };
+
+                Ok((aggregate_share_id, http_response))
+            };
+
         // Build the aggregate share based on our state. If we're starting,
         // provide the Aggregate Share Request.
-        let (method, request_body) = match collection_job.state() {
+        let (aggregate_share_id, http_response) = match collection_job.state() {
             CollectionJobState::Start => {
                 vdaf.add_noise_to_agg_share(
                     &dp_strategy,
@@ -391,46 +444,78 @@ impl CollectionJobDriver {
                         .map_err(Error::MessageEncode)?,
                     ),
                 };
-                Ok((Method::PUT, Some(request_body)))
+
+                let (aggregate_share_id, http_response) = aggregate_share_request(
+                    Method::POST,
+                    task.aggregate_share_creation_uri()?,
+                    AGGREGATE_SHARE_CREATION_ROUTE,
+                    Some(request_body),
+                )
+                .await?;
+
+                (
+                    aggregate_share_id.ok_or_else(|| Error::InvalidHelperResponse {
+                        resource_type: "aggregate share",
+                        description: "missing location header in aggregate share POST response"
+                            .into(),
+                    })?,
+                    http_response,
+                )
             }
-            CollectionJobState::Poll => Ok((Method::GET, None)),
-            CollectionJobState::Deleted => Ok((Method::DELETE, None)),
-            _ => Err(Error::Internal("unexpected state".into())),
-        }?;
 
-        // Send an aggregate share request to the helper.
-        let http_response = send_request_to_helper(
-            &self.http_client,
-            self.backoff
-                .with_max_delay(lease.remaining_lease_duration(&clock.now(), 0)),
-            method,
-            task.aggregate_shares_uri(collection_job.aggregate_share_id())?
-                .ok_or_else(|| {
-                    Error::InvalidConfiguration("task is not leader and has no aggregate share URI")
-                })?,
-            AGGREGATE_SHARES_ROUTE,
-            request_body,
-            // The only way a task wouldn't have an aggregator auth token in it is in the taskprov
-            // case, and Janus never acts as the leader with taskprov enabled.
-            task.aggregator_auth_token()
-                .ok_or_else(|| Error::InvalidConfiguration("no aggregator auth token in task"))?,
-            &self.metrics.http_request_duration_histogram,
-        )
-        .await;
+            CollectionJobState::Poll { aggregate_share_id } => {
+                let (response_id, http_response) = aggregate_share_request(
+                    Method::GET,
+                    task.aggregate_share_uri(aggregate_share_id)?,
+                    AGGREGATE_SHARE_ROUTE,
+                    None,
+                )
+                .await?;
 
-        if *collection_job.state() == CollectionJobState::Deleted {
-            // If we're in the Deleted state, we shortcut to update metrics and log the
-            // results; no further database updates are needed. (Leases are for the living!)
-            return self
-                .step_deleted_collection_job(http_response, collection_job.id())
-                .await;
-        }
+                if let Some(response_id) = response_id
+                    && response_id != *aggregate_share_id
+                {
+                    return Err(Error::InvalidHelperResponse {
+                        resource_type: "aggregate share",
+                        description: format!(
+                            "unexpected aggregate share ID {response_id} in helper response"
+                        )
+                        .into(),
+                    });
+                }
 
-        let http_response = http_response?;
-        let response_headers = http_response.headers();
+                (*aggregate_share_id, http_response)
+            }
+
+            CollectionJobState::Deleted { aggregate_share_id } => {
+                let http_response = if let Some(id) = aggregate_share_id {
+                    // The leader collection job was deleted, and it got far enough for a helper
+                    // aggregate share ID to be assigned, so send a DELETE to the helper.
+                    Some(
+                        aggregate_share_request(
+                            Method::DELETE,
+                            task.aggregate_share_uri(id)?,
+                            AGGREGATE_SHARE_ROUTE,
+                            None,
+                        )
+                        .await
+                        .map(|(_, http_response)| http_response),
+                    )
+                } else {
+                    None
+                };
+                // Shortcut to update metrics and log the results; no further database updates
+                // are needed. (Leases are for the living!)
+                return self
+                    .step_deleted_collection_job(http_response, collection_job.id())
+                    .await;
+            }
+            _ => return Err(Error::Internal("unexpected state".into())),
+        };
+
         let response_body = http_response.body();
         if response_body.is_empty() {
-            let retry_delay = match parse_retry_after_to_duration(response_headers) {
+            let retry_delay = match parse_retry_after_to_duration(http_response.headers()) {
                 Ok(Some(retry_delay)) => retry_delay,
                 _ => self
                     .collection_retry_strategy
@@ -438,16 +523,17 @@ impl CollectionJobDriver {
             };
             info!(
                 ?retry_delay,
-                ?response_headers,
+                response_headers = ?http_response.headers(),
+                ?aggregate_share_id,
                 "Helper has deferred collection of the Aggregate Share request, releasing lease."
             );
             datastore
                 .run_tx("step_collection_job_helper_retry", |tx| {
                     let lease = Arc::clone(&lease);
                     let collection_job = match collection_job.state() {
-                        CollectionJobState::Start => {
-                            collection_job.clone().with_state(CollectionJobState::Poll)
-                        }
+                        CollectionJobState::Start => collection_job
+                            .clone()
+                            .with_state(CollectionJobState::Poll { aggregate_share_id }),
                         _ => collection_job.clone(),
                     };
                     Box::pin(async move {
@@ -462,12 +548,13 @@ impl CollectionJobDriver {
             return Ok(());
         };
 
-        check_content_type::<AggregateShare>(response_headers)
+        check_content_type::<AggregateShare>(http_response.headers())
             .map_err(|e| Error::BadContentType(e.into()))?;
         // Store the helper aggregate share in the datastore so that a later request to a collect
         // job URI can serve it up. Scrub the batch aggregations, as we are now done with them, too.
         let collection_job = Arc::new(
             collection_job.with_state(CollectionJobState::Finished {
+                aggregate_share_id,
                 report_count: leader_aggregate_share.report_count,
                 client_timestamp_interval: leader_aggregate_share.client_timestamp_interval,
                 encrypted_helper_aggregate_share: AggregateShare::get_decoded(response_body)
@@ -506,13 +593,15 @@ impl CollectionJobDriver {
                                 Error::UnrecognizedCollectionJob(
                                     *lease.leased().task_id(),
                                     *collection_job.id(),
-                                ).into(),
+                                )
+                                .into(),
                             )
                         })?;
 
                     match maybe_updated_collection_job.state() {
-                        CollectionJobState::Start | CollectionJobState::Poll => {
-                            tx.update_collection_job::<SEED_SIZE, B, A>(&collection_job).await?;
+                        CollectionJobState::Start | CollectionJobState::Poll { .. } => {
+                            tx.update_collection_job::<SEED_SIZE, B, A>(&collection_job)
+                                .await?;
 
                             let batch_aggregations_iter = BatchAggregationsIterator::new(
                                 &task,
@@ -525,24 +614,27 @@ impl CollectionJobDriver {
                             // Scrub all the batch aggregations, including the empty ones.
                             // Put all the futures into a buffered stream so that we don't incur the
                             // combined memory footprint of all the futures at once. #3857
-                            futures::stream::iter(batch_aggregations_iter.map(|(v, _)| {
-                                Ok(BatchAggregation::scrubbed(v.into_owned()))
-                            })).try_for_each_concurrent(max_future_concurrency, async |ba| {
+                            futures::stream::iter(
+                                batch_aggregations_iter
+                                    .map(|(v, _)| Ok(BatchAggregation::scrubbed(v.into_owned()))),
+                            )
+                            .try_for_each_concurrent(max_future_concurrency, async |ba| {
                                 tx.update_batch_aggregation(&ba).await
-                            }).await?;
+                            })
+                            .await?;
 
                             tx.release_collection_job(&lease, None).await?;
                             metrics.jobs_finished_counter.add(1, &[]);
                         }
 
-                        CollectionJobState::Deleted => {
+                        CollectionJobState::Deleted { .. } => {
                             // If the collection job was deleted between when we acquired it and
-                            // now, discard the aggregate shares and leave the job in the deleted
-                            // state so that appropriate status can be returned from polling the
-                            // collection job URI and GC can run (#313).
+                            // now, leave the job in the deleted state so that appropriate status
+                            // can be returned from polling the collection job URI and GC can run
+                            // (#313).
                             info!(
                                 collection_job_id = %collection_job.id(),
-                                "collection job was deleted while lease was held. Discarding aggregate results.",
+                                "collection job was deleted while lease was held.",
                             );
                             metrics.deleted_jobs_encountered_counter.add(1, &[]);
                         }
@@ -558,7 +650,8 @@ impl CollectionJobDriver {
                             );
                             panic!(
                                 "collection job {} unexpectedly in state {}",
-                                collection_job.id(), state
+                                collection_job.id(),
+                                state
                             );
                         }
                     }
@@ -572,21 +665,23 @@ impl CollectionJobDriver {
 
     async fn step_deleted_collection_job(
         &self,
-        http_response: Result<HttpResponse, Error>,
+        http_response: Option<Result<HttpResponse, Error>>,
         collection_job_id: &CollectionJobId,
     ) -> Result<(), Error> {
         self.metrics.deleted_jobs_encountered_counter.add(1, &[]);
         info!(
             %collection_job_id,
-            "Deleted collection job was stepped while lease was held. Discarding aggregate results.",
+            "Deleted collection job was stepped while lease was held",
         );
-        let _ = http_response.inspect_err(|e| {
-            warn!(
-                %collection_job_id,
-                ?e,
-                "Helper returned an error to the HTTP delete request for this deleted collection job."
-            )
-        });
+        if let Some(http_response) = http_response {
+            let _ = http_response.inspect_err(|e| {
+                    warn!(
+                        %collection_job_id,
+                        ?e,
+                        "Helper returned an error to the HTTP delete request for this deleted collection job."
+                    )
+                });
+        }
 
         Ok(())
     }
@@ -920,7 +1015,10 @@ mod tests {
 
     use assert_matches::assert_matches;
     use chrono::TimeDelta;
-    use http::{StatusCode, header::CONTENT_TYPE};
+    use http::{
+        StatusCode,
+        header::{CONTENT_TYPE, RETRY_AFTER},
+    };
     use janus_aggregator_core::{
         datastore::{
             Datastore,
@@ -951,6 +1049,7 @@ mod tests {
         Duration, Interval, MediaType, Query, ReportIdChecksum, TimePrecision,
         batch_mode::TimeInterval, problem_type::DapProblemType,
     };
+    use mockito::Matcher;
     use postgres_types::Timestamp;
     use prio::{
         codec::{Decode, Encode},
@@ -998,7 +1097,6 @@ mod tests {
 
         let collection_job = CollectionJob::<0, TimeInterval, dummy::Vdaf>::new(
             *task.id(),
-            random(),
             random(),
             Query::new_time_interval(batch_interval),
             aggregation_param,
@@ -1152,7 +1250,7 @@ mod tests {
         let report_timestamp = clock.now().to_time(&time_precision);
         let report = LeaderStoredReport::new_dummy(*task.id(), report_timestamp);
 
-        let (collection_job_id, expected_aggregate_share_id, lease) = ds
+        let (collection_job_id, lease) = ds
             .run_unnamed_tx(|tx| {
                 let task = leader_task.clone();
                 let clock = clock.clone();
@@ -1162,11 +1260,9 @@ mod tests {
                     tx.put_aggregator_task(&task).await.unwrap();
 
                     let collection_job_id = random();
-                    let aggregate_share_id = random();
                     tx.put_collection_job(&CollectionJob::<0, TimeInterval, dummy::Vdaf>::new(
                         *task.id(),
                         collection_job_id,
-                        aggregate_share_id,
                         Query::new_time_interval(batch_interval),
                         aggregation_param,
                         batch_interval,
@@ -1263,7 +1359,7 @@ mod tests {
 
                     assert_eq!(task.id(), lease.leased().task_id());
                     assert_eq!(&collection_job_id, lease.leased().collection_job_id());
-                    Ok((collection_job_id, aggregate_share_id, lease))
+                    Ok((collection_job_id, lease))
                 })
             })
             .await
@@ -1289,7 +1385,7 @@ mod tests {
         // in Aggregating state. Update the batch aggregations to indicate that all aggregation jobs
         // are complete, and mark the report aggregated. We must reacquire the lease because the
         // last stepping attempt will have released it.
-        let (lease, aggregate_share_id) = ds
+        let lease = ds
             .run_unnamed_tx(|tx| {
                 let task = task.clone();
                 let clock = clock.clone();
@@ -1388,13 +1484,11 @@ mod tests {
                     assert_eq!(task.id(), lease.leased().task_id());
                     assert_eq!(&collection_job_id, lease.leased().collection_job_id());
 
-                    Ok((lease, *collection_job.aggregate_share_id()))
+                    Ok(lease)
                 })
             })
             .await
             .unwrap();
-
-        assert_eq!(expected_aggregate_share_id, aggregate_share_id);
 
         let leader_request = AggregateShareReq::new(
             CollectionJobReq::new(
@@ -1408,20 +1502,12 @@ mod tests {
 
         // Simulate helper failing to service the aggregate share request.
         let mocked_failed_aggregate_share = server
-            .mock(
-                "PUT",
-                task.aggregate_shares_uri(&aggregate_share_id)
-                    .unwrap()
-                    .path(),
-            )
+            .mock("POST", task.aggregate_share_creation_uri().unwrap().path())
             .match_authentication_token(agg_auth_token)
-            .match_header(
-                CONTENT_TYPE.as_str(),
-                AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
-            )
+            .match_header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
             .match_body(leader_request.get_encoded().unwrap())
             .with_status(400)
-            .with_header("Content-Type", "application/problem+json")
+            .with_header(CONTENT_TYPE, "application/problem+json")
             .with_body("{\"type\": \"urn:ietf:params:ppm:dap:error:invalidMessage\"}")
             .create_async()
             .await;
@@ -1481,23 +1567,18 @@ mod tests {
         .unwrap();
 
         // Helper aggregate share is opaque to the leader, so no need to construct a real one
+        let aggregate_share_id = random();
         let helper_response = fake_aggregate_share();
         let mocked_aggregate_share = server
-            .mock(
-                "PUT",
-                task.aggregate_shares_uri(&aggregate_share_id)
-                    .unwrap()
-                    .path(),
-            )
+            .mock("POST", task.aggregate_share_creation_uri().unwrap().path())
             .match_authentication_token(agg_auth_token)
-            .match_header(
-                CONTENT_TYPE.as_str(),
-                AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
-            )
+            .match_header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
             .match_body(leader_request.get_encoded().unwrap())
             .with_status(200)
-            .with_header(CONTENT_TYPE.as_str(), AggregateShare::MEDIA_TYPE)
+            .with_header(CONTENT_TYPE, AggregateShare::MEDIA_TYPE)
+            .with_aggregate_share_location(task.id(), &aggregate_share_id)
             .with_body(helper_response.get_encoded().unwrap())
+            .expect(1)
             .create_async()
             .await;
 
@@ -1513,6 +1594,7 @@ mod tests {
         ds.run_unnamed_tx(|tx| {
             let clock = clock.clone();
             let task_id = *task.id();
+            let expected_aggregate_share_id = aggregate_share_id;
             let helper_aggregate_share = helper_response.encrypted_aggregate_share().clone();
 
             Box::pin(async move {
@@ -1529,11 +1611,13 @@ mod tests {
                 assert_matches!(
                     collection_job.state(),
                     CollectionJobState::Finished {
+                        aggregate_share_id,
                         report_count,
                         client_timestamp_interval,
                         encrypted_helper_aggregate_share,
                         leader_aggregate_share,
                     } => {
+                        assert_eq!(expected_aggregate_share_id, *aggregate_share_id);
                         assert_eq!(report_count, &10);
                         assert_eq!(
                             client_timestamp_interval,
@@ -1578,7 +1662,6 @@ mod tests {
                     tx.put_collection_job(&CollectionJob::<0, TimeInterval, dummy::Vdaf>::new(
                         task_id,
                         collection_job_id,
-                        random(), // Ensure the helper will not coopoerate
                         Query::new_time_interval(batch_interval),
                         aggregation_param,
                         batch_interval,
@@ -1607,9 +1690,13 @@ mod tests {
             .await
             .unwrap();
 
+        // Check that no additional requests went to the helper
+        mocked_aggregate_share.assert_async().await;
+
         ds.run_unnamed_tx(|tx| {
             let clock = clock.clone();
             let task_id = *task.id();
+            let expected_aggregate_share_id = aggregate_share_id;
             let helper_aggregate_share = helper_response.encrypted_aggregate_share().clone();
 
             Box::pin(async move {
@@ -1626,11 +1713,13 @@ mod tests {
                 assert_matches!(
                     collection_job.state(),
                     CollectionJobState::Finished {
+                        aggregate_share_id,
                         report_count,
                         client_timestamp_interval,
                         encrypted_helper_aggregate_share,
                         leader_aggregate_share,
                     } => {
+                        assert_eq!(*aggregate_share_id, expected_aggregate_share_id);
                         assert_eq!(report_count, &10);
                         assert_eq!(
                             client_timestamp_interval,
@@ -1759,12 +1848,7 @@ mod tests {
 
         // Set up an error response from the server that returns a non-retryable error.
         let failure_mock = server
-            .mock(
-                "PUT",
-                task.aggregate_shares_uri(collection_job.aggregate_share_id())
-                    .unwrap()
-                    .path(),
-            )
+            .mock("POST", task.aggregate_share_creation_uri().unwrap().path())
             .with_status(404)
             .expect(1)
             .create_async()
@@ -1773,12 +1857,7 @@ mod tests {
         // make more requests than we expect. If there were no remaining mocks, mockito would have
         // respond with a fallback error response instead.
         let no_more_requests_mock = server
-            .mock(
-                "PUT",
-                task.aggregate_shares_uri(collection_job.aggregate_share_id())
-                    .unwrap()
-                    .path(),
-            )
+            .mock("POST", task.aggregate_share_creation_uri().unwrap().path())
             .with_status(502)
             .expect(1)
             .create_async()
@@ -1870,12 +1949,7 @@ mod tests {
         // leader, because the response body is empty and cannot be decoded. The error status
         // indicates that the error is retryable.
         let failure_mock = server
-            .mock(
-                "PUT",
-                task.aggregate_shares_uri(collection_job.aggregate_share_id())
-                    .unwrap()
-                    .path(),
-            )
+            .mock("POST", task.aggregate_share_creation_uri().unwrap().path())
             .with_status(502)
             .expect(3)
             .create_async()
@@ -1884,12 +1958,7 @@ mod tests {
         // make more requests than we expect. If there were no remaining mocks, mockito would have
         // respond with a fallback error response instead.
         let no_more_requests_mock = server
-            .mock(
-                "PUT",
-                task.aggregate_shares_uri(collection_job.aggregate_share_id())
-                    .unwrap()
-                    .path(),
-            )
+            .mock("POST", task.aggregate_share_creation_uri().unwrap().path())
             .with_status(500)
             .expect(1)
             .create_async()
@@ -1938,7 +2007,7 @@ mod tests {
         );
     }
 
-    async fn delete_collection_job_helper(mock_delete_returned_status: usize) {
+    async fn delete_collection_job_helper(mock_delete_returned_status: Option<usize>) {
         // Setup: insert a collection job into the datastore.
         install_test_trace_subscriber();
         initialize_rustls();
@@ -1946,12 +2015,18 @@ mod tests {
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let aggregate_share_id = if mock_delete_returned_status.is_some() {
+            Some(random())
+        } else {
+            None
+        };
 
         let (task, lease, collection_job) =
             setup_collection_job_test_case(&mut server, clock.clone(), Arc::clone(&ds), true).await;
 
         // Delete the collection job
-        let collection_job = collection_job.with_state(CollectionJobState::Deleted);
+        let collection_job =
+            collection_job.with_state(CollectionJobState::Deleted { aggregate_share_id });
 
         ds.run_unnamed_tx(|tx| {
             let collection_job = collection_job.clone();
@@ -1964,16 +2039,25 @@ mod tests {
         .unwrap();
 
         // The helper will be notified that the aggregate share request is being deleted
-        let mocked_aggregate_share = server
-            .mock(
-                "DELETE",
-                task.aggregate_shares_uri(collection_job.aggregate_share_id())
-                    .unwrap()
-                    .path(),
-            )
-            .with_status(mock_delete_returned_status)
-            .create_async()
-            .await;
+        let mocked_aggregate_share = if let Some(aggregate_share_id) = aggregate_share_id {
+            server
+                .mock(
+                    "DELETE",
+                    task.aggregate_share_uri(&aggregate_share_id)
+                        .unwrap()
+                        .path(),
+                )
+                .with_status(mock_delete_returned_status.unwrap())
+                .create_async()
+                .await
+        } else {
+            server
+                .mock("DELETE", Matcher::Any)
+                .with_status(501)
+                .expect(0)
+                .create_async()
+                .await
+        };
 
         let collection_job_driver = CollectionJobDriver::new(
             reqwest::Client::new(),
@@ -2008,7 +2092,10 @@ mod tests {
                     .unwrap()
                     .unwrap();
 
-                assert_eq!(collection_job.state(), &CollectionJobState::Deleted);
+                assert_eq!(
+                    collection_job.state(),
+                    &CollectionJobState::Deleted { aggregate_share_id }
+                );
 
                 let leases = tx
                     .acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 1)
@@ -2026,12 +2113,17 @@ mod tests {
 
     #[tokio::test]
     async fn delete_collection_job_supported_by_helper() {
-        delete_collection_job_helper(200).await;
+        delete_collection_job_helper(Some(200)).await;
     }
 
     #[tokio::test]
     async fn delete_collection_job_unsupported_by_helper() {
-        delete_collection_job_helper(501).await;
+        delete_collection_job_helper(Some(501)).await;
+    }
+
+    #[tokio::test]
+    async fn delete_collection_job_no_aggregate_share() {
+        delete_collection_job_helper(None).await;
     }
 
     #[test]
@@ -2124,23 +2216,15 @@ mod tests {
         let remaining_time =
             Arc::new(lease.clone().unwrap()).remaining_lease_duration(&clock.now(), 0);
         let retry_after_header_value = (remaining_time + StdDuration::from_secs(1)).as_secs();
-
-        let (header, value) = agg_auth_token.request_authentication().unwrap();
+        let aggregate_share_id = random();
         let mocked_async_aggregate_share_unavailable = server
-            .mock(
-                "PUT",
-                task.aggregate_shares_uri(collection_job.aggregate_share_id())
-                    .unwrap()
-                    .path(),
-            )
-            .match_header(header.as_str(), value.to_str().unwrap())
-            .match_header(
-                CONTENT_TYPE.as_str(),
-                AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
-            )
+            .mock("POST", task.aggregate_share_creation_uri().unwrap().path())
+            .match_authentication_token(agg_auth_token)
+            .match_header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
             .match_body(leader_request.get_encoded().unwrap())
             .with_status(200)
-            .with_header("Retry-After", &retry_after_header_value.to_string())
+            .with_header(RETRY_AFTER, &retry_after_header_value.to_string())
+            .with_aggregate_share_location(task.id(), &aggregate_share_id)
             .expect(1)
             .create_async()
             .await;
@@ -2237,23 +2321,16 @@ mod tests {
         // Helper aggregate share is opaque to the leader, so no need to construct a real one
         let helper_response = fake_aggregate_share();
         let helper_encrypted_aggregate_share = helper_response.encrypted_aggregate_share().clone();
+        let aggregate_share_id = random();
 
-        let (header, value) = agg_auth_token.request_authentication().unwrap();
         let mocked_async_aggregate_share_unavailable = server
-            .mock(
-                "PUT",
-                task.aggregate_shares_uri(collection_job.aggregate_share_id())
-                    .unwrap()
-                    .path(),
-            )
-            .match_header(header.as_str(), value.to_str().unwrap())
-            .match_header(
-                CONTENT_TYPE.as_str(),
-                AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
-            )
+            .mock("POST", task.aggregate_share_creation_uri().unwrap().path())
+            .match_authentication_token(agg_auth_token)
+            .match_header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
             .match_body(leader_request.get_encoded().unwrap())
             .with_status(200)
-            .with_header("Retry-After", "1")
+            .with_header(RETRY_AFTER, "1")
+            .with_aggregate_share_location(task.id(), &aggregate_share_id)
             .create_async()
             .await;
 
@@ -2293,13 +2370,13 @@ mod tests {
         let mocked_async_aggregate_share_ready = server
             .mock(
                 "GET",
-                task.aggregate_shares_uri(collection_job.aggregate_share_id())
+                task.aggregate_share_uri(&aggregate_share_id)
                     .unwrap()
                     .path(),
             )
-            .match_header(header.as_str(), value.to_str().unwrap())
+            .match_authentication_token(agg_auth_token)
             .with_status(200)
-            .with_header(CONTENT_TYPE.as_str(), AggregateShare::MEDIA_TYPE)
+            .with_header(CONTENT_TYPE, AggregateShare::MEDIA_TYPE)
             .with_body(helper_response.get_encoded().unwrap())
             .create_async()
             .await;
@@ -2313,6 +2390,7 @@ mod tests {
         // Confirm finished
         ds.run_unnamed_tx(|tx| {
             let task_id = *task.id();
+            let expected_aggregate_share_id = aggregate_share_id;
             let helper_encrypted_aggregate_share = helper_encrypted_aggregate_share.clone();
 
             Box::pin(async move {
@@ -2327,11 +2405,13 @@ mod tests {
                     .unwrap();
 
                 assert_matches!(collection_job.state(), CollectionJobState::Finished {
+                    aggregate_share_id,
                     report_count,
                     leader_aggregate_share,
                     encrypted_helper_aggregate_share,
                     client_timestamp_interval: _,
                 } => {
+                    assert_eq!(*aggregate_share_id, expected_aggregate_share_id);
                     assert_eq!(report_count, &10);
                     assert_eq!(leader_aggregate_share, &dummy::AggregateShare(0));
                     assert_eq!(encrypted_helper_aggregate_share, &helper_encrypted_aggregate_share);

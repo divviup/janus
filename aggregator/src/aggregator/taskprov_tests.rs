@@ -36,8 +36,8 @@ use janus_core::{
     vdaf::new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128,
 };
 use janus_messages::{
-    AggregateShare as AggregateShareMessage, AggregateShareAad, AggregateShareId,
-    AggregateShareReq, AggregationJobContinueReq, AggregationJobExtension, AggregationJobId,
+    AggregateShare as AggregateShareMessage, AggregateShareAad, AggregateShareReq,
+    AggregationJobContinueReq, AggregationJobExtension, AggregationJobId,
     AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep, BatchConfig,
     BatchSelector, CollectionJobReq, Duration, Extension, ExtensionType, Interval, MediaType,
     Query, ReportError, ReportIdChecksum, ReportShare, Role, TaskConfiguration,
@@ -1231,7 +1231,6 @@ async fn taskprov_aggregate_share() {
 
     let (transcript, _, aggregation_param) = test.next_report_share();
     let batch_id = random();
-    let aggregate_share_id = AggregateShareId::from([1u8; 16]);
     test.datastore
         .run_unnamed_tx(|tx| {
             let task = test.task.clone();
@@ -1287,13 +1286,8 @@ async fn taskprov_aggregate_share() {
         .clone()
         .oneshot(
             Request::builder()
-                .method("PUT")
-                .uri(
-                    test.task
-                        .aggregate_shares_uri(&aggregate_share_id)
-                        .unwrap()
-                        .path(),
-                )
+                .method("POST")
+                .uri(test.task.aggregate_share_creation_uri().unwrap().path())
                 .header(AUTHORIZATION, "Bearer invalid_token")
                 .header(
                     CONTENT_TYPE,
@@ -1315,13 +1309,8 @@ async fn taskprov_aggregate_share() {
         .clone()
         .oneshot(
             Request::builder()
-                .method("PUT")
-                .uri(
-                    test.task
-                        .aggregate_shares_uri(&aggregate_share_id)
-                        .unwrap()
-                        .path(),
-                )
+                .method("POST")
+                .uri(test.task.aggregate_share_creation_uri().unwrap().path())
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
                 .header(
                     CONTENT_TYPE,
@@ -1367,7 +1356,6 @@ async fn end_to_end() {
 
     let batch_id = random();
     let aggregation_job_id = random();
-    let aggregate_share_id = random();
 
     let (transcript, report_share, aggregation_param) = test.next_report_share();
     let aggregation_job_init_request = AggregationJobInitializeReq::new(
@@ -1501,13 +1489,8 @@ async fn end_to_end() {
         .clone()
         .oneshot(
             Request::builder()
-                .method("PUT")
-                .uri(
-                    test.task
-                        .aggregate_shares_uri(&aggregate_share_id)
-                        .unwrap()
-                        .path(),
-                )
+                .method("POST")
+                .uri(test.task.aggregate_share_creation_uri().unwrap().path())
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
                 .header(
                     CONTENT_TYPE,
@@ -1565,7 +1548,6 @@ async fn end_to_end_sumvec_hmac() {
     let test = TaskprovTestCase::with_vdaf(vdaf_config, vdaf, measurement, ()).await;
     let batch_id = random();
     let aggregation_job_id = random();
-    let aggregate_share_id = random();
     let (transcript, report_share, aggregation_param) = test.next_report_share();
     let aggregation_job_init_request = AggregationJobInitializeReq::new(
         0,
@@ -1645,13 +1627,8 @@ async fn end_to_end_sumvec_hmac() {
         .clone()
         .oneshot(
             Request::builder()
-                .method("PUT")
-                .uri(
-                    test.task
-                        .aggregate_shares_uri(&aggregate_share_id)
-                        .unwrap()
-                        .path(),
-                )
+                .method("POST")
+                .uri(test.task.aggregate_share_creation_uri().unwrap().path())
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
                 .header(
                     CONTENT_TYPE,

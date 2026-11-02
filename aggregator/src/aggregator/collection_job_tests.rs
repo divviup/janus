@@ -344,8 +344,6 @@ impl CollectionJobTestCase {
         let want_collection_job = CollectionJob::<0, TimeInterval, dummy::Vdaf>::new(
             *self.task.id(),
             collection_job_id,
-            // This is chosen by the leader, we have to copy it
-            *got_collection_job.aggregate_share_id(),
             Query::new_time_interval(queried_interval),
             aggregation_param,
             queried_interval,
@@ -399,6 +397,7 @@ impl CollectionJobTestCase {
                         .unwrap()
                         .unwrap()
                         .with_state(CollectionJobState::Finished {
+                            aggregate_share_id: random(),
                             report_count: 12,
                             client_timestamp_interval: queried_interval,
                             encrypted_helper_aggregate_share,
@@ -562,6 +561,7 @@ impl CollectionJobTestCase {
 
                         tx.update_collection_job::<0, LeaderSelected, dummy::Vdaf>(
                             &collection_job.with_state(CollectionJobState::Finished {
+                                aggregate_share_id: random(),
                                 report_count: task.min_batch_size() + 1,
                                 client_timestamp_interval: spanned_interval,
                                 encrypted_helper_aggregate_share,

@@ -973,7 +973,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
             let vdaf = vdaf.clone();
 
             Box::pin(async move {
-                let mut got_batch_aggregations =
+                let mut got_batch_aggregations: Vec<_> =
                     TimeInterval::get_batch_aggregations_for_collection_identifier::<
                         0,
                         dummy::Vdaf,
@@ -1266,7 +1266,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
             let vdaf = vdaf.clone();
 
             Box::pin(async move {
-                let mut got_batch_aggregations =
+                let mut got_batch_aggregations: Vec<_> =
                     TimeInterval::get_batch_aggregations_for_collection_identifier::<
                         0,
                         dummy::Vdaf,

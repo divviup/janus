@@ -24,7 +24,9 @@ use janus_aggregator_core::{
 use janus_core::{
     Runtime,
     auth_tokens::{AuthenticationToken, DAP_AUTH_HEADER},
-    http::{check_content_type, collection_job_location, extract_bearer_token},
+    http::{
+        aggregate_share_location, check_content_type, collection_job_location, extract_bearer_token,
+    },
     taskprov::TASKPROV_HEADER,
 };
 use janus_messages::{
@@ -185,14 +187,15 @@ impl Error {
                 .with_detail(&error.to_string())
                 .into_response()
             }
-            Error::Datastore(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-            Error::Hpke(_)
+            Error::Datastore(_)
+            | Error::Hpke(_)
             | Error::Vdaf(_)
             | Error::Internal(_)
             | Error::Url(_)
             | Error::Message(_)
             | Error::HttpClient(_)
             | Error::Http { .. }
+            | Error::InvalidHelperResponse { .. }
             | Error::TaskParameters(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             Error::AggregateShareRequestRejected(task_id, detail) => ProblemDocument::new(
                 "https://docs.divviup.org/references/janus-errors#aggregate-share-request-rejected",
@@ -378,7 +381,8 @@ impl IntoResponse for EmptyBody {
 
 pub(crate) static AGGREGATION_JOB_ROUTE: &str =
     "/tasks/{task_id}/aggregation_jobs/{aggregation_job_id}";
-pub(crate) static AGGREGATE_SHARES_ROUTE: &str =
+pub(crate) static AGGREGATE_SHARE_CREATION_ROUTE: &str = "/tasks/{task_id}/aggregate_shares";
+pub(crate) static AGGREGATE_SHARE_ROUTE: &str =
     "/tasks/{task_id}/aggregate_shares/{aggregate_share_id}";
 
 /// Parsed path parameters for aggregation job endpoints. Implements a custom Axum extractor that
@@ -617,11 +621,10 @@ impl<'a> AggregatorHandlerBuilder<'a> {
                 "/tasks/{task_id}/collection_jobs/{collection_job_id}",
                 get(collection_jobs_get).delete(collection_jobs_delete),
             )
+            .route(AGGREGATE_SHARE_CREATION_ROUTE, post(aggregate_shares_post))
             .route(
-                AGGREGATE_SHARES_ROUTE,
-                put(aggregate_shares_put)
-                    .get(aggregate_shares_get)
-                    .delete(aggregate_shares_delete),
+                AGGREGATE_SHARE_ROUTE,
+                get(aggregate_shares_get).delete(aggregate_shares_delete),
             )
             .with_state(Arc::clone(&self.aggregator))
             .layer(
@@ -910,7 +913,7 @@ async fn collection_jobs_post(
 ) -> Result<Response, Error> {
     validate_content_type_headers::<CollectionJobReq<TimeInterval>>(&headers)?;
 
-    let task_id: TaskId = task_id
+    let task_id = task_id
         .parse()
         .map_err(|_| Error::BadRequest("invalid TaskId".into()))?;
 
@@ -975,30 +978,33 @@ async fn collection_jobs_delete(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Axum handler for the "/tasks/.../aggregate_shares/..." PUT endpoint.
-async fn aggregate_shares_put(
+/// Axum handler for the "/tasks/.../aggregate_shares/..." POST endpoint.
+async fn aggregate_shares_post(
     headers: HeaderMap,
-    path: AggregateSharePath,
+    Path(task_id): Path<String>,
     AxumState(aggregator): AxumState<Arc<Aggregator>>,
     body: Bytes,
 ) -> Result<Response, Error> {
     validate_content_type_headers::<AggregateShareReq<TimeInterval>>(&headers)?;
 
-    let task_id = path.task_id;
+    let task_id = task_id
+        .parse()
+        .map_err(|_| Error::BadRequest("invalid TaskId".into()))?;
     let auth_token = parse_auth_token_from_headers(&task_id, &headers)?;
     let taskprov_task_config = parse_taskprov_header_from_headers(&aggregator, &task_id, &headers)?;
-    let aggregate_share_id = path.aggregate_share_id;
-    let share = aggregator
-        .handle_put_aggregate_share(
-            &task_id,
-            &aggregate_share_id,
-            &body,
-            auth_token,
-            taskprov_task_config.as_ref(),
-        )
+    let (agg_share_id, response_bytes) = aggregator
+        .handle_post_aggregate_share(&task_id, &body, auth_token, taskprov_task_config.as_ref())
         .await?;
 
-    Ok(EncodedBody::new(share, AggregateShare::MEDIA_TYPE).into_response())
+    Ok((
+        StatusCode::OK,
+        [
+            (CONTENT_TYPE, AggregateShare::MEDIA_TYPE.to_owned()),
+            aggregate_share_location(&task_id, &agg_share_id),
+        ],
+        response_bytes,
+    )
+        .into_response())
 }
 
 /// Axum handler for the "/tasks/.../aggregate_shares/..." GET endpoint.
@@ -1007,20 +1013,26 @@ async fn aggregate_shares_get(
     path: AggregateSharePath,
     AxumState(aggregator): AxumState<Arc<Aggregator>>,
 ) -> Result<Response, Error> {
-    let task_id = path.task_id;
-    let auth_token = parse_auth_token_from_headers(&task_id, &headers)?;
-    let taskprov_task_config = parse_taskprov_header_from_headers(&aggregator, &task_id, &headers)?;
-    let aggregate_share_id = path.aggregate_share_id;
-    let share = aggregator
+    let auth_token = parse_auth_token_from_headers(&path.task_id, &headers)?;
+    let taskprov_task_config =
+        parse_taskprov_header_from_headers(&aggregator, &path.task_id, &headers)?;
+    let response_bytes = aggregator
         .handle_get_aggregate_share(
-            &task_id,
-            &aggregate_share_id,
+            &path.task_id,
+            &path.aggregate_share_id,
             auth_token,
             taskprov_task_config.as_ref(),
         )
         .await?;
-
-    Ok(EncodedBody::new(share, AggregateShare::MEDIA_TYPE).into_response())
+    Ok((
+        StatusCode::OK,
+        [(
+            CONTENT_TYPE,
+            HeaderValue::from_static(AggregateShare::MEDIA_TYPE),
+        )],
+        response_bytes,
+    )
+        .into_response())
 }
 
 /// Axum handler for the "/tasks/.../aggregate_shares/..." DELETE endpoint.

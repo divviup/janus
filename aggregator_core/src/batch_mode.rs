@@ -390,7 +390,6 @@ mod tests {
         let leader_job = CollectionJob::<0, TimeInterval, Vdaf>::new(
             random(),
             random(),
-            random(),
             Query::new_time_interval(interval),
             aggregation_parameter,
             interval,
@@ -411,7 +410,6 @@ mod tests {
             encoded_aggregation_parameter,
         );
         let leader_job = CollectionJob::<0, LeaderSelected, Vdaf>::new(
-            random(),
             random(),
             random(),
             Query::new_leader_selected(LeaderSelectedQueryConfig::test_default()),

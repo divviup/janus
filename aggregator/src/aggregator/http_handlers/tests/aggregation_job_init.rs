@@ -1527,7 +1527,7 @@ async fn aggregate_init_partially_replayed_aggregation_init() {
     // included.
     assert_eq!(
         test_case
-            .put_aggregate_share_request(&request, &random())
+            .post_aggregate_share_request(&request)
             .await
             .status(),
         StatusCode::OK,

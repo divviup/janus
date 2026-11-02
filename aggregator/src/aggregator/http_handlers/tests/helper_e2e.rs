@@ -3,9 +3,9 @@ use http::StatusCode;
 use janus_aggregator_core::task::BatchMode;
 use janus_core::report_id::ReportIdChecksumExt;
 use janus_messages::{
-    AggregateShareId, AggregateShareReq, AggregationJobExtension, AggregationJobInitializeReq,
-    AggregationJobResp, BatchSelector, CollectionJobReq, Query, ReportError, ReportIdChecksum,
-    VerifyStepResult, batch_mode::LeaderSelected,
+    AggregateShareReq, AggregationJobExtension, AggregationJobInitializeReq, AggregationJobResp,
+    BatchSelector, CollectionJobReq, Query, ReportError, ReportIdChecksum, VerifyStepResult,
+    batch_mode::LeaderSelected,
 };
 use prio::{
     codec::{Decode, Encode},
@@ -144,12 +144,12 @@ async fn helper_aggregation_report_share_replay() {
     // Make aggregate share requests. If these succeed, then the helper's report_count and checksum
     // match those in the requests.
     let response = test_case
-        .put_aggregate_share_request(&agg_share_req_1, &AggregateShareId::from([0u8; 16]))
+        .post_aggregate_share_request(&agg_share_req_1)
         .await;
     assert_eq!(response.status(), StatusCode::OK);
 
     let response = test_case
-        .put_aggregate_share_request(&agg_share_req_2, &AggregateShareId::from([1u8; 16]))
+        .post_aggregate_share_request(&agg_share_req_2)
         .await;
     assert_eq!(response.status(), StatusCode::OK);
 }
