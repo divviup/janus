@@ -676,7 +676,7 @@ async fn aggregate_share_request() {
         name: &'static str,
         // Each case needs its own ID: a batch mismatch still persists the job, so reusing one
         // would bind a single ID to two batches. Since share IDs are derived from the request, we
-        // make sure to use a distinct checksum in each case.
+        // make sure to use a distinct queried interval in each case.
         request: AggregateShareReq<B>,
         expected_checksum: ReportIdChecksum,
         expected_report_count: u64,
@@ -1028,8 +1028,7 @@ async fn aggregate_share_request_idempotence() {
     let (task_id, aggregate_share_id_1) = ids_from_aggregate_share_response(&response);
     assert_eq!(&task_id, test_case.task.id());
 
-    // Second request with same parameters but different aggregate share ID should succeed because
-    // POST is idempotent
+    // Second request with same parameters should succeed because POST is idempotent
     let response = test_case.post_aggregate_share_request(&request).await;
     assert_eq!(response.status(), StatusCode::OK);
     let (task_id, aggregate_share_id_2) = ids_from_aggregate_share_response(&response);

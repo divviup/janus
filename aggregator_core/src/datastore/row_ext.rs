@@ -740,7 +740,7 @@ impl RowExt for Row {
                 let aggregate_share_id =
                     AggregateShareId::get_decoded(&aggregate_share_id_bytes.ok_or_else(|| {
                         Error::DbState(
-                            "collection job in state POLL but aggregate_share_id is NULL"
+                            "collection job in state FINISHED POLL but aggregate_share_id is NULL"
                                 .to_string(),
                         )
                     })?)?;

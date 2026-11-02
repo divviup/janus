@@ -3950,7 +3950,7 @@ impl VdafOps {
                         .iter()
                         .any(|ba| ba.aggregation_parameter() != &aggregation_param)
                     {
-                        // §4.4.4-18: fail with invalidMessage on aggregation parameter mismatch
+                        // §4.6.4-18: fail with invalidMessage on aggregation parameter mismatch
                         return Err(datastore::Error::User(
                             Error::InvalidMessage(
                                 Some(*task.id()),

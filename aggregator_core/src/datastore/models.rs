@@ -1873,21 +1873,6 @@ impl<const SEED_SIZE: usize, B: BatchMode, A: AsyncAggregator<SEED_SIZE>>
         ))
     }
 
-    /// Return the aggregate share's ID in use for this collection job.
-    ///
-    /// Panics if no aggregate share ID is known for the job.
-    #[cfg(feature = "test-util")]
-    #[track_caller]
-    pub fn aggregate_share_id(&self) -> &AggregateShareId {
-        match self.state() {
-            CollectionJobState::Poll { aggregate_share_id }
-            | CollectionJobState::Finished {
-                aggregate_share_id, ..
-            } => aggregate_share_id,
-            state => panic!("collection job in unexpected state {state:?}"),
-        }
-    }
-
     /// Returns the aggregation parameter associated with this collection job.
     pub fn aggregation_parameter(&self) -> &A::AggregationParam {
         &self.aggregation_parameter
