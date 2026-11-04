@@ -25,8 +25,8 @@ use janus_core::{
     time::{Clock, TimeExt},
 };
 use janus_messages::{
-    AggregateShareId, AggregationJobId, BatchId, CollectionJobId, CollectionJobReq, HpkeConfigId,
-    Interval, Query, ReportId, Role, TaskId, Time, TimePrecision, VerifyResp,
+    AggregateShareId, BatchId, CollectionJobId, CollectionJobReq, HpkeConfigId, Interval, Query,
+    ReportId, Role, TaskId, Time, TimePrecision, VerifyResp,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
 };
 use leases::LeaseRowExt;
@@ -58,6 +58,7 @@ use crate::VdafHasAggregationParameter;
 use crate::{
     AsyncAggregator,
     batch_mode::{AccumulableBatchMode, CollectableBatchMode},
+    datastore::models::AggregationJobDatastoreId,
     http_server::TIME_HISTOGRAM_BOUNDARIES,
     task::{self, AggregatorTask},
     taskprov::PeerAggregator,
@@ -1645,7 +1646,7 @@ WHERE client_reports.client_timestamp < $7",
     >(
         &self,
         task_id: &TaskId,
-        aggregation_job_id: &AggregationJobId,
+        datastore_id: AggregationJobDatastoreId,
     ) -> Result<Option<AggregationJob<SEED_SIZE, B, A>>, Error> {
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
@@ -1656,11 +1657,11 @@ WHERE client_reports.client_timestamp < $7",
             .prepare_cached(
                 "-- get_aggregation_job()
 SELECT
-    aggregation_param, batch_id, client_timestamp_interval, state, step,
-    last_request_hash
+    aggregation_param, batch_id, client_timestamp_interval, state, step, last_request_hash,
+    aggregation_job_id
 FROM aggregation_jobs
 WHERE aggregation_jobs.task_id = $1
-  AND aggregation_jobs.aggregation_job_id = $2
+  AND aggregation_jobs.id = $2
   AND UPPER(aggregation_jobs.client_timestamp_interval) >= $3",
             )
             .await?;
@@ -1668,13 +1669,12 @@ WHERE aggregation_jobs.task_id = $1
             &stmt,
             &[
                 /* task_id */ &task_info.pkey,
-                /* aggregation_job_id */ &aggregation_job_id.as_ref(),
-                /* threshold */
-                &task_info.report_expiry_threshold(self.clock.now())?,
+                /* id */ &datastore_id,
+                /* threshold */ &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
-        .map(|row| row.aggregation_job(task_id, aggregation_job_id))
+        .map(|row| row.aggregation_job(task_id, datastore_id))
         .transpose()
     }
 
@@ -1698,8 +1698,8 @@ WHERE aggregation_jobs.task_id = $1
             .prepare_cached(
                 "-- get_aggregation_jobs_for_task()
 SELECT
-    aggregation_job_id, aggregation_param, batch_id, client_timestamp_interval,
-    state, step, last_request_hash
+    id, aggregation_job_id, aggregation_param, batch_id, client_timestamp_interval, state, step,
+    last_request_hash
 FROM aggregation_jobs
 WHERE aggregation_jobs.task_id = $1
   AND UPPER(aggregation_jobs.client_timestamp_interval) >= $2",
@@ -1709,13 +1709,12 @@ WHERE aggregation_jobs.task_id = $1
             &stmt,
             &[
                 /* task_id */ &task_info.pkey,
-                /* threshold */
-                &task_info.report_expiry_threshold(self.clock.now())?,
+                /* threshold */ &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
         .into_iter()
-        .map(|row| row.aggregation_job(task_id, &row.get_bytea_and_convert("aggregation_job_id")?))
+        .map(|row| row.aggregation_job(task_id, row.get("id")))
         .collect()
     }
 
@@ -1762,7 +1761,7 @@ FROM tasks
 WHERE tasks.id = aggregation_jobs.task_id
 AND aggregation_jobs.id IN (SELECT id FROM incomplete_jobs)
 RETURNING tasks.task_id, tasks.batch_mode, tasks.vdaf,
-          aggregation_jobs.aggregation_job_id, aggregation_jobs.lease_token,
+          aggregation_jobs.id, aggregation_jobs.lease_token,
           aggregation_jobs.lease_attempts",
             )
             .await?;
@@ -1826,7 +1825,7 @@ SET lease_expiry = $1,
     updated_at = $2,
     updated_by = $3
 WHERE aggregation_jobs.task_id = $4
-  AND aggregation_jobs.aggregation_job_id = $5
+  AND aggregation_jobs.id = $5
   AND aggregation_jobs.lease_expiry = $6
   AND aggregation_jobs.lease_token = $7
   AND UPPER(aggregation_jobs.client_timestamp_interval) >= $8",
@@ -1840,7 +1839,7 @@ WHERE aggregation_jobs.task_id = $4
                     /* updated_at */ &now,
                     /* updated_by */ &self.name,
                     /* task_id */ &task_info.pkey,
-                    /* aggregation_job_id */ &lease.leased().aggregation_job_id().as_ref(),
+                    /* aggregation_job_id */ &lease.leased().aggregation_job_id(),
                     /* lease_expiry */ &lease.lease_expiry_time(),
                     /* lease_token */ &lease.lease_token().as_ref(),
                     /* threshold */
@@ -1852,6 +1851,11 @@ WHERE aggregation_jobs.task_id = $4
     }
 
     /// put_aggregation_job stores an aggregation job.
+    ///
+    /// `aggregation_job.datastore_id` is ignored in favor of a new primary key value assigned by
+    /// the datastore, which is returned on success.
+    ///
+    /// Use `update_aggregation_job` to update values on some existing aggregation job.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn put_aggregation_job<
         const SEED_SIZE: usize,
@@ -1860,7 +1864,7 @@ WHERE aggregation_jobs.task_id = $4
     >(
         &self,
         aggregation_job: &AggregationJob<SEED_SIZE, B, A>,
-    ) -> Result<(), Error> {
+    ) -> Result<AggregationJobDatastoreId, Error> {
         let task_info = self
             .task_info_for(aggregation_job.task_id())
             .await?
@@ -1871,6 +1875,9 @@ WHERE aggregation_jobs.task_id = $4
         // existing aggregation job is expired (virtually GCed; would be invisible to other queries
         // that retrieve aggregation job rows).
         // https://github.com/divviup/janus/pull/2818
+        // Writing two jobs with the same task_id and aggregation_job_id == NULL won't run afoul of
+        // the ON CONFLICT(task_id, aggregation_job_id) clause because Postgres treats NULLs as
+        // distinct.
         let stmt = self
             .prepare_cached(
                 "-- put_aggregation_job()
@@ -1889,33 +1896,35 @@ ON CONFLICT(task_id, aggregation_job_id) DO UPDATE
         excluded.last_request_hash, excluded.created_at, excluded.updated_at,
         excluded.updated_by
     )
-    WHERE UPPER(aggregation_jobs.client_timestamp_interval) < $12",
+    WHERE UPPER(aggregation_jobs.client_timestamp_interval) < $12
+RETURNING id",
             )
             .await?;
-        check_insert(
-            self.execute(
+        let rows = self
+            .query(
                 &stmt,
                 &[
                     /* task_id */ &task_info.pkey,
-                    /* aggregation_job_id */ &aggregation_job.id().as_ref(),
+                    /* aggregation_job_id */ &aggregation_job.id_bytes(),
                     /* aggregation_param */
                     &aggregation_job.aggregation_parameter().get_encoded()?,
                     /* batch_id */
                     &aggregation_job.partial_batch_identifier().get_encoded()?,
                     /* client_timestamp_interval */
                     &SqlInterval::from(*aggregation_job.client_timestamp_interval()),
-                    /* state */ &aggregation_job.state(),
+                    /* state */ &aggregation_job.state().code(),
                     /* step */ &(u16::from(aggregation_job.step()) as i32),
                     /* last_request_hash */ &aggregation_job.last_request_hash(),
                     /* created_at */ &now,
                     /* updated_at */ &now,
                     /* updated_by */ &self.name,
-                    /* threshold */
-                    &task_info.report_expiry_threshold(now)?,
+                    /* threshold */ &task_info.report_expiry_threshold(now)?,
                 ],
             )
-            .await?,
-        )
+            .await?;
+        check_insert(rows.len() as u64)?;
+
+        Ok(rows[0].get("id"))
     }
 
     /// update_aggregation_job updates a stored aggregation job.
@@ -1941,24 +1950,26 @@ UPDATE aggregation_jobs SET
     state = $1,
     step = $2,
     last_request_hash = $3,
-    updated_at = $4,
-    updated_by = $5
-WHERE aggregation_jobs.task_id = $6
-  AND aggregation_jobs.aggregation_job_id = $7
-  AND UPPER(aggregation_jobs.client_timestamp_interval) >= $8",
+    aggregation_job_id = $4,
+    updated_at = $5,
+    updated_by = $6
+WHERE aggregation_jobs.task_id = $7
+  AND aggregation_jobs.id = $8
+  AND UPPER(aggregation_jobs.client_timestamp_interval) >= $9",
             )
             .await?;
         check_single_row_mutation(
             self.execute(
                 &stmt,
                 &[
-                    /* state */ &aggregation_job.state(),
+                    /* state */ &aggregation_job.state().code(),
                     /* step */ &(u16::from(aggregation_job.step()) as i32),
                     /* last_request_hash */ &aggregation_job.last_request_hash(),
+                    /* aggregation_job_id */ &aggregation_job.id_bytes(),
                     /* updated_at */ &now,
                     /* updated_by */ &self.name,
                     /* task_id */ &task_info.pkey,
-                    /* aggregation_job_id */ &aggregation_job.id().as_ref(),
+                    /* id */ &aggregation_job.datastore_id(),
                     /* threshold */
                     &task_info.report_expiry_threshold(now)?,
                 ],
@@ -1978,7 +1989,7 @@ WHERE aggregation_jobs.task_id = $6
         vdaf: &A,
         role: &Role,
         task_id: &TaskId,
-        aggregation_job_id: &AggregationJobId,
+        aggregation_job_datastore_id: AggregationJobDatastoreId,
     ) -> Result<Vec<ReportAggregation<SEED_SIZE, A>>, Error> {
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
@@ -1989,17 +2000,15 @@ WHERE aggregation_jobs.task_id = $6
             .prepare_cached(
                 "-- get_report_aggregations_for_aggregation_job()
 SELECT
-    ord, client_report_id, client_timestamp, last_verify_resp,
-    report_aggregations.state, public_extensions, public_share,
-    leader_private_extensions, leader_input_share,
-    helper_encrypted_input_share, leader_verify_transition, leader_verify_state,
-    verify_init, require_taskbind_extension,
-    helper_verify_state, verify_continue, error_code
+    ord, client_report_id, client_timestamp, last_verify_resp, report_aggregations.state,
+    public_extensions, public_share, leader_private_extensions, leader_input_share,
+    helper_encrypted_input_share, leader_verify_transition, leader_verify_state, verify_init,
+    require_taskbind_extension, helper_verify_state, verify_continue, error_code
 FROM report_aggregations
 JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
 WHERE report_aggregations.task_id = $1
   AND aggregation_jobs.task_id = $1
-  AND aggregation_jobs.aggregation_job_id = $2
+  AND aggregation_jobs.id = $2
   AND UPPER(client_timestamp_interval) >= $3
 ORDER BY ord ASC",
             )
@@ -2008,9 +2017,8 @@ ORDER BY ord ASC",
             &stmt,
             &[
                 /* task_id */ &task_info.pkey,
-                /* aggregation_job_id */ &aggregation_job_id.as_ref(),
-                /* threshold */
-                &task_info.report_expiry_threshold(self.clock.now())?,
+                /* aggregation_jobs.id */ &aggregation_job_datastore_id,
+                /* threshold */ &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
@@ -2020,7 +2028,7 @@ ORDER BY ord ASC",
                 vdaf,
                 role,
                 task_id,
-                aggregation_job_id,
+                aggregation_job_datastore_id,
                 &row.get_bytea_and_convert("client_report_id")?,
                 task_info.time_precision,
             )
@@ -2038,7 +2046,7 @@ ORDER BY ord ASC",
         vdaf: &A,
         role: &Role,
         task_id: &TaskId,
-        aggregation_job_id: &AggregationJobId,
+        aggregation_job_datastore_id: AggregationJobDatastoreId,
         report_id: &ReportId,
     ) -> Result<Option<ReportAggregation<SEED_SIZE, A>>, Error> {
         let task_info = match self.task_info_for(task_id).await? {
@@ -2050,17 +2058,16 @@ ORDER BY ord ASC",
             .prepare_cached(
                 "-- get_report_aggregation_by_report_id()
 SELECT
-    ord, client_timestamp, last_verify_resp, report_aggregations.state,
-    public_extensions, public_share, leader_private_extensions,
-    leader_input_share, helper_encrypted_input_share, leader_verify_transition,
-    leader_verify_state, verify_init,
-    require_taskbind_extension, helper_verify_state, verify_continue, error_code
+    ord, client_timestamp, last_verify_resp, report_aggregations.state, public_extensions,
+    public_share, leader_private_extensions, leader_input_share, helper_encrypted_input_share,
+    leader_verify_transition, leader_verify_state, verify_init, require_taskbind_extension,
+    helper_verify_state, verify_continue, error_code
 FROM report_aggregations
 JOIN aggregation_jobs
     ON aggregation_jobs.id = report_aggregations.aggregation_job_id
 WHERE report_aggregations.task_id = $1
     AND aggregation_jobs.task_id = $1
-    AND aggregation_jobs.aggregation_job_id = $2
+    AND aggregation_jobs.id = $2
     AND report_aggregations.client_report_id = $3
     AND UPPER(client_timestamp_interval) >= $4",
             )
@@ -2069,10 +2076,9 @@ WHERE report_aggregations.task_id = $1
             &stmt,
             &[
                 /* task_id */ &task_info.pkey,
-                /* aggregation_job_id */ &aggregation_job_id.as_ref(),
+                /* aggregation_jobs.id */ &aggregation_job_datastore_id,
                 /* report_id */ &report_id.as_ref(),
-                /* threshold */
-                &task_info.report_expiry_threshold(self.clock.now())?,
+                /* threshold */ &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
@@ -2081,7 +2087,7 @@ WHERE report_aggregations.task_id = $1
                 vdaf,
                 role,
                 task_id,
-                aggregation_job_id,
+                aggregation_job_datastore_id,
                 report_id,
                 task_info.time_precision,
             )
@@ -2110,12 +2116,11 @@ WHERE report_aggregations.task_id = $1
             .prepare_cached(
                 "-- get_report_aggregations_for_task()
 SELECT
-    aggregation_jobs.aggregation_job_id, ord, client_report_id,
-    client_timestamp, last_verify_resp, report_aggregations.state,
-    public_extensions, public_share, leader_private_extensions,
-    leader_input_share, helper_encrypted_input_share, leader_verify_transition,
-    leader_verify_state, verify_init,
-    require_taskbind_extension, helper_verify_state, verify_continue, error_code
+    aggregation_jobs.id AS aggregation_job_datastore_id, ord, client_report_id, client_timestamp,
+    last_verify_resp, report_aggregations.state, public_extensions, public_share,
+    leader_private_extensions, leader_input_share, helper_encrypted_input_share,
+    leader_verify_transition, leader_verify_state, verify_init, require_taskbind_extension,
+    helper_verify_state, verify_continue, error_code
 FROM report_aggregations
 JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
 WHERE report_aggregations.task_id = $1
@@ -2127,8 +2132,7 @@ WHERE report_aggregations.task_id = $1
             &stmt,
             &[
                 /* task_id */ &task_info.pkey,
-                /* threshold */
-                &task_info.report_expiry_threshold(self.clock.now())?,
+                /* threshold */ &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
@@ -2138,7 +2142,7 @@ WHERE report_aggregations.task_id = $1
                 vdaf,
                 role,
                 task_id,
-                &row.get_bytea_and_convert("aggregation_job_id")?,
+                row.get("aggregation_job_datastore_id"),
                 &row.get_bytea_and_convert("client_report_id")?,
                 task_info.time_precision,
             )
@@ -2179,12 +2183,8 @@ INSERT INTO report_aggregations
     verify_init, require_taskbind_extension,
     helper_verify_state, verify_continue, error_code, created_at, updated_at,
     updated_by)
-SELECT
-    $1, aggregation_jobs.id, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-    $15, $16, $17, $18, $19, $20, $21, $22
-FROM aggregation_jobs
-WHERE task_id = $1
-  AND aggregation_job_id = $2
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+    $21, $22)
 ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
     SET (
         client_report_id, client_timestamp, last_verify_resp, state,
@@ -2214,8 +2214,7 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
                 &stmt,
                 &[
                     /* task_id */ &task_info.pkey,
-                    /* aggregation_job_id */
-                    &report_aggregation.aggregation_job_id().as_ref(),
+                    /* aggregation_job_id */ &report_aggregation.aggregation_job_id(),
                     /* ord */ &TryInto::<i64>::try_into(report_aggregation.ord())?,
                     /* client_report_id */ &report_aggregation.report_id().as_ref(),
                     /* client_timestamp */
@@ -2243,8 +2242,7 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
                     /* created_at */ &now,
                     /* updated_at */ &now,
                     /* updated_by */ &self.name,
-                    /* threshold */
-                    &task_info.report_expiry_threshold(now)?,
+                    /* threshold */ &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,
@@ -2280,17 +2278,14 @@ INSERT INTO report_aggregations
     leader_input_share, helper_encrypted_input_share, created_at, updated_at,
     updated_by)
 SELECT
-    $1, aggregation_jobs.id, $3, $4, $5, 'INIT'::REPORT_AGGREGATION_STATE,
+    $1, $2, $3, $4, $5, 'INIT'::REPORT_AGGREGATION_STATE,
     client_reports.public_extensions, client_reports.public_share,
     client_reports.leader_private_extensions,
     client_reports.leader_input_share,
     client_reports.helper_encrypted_input_share, $6, $7, $8
-FROM aggregation_jobs
-JOIN client_reports
-    ON aggregation_jobs.task_id = client_reports.task_id
-AND client_reports.report_id = $4
-WHERE aggregation_jobs.task_id = $1
-AND aggregation_job_id = $2
+FROM client_reports
+WHERE client_reports.task_id = $1
+    AND client_reports.report_id = $4
 ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
     SET (
         client_report_id, client_timestamp, last_verify_resp, state,
@@ -2320,8 +2315,8 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
                         &stmt,
                         &[
                             /* task_id */ &task_info.pkey,
-                            /* aggregation_job_id */
-                            &report_aggregation_metadata.aggregation_job_id().as_ref(),
+                            /* aggregation_job.id */
+                            &report_aggregation_metadata.aggregation_job_datastore_id(),
                             /* ord */
                             &TryInto::<i64>::try_into(report_aggregation_metadata.ord())?,
                             /* client_report_id */
@@ -2347,15 +2342,7 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
 INSERT INTO report_aggregations
     (task_id, aggregation_job_id, ord, client_report_id, client_timestamp,
     state, error_code, created_at, updated_at, updated_by)
-SELECT
-    $1, aggregation_jobs.id, $3, $4, $5, 'FAILED'::REPORT_AGGREGATION_STATE,
-    $6, $7, $8, $9
-FROM aggregation_jobs
-JOIN client_reports
-    ON client_reports.task_id = aggregation_jobs.task_id
-   AND client_reports.report_id = $4
-WHERE aggregation_jobs.task_id = $1
-AND aggregation_job_id = $2
+VALUES ($1, $2, $3, $4, $5, 'FAILED'::REPORT_AGGREGATION_STATE, $6, $7, $8, $9)
 ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
     SET (
         client_report_id, client_timestamp, last_verify_resp, state,
@@ -2386,7 +2373,7 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
                         &[
                             /* task_id */ &task_info.pkey,
                             /* aggregation_job_id */
-                            &report_aggregation_metadata.aggregation_job_id().as_ref(),
+                            &report_aggregation_metadata.aggregation_job_datastore_id(),
                             /* ord */
                             &TryInto::<i64>::try_into(report_aggregation_metadata.ord())?,
                             /* client_report_id */
@@ -2399,8 +2386,7 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
                             /* created_at */ &now,
                             /* updated_at */ &now,
                             /* updated_by */ &self.name,
-                            /* threshold */
-                            &task_info.report_expiry_threshold(now)?,
+                            /* threshold */ &task_info.report_expiry_threshold(now)?,
                         ],
                     )
                     .await?,
@@ -2443,7 +2429,7 @@ SET
     updated_by = $16
 FROM aggregation_jobs
 WHERE report_aggregations.aggregation_job_id = aggregation_jobs.id
-  AND aggregation_jobs.aggregation_job_id = $17
+  AND aggregation_jobs.id = $17
   AND aggregation_jobs.task_id = $18
   AND report_aggregations.task_id = $18
   AND report_aggregations.client_report_id = $19
@@ -2476,8 +2462,7 @@ WHERE report_aggregations.aggregation_job_id = aggregation_jobs.id
                     /* error_code */ &encoded_state_values.report_error,
                     /* updated_at */ &now,
                     /* updated_by */ &self.name,
-                    /* aggregation_job_id */
-                    &report_aggregation.aggregation_job_id().as_ref(),
+                    /* aggregation_jobs.id */ &report_aggregation.aggregation_job_id(),
                     /* task_id */ &task_info.pkey,
                     /* client_report_id */ &report_aggregation.report_id().as_ref(),
                     /* client_timestamp */
@@ -2485,8 +2470,7 @@ WHERE report_aggregations.aggregation_job_id = aggregation_jobs.id
                         .time()
                         .as_date_time(task_info.time_precision)?,
                     /* ord */ &TryInto::<i64>::try_into(report_aggregation.ord())?,
-                    /* threshold */
-                    &task_info.report_expiry_threshold(now)?,
+                    /* threshold */ &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,

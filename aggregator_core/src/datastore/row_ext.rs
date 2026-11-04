@@ -13,10 +13,9 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    AggregateShareId, AggregationJobId, CollectionJobId, CollectionJobReq, Duration, Extension,
-    HpkeCiphertext, HpkeConfig, Query, ReportId, ReportIdChecksum, ReportMetadata, Role,
-    TaskConfiguration, TaskId, Time, TimePrecision, VerifyContinue, VerifyInit, VerifyResp,
-    batch_mode::BatchMode,
+    AggregateShareId, CollectionJobId, CollectionJobReq, Duration, Extension, HpkeCiphertext,
+    HpkeConfig, Query, ReportId, ReportIdChecksum, ReportMetadata, Role, TaskConfiguration, TaskId,
+    Time, TimePrecision, VerifyContinue, VerifyInit, VerifyResp, batch_mode::BatchMode,
 };
 use postgres_types::{FromSql, Json};
 use prio::{
@@ -31,10 +30,11 @@ use crate::{
     datastore::{
         Crypter, Error,
         models::{
-            AggregateShareJob, AggregationJob, AggregatorRole, AuthenticationTokenType,
-            BatchAggregation, BatchAggregationState, BatchAggregationStateCode, CollectionJob,
-            CollectionJobState, CollectionJobStateCode, HpkeKeypair, LeaderStoredReport,
-            ReportAggregation, ReportAggregationState, ReportAggregationStateCode, SqlInterval,
+            AggregateShareJob, AggregationJob, AggregationJobDatastoreId, AggregationJobState,
+            AggregatorRole, AuthenticationTokenType, BatchAggregation, BatchAggregationState,
+            BatchAggregationStateCode, CollectionJob, CollectionJobState, CollectionJobStateCode,
+            HpkeKeypair, LeaderStoredReport, ReportAggregation, ReportAggregationState,
+            ReportAggregationStateCode, SqlInterval,
         },
     },
     task::{self, AggregationMode, AggregatorTask, AggregatorTaskParameters},
@@ -105,7 +105,7 @@ pub(super) trait RowExt {
     fn aggregation_job<const SEED_SIZE: usize, B, A>(
         &self,
         task_id: &TaskId,
-        aggregation_job_id: &AggregationJobId,
+        aggregation_job_datastore_id: AggregationJobDatastoreId,
     ) -> Result<AggregationJob<SEED_SIZE, B, A>, Error>
     where
         B: BatchMode,
@@ -117,7 +117,7 @@ pub(super) trait RowExt {
         vdaf: &A,
         role: &Role,
         task_id: &TaskId,
-        aggregation_job_id: &AggregationJobId,
+        aggregation_job_datastore_id: AggregationJobDatastoreId,
         report_id: &ReportId,
         time_precision: TimePrecision,
     ) -> Result<ReportAggregation<SEED_SIZE, A>, Error>
@@ -419,7 +419,7 @@ impl RowExt for Row {
     fn aggregation_job<const SEED_SIZE: usize, B, A>(
         &self,
         task_id: &TaskId,
-        aggregation_job_id: &AggregationJobId,
+        aggregation_job_datastore_id: AggregationJobDatastoreId,
     ) -> Result<AggregationJob<SEED_SIZE, B, A>, Error>
     where
         B: BatchMode,
@@ -430,12 +430,15 @@ impl RowExt for Row {
             .into();
 
         let mut job = AggregationJob::new(
+            aggregation_job_datastore_id,
             *task_id,
-            *aggregation_job_id,
             A::AggregationParam::get_decoded(self.get("aggregation_param"))?,
             B::PartialBatchIdentifier::get_decoded(self.get::<_, &[u8]>("batch_id"))?,
             client_timestamp_interval,
-            self.get("state"),
+            AggregationJobState::new(
+                self.get("state"),
+                self.get_nullable_bytea_and_convert("aggregation_job_id")?,
+            )?,
             self.get_postgres_integer_and_convert::<i32, _, _>("step")?,
         );
 
@@ -455,7 +458,7 @@ impl RowExt for Row {
         vdaf: &A,
         role: &Role,
         task_id: &TaskId,
-        aggregation_job_id: &AggregationJobId,
+        aggregation_job_datastore_id: AggregationJobDatastoreId,
         report_id: &ReportId,
         time_precision: TimePrecision,
     ) -> Result<ReportAggregation<SEED_SIZE, A>, Error>
@@ -693,7 +696,7 @@ impl RowExt for Row {
 
         Ok(ReportAggregation::new(
             *task_id,
-            *aggregation_job_id,
+            aggregation_job_datastore_id,
             *report_id,
             time,
             ord,

@@ -34,7 +34,7 @@ use prio::{
     topology::ping_pong::PingPongContinuation,
     vdaf::Aggregatable,
 };
-use rand::{RngExt, distr::StandardUniform, prelude::Distribution};
+use rand::{Rng, RngExt, distr::StandardUniform, prelude::Distribution};
 use serde::{Deserialize, Serialize};
 
 use crate::{AsyncAggregator, datastore::Error, task};
@@ -168,7 +168,7 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> LeaderStoredReport<S
     #[cfg(feature = "test-util")]
     pub fn as_leader_init_report_aggregation(
         &self,
-        aggregation_job_id: AggregationJobId,
+        aggregation_job_id: AggregationJobDatastoreId,
         ord: u64,
     ) -> ReportAggregation<SEED_SIZE, A> {
         ReportAggregation::new(
@@ -360,14 +360,55 @@ impl AggregatorRole {
     }
 }
 
+/// Unique identifier for an aggregation job.
+///
+/// This is not to be confused with a DAP [`AggregationJobId`], the protocol-level identifier for
+/// jobs. Janus uses this identifier to refer to aggregation jobs because until the helper assigns a
+/// DAP job ID, the leader doesn't know what value to use.
+///
+/// The wrapped value is an `i64` because it is the primary key value of the aggregation jobs table,
+/// which is a PostgreSQL `BIGINT`, which is represented in Rust as `i64` ([1]).
+///
+/// [1]: https://docs.rs/postgres-types/latest/postgres_types/trait.FromSql.html
+#[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, FromSql, ToSql)]
+#[postgres(transparent)]
+pub struct AggregationJobDatastoreId(i64);
+
+impl AggregationJobDatastoreId {
+    /// Fake datastore ID suitable for use in tests where the value doesn't matter.
+    #[cfg(feature = "test-util")]
+    pub const TEST: Self = Self(0);
+}
+
+impl From<i64> for AggregationJobDatastoreId {
+    fn from(value: i64) -> Self {
+        Self(value)
+    }
+}
+
+impl Debug for AggregationJobDatastoreId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "AggregationJobDatastoreId({}", self.0)
+    }
+}
+
+impl Distribution<AggregationJobDatastoreId> for StandardUniform {
+    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> AggregationJobDatastoreId {
+        AggregationJobDatastoreId(rng.random())
+    }
+}
+
 /// AggregationJob represents an aggregation job from the DAP specification.
 #[derive(Clone, Educe)]
 #[educe(Debug, PartialEq, Eq)]
 pub struct AggregationJob<const SEED_SIZE: usize, B: BatchMode, A: AsyncAggregator<SEED_SIZE>> {
+    /// Unique identifier for the job.
+    ///
+    /// Not to be confused with the DAP [`AggregationJobId`], which may be obtained using
+    /// [`Self::aggregation_job_id`].
+    datastore_id: AggregationJobDatastoreId,
     /// The ID of the task this aggregation job belongs to.
     task_id: TaskId,
-    /// The ID of this aggregation job.
-    aggregation_job_id: AggregationJobId,
     /// The aggregation parameter this job is run with.
     #[educe(Debug(ignore))]
     aggregation_parameter: A::AggregationParam,
@@ -390,9 +431,13 @@ impl<const SEED_SIZE: usize, B: BatchMode, A: AsyncAggregator<SEED_SIZE>>
     AggregationJob<SEED_SIZE, B, A>
 {
     /// Creates a new [`AggregationJob`].
+    ///
+    /// `datastore_id` will generally be the primary key value assigned by PostgreSQL when inserting
+    /// into the `aggregation_jobs` table, but in some cases, like `AggregationJobWriter`, it may be
+    /// an ephemeral identifier for a job that hasn't been written to the datastore yet.
     pub fn new(
+        datastore_id: AggregationJobDatastoreId,
         task_id: TaskId,
-        aggregation_job_id: AggregationJobId,
         aggregation_parameter: A::AggregationParam,
         batch_id: B::PartialBatchIdentifier,
         client_timestamp_interval: Interval,
@@ -400,8 +445,8 @@ impl<const SEED_SIZE: usize, B: BatchMode, A: AsyncAggregator<SEED_SIZE>>
         step: AggregationJobStep,
     ) -> Self {
         Self {
+            datastore_id,
             task_id,
-            aggregation_job_id,
             aggregation_parameter,
             batch_id,
             client_timestamp_interval,
@@ -411,14 +456,33 @@ impl<const SEED_SIZE: usize, B: BatchMode, A: AsyncAggregator<SEED_SIZE>>
         }
     }
 
+    /// The datastore ID of the job.
+    pub fn datastore_id(&self) -> AggregationJobDatastoreId {
+        self.datastore_id
+    }
+
+    /// Set the datastore ID of the job.
+    pub fn with_datastore_id(self, datastore_id: AggregationJobDatastoreId) -> Self {
+        Self {
+            datastore_id,
+            ..self
+        }
+    }
+
     /// Returns the task ID associated with this aggregation job.
     pub fn task_id(&self) -> &TaskId {
         &self.task_id
     }
 
-    /// Returns the aggregation job ID associated with this aggregation job.
-    pub fn id(&self) -> &AggregationJobId {
-        &self.aggregation_job_id
+    /// The DAP aggregation job ID, if any, of this job.
+    pub fn id(&self) -> Option<&AggregationJobId> {
+        self.state.aggregation_job_id()
+    }
+
+    /// The DAP aggregation job ID, if any, of this job, in a form implementing `ToSql` and
+    /// `FromSql`.
+    pub fn id_bytes(&self) -> Option<&[u8; AggregationJobId::LEN]> {
+        self.state.aggregation_job_id_bytes()
     }
 
     /// Returns the aggregation parameter associated with this aggregation job.
@@ -500,39 +564,150 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>>
 /// AggregationJobState represents the internal operational state of an aggregation job. This
 /// corresponds to the AGGREGATION_JOB_STATE enum in the schema.
 ///
-/// These are implementation-specific states used for Janus's internal state management.
-/// DAP §4.6 [dap-16] defines aggregation job completion in terms of individual
-/// report verification states (Continued, FinishedWithOutbound, Finished, Rejected), not job-level
-/// states. This enum provides operational states for managing the lifecycle of aggregation
-/// jobs within Janus.
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, ToSql, FromSql)]
-#[postgres(name = "aggregation_job_state")]
+/// These are implementation-specific states used for Janus's internal state management. DAP §4.5
+/// [dap-20] defines aggregation job completion in terms of individual report verification states
+/// (Continued, FinishedWithOutbound, Finished, Rejected), not job-level states. This enum provides
+/// operational states for managing the lifecycle of aggregation jobs within Janus.
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum AggregationJobState {
-    /// Job is ready for the aggregation job driver to drive. Corresponds to the
-    /// initialization phase in DAP (§4.6.2 [dap-16]).
-    #[postgres(name = "ACTIVE")]
-    Active,
-    /// Helper has completed processing one request and is waiting for the Leader's next
-    /// request. Represents the interval between aggregation rounds in DAP's continuation
-    /// phase (§4.6.3 [dap-16]). The Helper has sent an AggregationJobResp but some reports
-    /// remain in the Continued state awaiting the next AggregationJobContinueReq.
-    #[postgres(name = "AWAITING_REQUEST")]
-    AwaitingRequest,
-    /// All report aggregations have reached a terminal state (Finished or Failed), completing
-    /// the aggregation job lifecycle (§4.6 [dap-16]). Output shares have been committed to
-    /// batch buckets for collection. This is a terminal state indicating normal completion.
-    #[postgres(name = "FINISHED")]
-    Finished,
-    /// Job processing encountered an unrecoverable error and was explicitly abandoned. This is
-    /// an implementation-specific terminal state used for operational issues beyond DAP's
+    /// Job has been scheduled and is ready for the aggregation job driver to drive.
+    ///
+    /// Corresponds to the leader initialization phase in DAP (§4.5.3.1 [dap-20]). The aggregation
+    /// job ID is not yet known by leaders in this state because the helper has not assigned it, but
+    /// will always be set for the helper.
+    ///
+    /// This state can only be entered by the leader.
+    Active {
+        helper_aggregation_job_id: Option<AggregationJobId>,
+    },
+    /// Helper has completed processing one request and is waiting for the Leader's next request.
+    ///
+    /// Represents the interval between aggregation rounds in DAP's continuation phase (§4.5.4
+    /// [dap-20]). The Helper has sent an AggregationJobResp but some reports remain in the
+    /// Continued state awaiting the next AggregationJobContinueReq.
+    ///
+    /// This state can only be entered by helpers.
+    AwaitingRequest {
+        helper_aggregation_job_id: AggregationJobId,
+    },
+    /// All report aggregations have reached a terminal state (Finished or Failed), completing the
+    /// aggregation job lifecycle (§4.5 [dap-20]). Output shares have been committed to batch
+    /// buckets for collection. This is a terminal state indicating normal completion.
+    ///
+    /// Both leaders and helpers can enter this state.
+    Finished {
+        helper_aggregation_job_id: AggregationJobId,
+    },
+    /// Job processing encountered an unrecoverable error and was explicitly abandoned. This is an
+    /// implementation-specific terminal state used for operational issues beyond DAP's
     /// protocol-level error handling (e.g., excessive lease contention, resource exhaustion).
     /// Unlike Finished, this indicates the job did not complete the DAP aggregation lifecycle
     /// normally.
+    Abandoned {
+        helper_aggregation_job_id: AggregationJobId,
+    },
+    /// Job has been marked for deletion, either by garbage collection or by using the HTTP DELETE
+    /// endpoint, and should not be processed further. This is a terminal state used during cleanup.
+    ///
+    /// Both leaders and helpers can enter this state.
+    Deleted {
+        helper_aggregation_job_id: AggregationJobId,
+    },
+}
+
+impl AggregationJobState {
+    pub(super) fn new(
+        code: AggregationJobStateCode,
+        helper_aggregation_job_id: Option<AggregationJobId>,
+    ) -> Result<Self, Error> {
+        if code == AggregationJobStateCode::Active {
+            Ok(AggregationJobState::Active {
+                helper_aggregation_job_id,
+            })
+        } else if let Some(helper_aggregation_job_id) = helper_aggregation_job_id {
+            Ok(match code {
+                AggregationJobStateCode::AwaitingRequest => AggregationJobState::AwaitingRequest {
+                    helper_aggregation_job_id,
+                },
+                AggregationJobStateCode::Finished => AggregationJobState::Finished {
+                    helper_aggregation_job_id,
+                },
+                AggregationJobStateCode::Abandoned => AggregationJobState::Abandoned {
+                    helper_aggregation_job_id,
+                },
+                AggregationJobStateCode::Deleted => AggregationJobState::Deleted {
+                    helper_aggregation_job_id,
+                },
+                code => panic!("unexpected state {code:?}"),
+            })
+        } else {
+            Err(Error::DbState(format!(
+                "state is {code:?} but helper_aggregation_job_id is NULL"
+            )))
+        }
+    }
+
+    pub(super) fn leader_active() -> Self {
+        Self::Active {
+            helper_aggregation_job_id: None,
+        }
+    }
+}
+
+impl AggregationJobState {
+    /// The [`AggregationJobStateCode`] corresponding to this state.
+    pub(super) fn code(&self) -> AggregationJobStateCode {
+        match self {
+            Self::Active { .. } => AggregationJobStateCode::Active,
+            Self::AwaitingRequest { .. } => AggregationJobStateCode::AwaitingRequest,
+            Self::Finished { .. } => AggregationJobStateCode::Finished,
+            Self::Abandoned { .. } => AggregationJobStateCode::Abandoned,
+            Self::Deleted { .. } => AggregationJobStateCode::Deleted,
+        }
+    }
+
+    /// The DAP aggregation job ID, if any, of this job.
+    pub(super) fn aggregation_job_id(&self) -> Option<&AggregationJobId> {
+        match self {
+            AggregationJobState::Active {
+                helper_aggregation_job_id,
+            } => helper_aggregation_job_id.as_ref(),
+            AggregationJobState::AwaitingRequest {
+                helper_aggregation_job_id,
+            }
+            | AggregationJobState::Finished {
+                helper_aggregation_job_id,
+            }
+            | AggregationJobState::Abandoned {
+                helper_aggregation_job_id,
+            }
+            | AggregationJobState::Deleted {
+                helper_aggregation_job_id,
+            } => Some(helper_aggregation_job_id),
+        }
+    }
+
+    /// The DAP aggregation job ID, if any, of this job, in a form implementing `ToSql` and
+    /// `FromSql`.
+    pub fn aggregation_job_id_bytes(&self) -> Option<&[u8; AggregationJobId::LEN]> {
+        self.aggregation_job_id().map(|id| id.as_ref())
+    }
+}
+
+// AggregationJobStateCode exists alongside the public AggregationJobState because there is no
+// apparent way to denote a Postgres enum literal without deriving FromSql/ToSql on a Rust enum
+// type, but it is not possible to derive FromSql/ToSql on a non-C-style enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, FromSql, ToSql)]
+#[postgres(name = "aggregation_job_state")]
+pub(super) enum AggregationJobStateCode {
+    #[postgres(name = "ACTIVE")]
+    Active,
+    #[postgres(name = "AWAITING_REQUEST")]
+    AwaitingRequest,
+    #[postgres(name = "FINISHED")]
+    Finished,
     #[postgres(name = "ABANDONED")]
     Abandoned,
-    /// Job has been marked for deletion, either by garbage collection or by using the HTTP
-    /// DELETE endpoint, and should not be processed further. This is a terminal state used
-    /// during cleanup.
     #[postgres(name = "DELETED")]
     Deleted,
 }
@@ -670,7 +845,7 @@ impl<T> Lease<T> {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AcquiredAggregationJob {
     task_id: TaskId,
-    aggregation_job_id: AggregationJobId,
+    aggregation_job_id: AggregationJobDatastoreId,
     batch_mode: task::BatchMode,
     vdaf: VdafInstance,
 }
@@ -679,7 +854,7 @@ impl AcquiredAggregationJob {
     /// Creates a new [`AcquiredAggregationJob`].
     pub fn new(
         task_id: TaskId,
-        aggregation_job_id: AggregationJobId,
+        aggregation_job_id: AggregationJobDatastoreId,
         batch_mode: task::BatchMode,
         vdaf: VdafInstance,
     ) -> Self {
@@ -696,9 +871,9 @@ impl AcquiredAggregationJob {
         &self.task_id
     }
 
-    /// Returns the aggregation job ID associated with this acquired aggregation job.
-    pub fn aggregation_job_id(&self) -> &AggregationJobId {
-        &self.aggregation_job_id
+    /// The aggregation job datastore ID.
+    pub fn aggregation_job_id(&self) -> AggregationJobDatastoreId {
+        self.aggregation_job_id
     }
 
     /// Returns the batch mode associated with this acquired aggregation job.
@@ -809,7 +984,7 @@ impl AcquiredCollectionJob {
 #[cfg_attr(feature = "test-util", educe(PartialEq, Eq))]
 pub struct ReportAggregation<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> {
     task_id: TaskId,
-    aggregation_job_id: AggregationJobId,
+    aggregation_job_id: AggregationJobDatastoreId,
     report_id: ReportId,
     time: Time,
     ord: u64,
@@ -821,7 +996,7 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> ReportAggregation<SE
     /// Creates a new [`ReportAggregation`].
     pub fn new(
         task_id: TaskId,
-        aggregation_job_id: AggregationJobId,
+        aggregation_job_id: AggregationJobDatastoreId,
         report_id: ReportId,
         time: Time,
         ord: u64,
@@ -844,9 +1019,17 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> ReportAggregation<SE
         &self.task_id
     }
 
-    /// Returns the aggregation job ID associated with this report aggregation.
-    pub fn aggregation_job_id(&self) -> &AggregationJobId {
-        &self.aggregation_job_id
+    /// The aggregation job datastore ID.
+    pub fn aggregation_job_id(&self) -> AggregationJobDatastoreId {
+        self.aggregation_job_id
+    }
+
+    /// Set the aggregation job datastore ID.
+    pub fn with_aggregation_job_id(self, aggregation_job_id: AggregationJobDatastoreId) -> Self {
+        Self {
+            aggregation_job_id,
+            ..self
+        }
     }
 
     /// Returns the report ID associated with this report aggregation.
@@ -1286,7 +1469,7 @@ pub enum ReportAggregationMetadataState {
 #[derive(Clone, Debug)]
 pub struct ReportAggregationMetadata {
     task_id: TaskId,
-    aggregation_job_id: AggregationJobId,
+    aggregation_job_datastore_id: AggregationJobDatastoreId,
     report_id: ReportId,
     time: Time,
     ord: u64,
@@ -1297,7 +1480,7 @@ impl ReportAggregationMetadata {
     /// Creates a new [`ReportAggregationMetadata`].
     pub fn new(
         task_id: TaskId,
-        aggregation_job_id: AggregationJobId,
+        aggregation_job_datastore_id: AggregationJobDatastoreId,
         report_id: ReportId,
         time: Time,
         ord: u64,
@@ -1305,7 +1488,7 @@ impl ReportAggregationMetadata {
     ) -> Self {
         Self {
             task_id,
-            aggregation_job_id,
+            aggregation_job_datastore_id,
             report_id,
             time,
             ord,
@@ -1318,9 +1501,9 @@ impl ReportAggregationMetadata {
         &self.task_id
     }
 
-    /// Returns the aggregation job ID associated with this report aggregation.
-    pub fn aggregation_job_id(&self) -> &AggregationJobId {
-        &self.aggregation_job_id
+    /// The aggregation job datastore ID.
+    pub fn aggregation_job_datastore_id(&self) -> AggregationJobDatastoreId {
+        self.aggregation_job_datastore_id
     }
 
     /// Returns the report ID associated with this report aggregation.

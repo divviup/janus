@@ -13,7 +13,9 @@ use tokio_postgres::Row;
 
 use crate::datastore::{
     AsyncAggregator, Error, RowExt, Transaction,
-    models::{AcquiredAggregationJob, AcquiredCollectionJob, LeaseToken},
+    models::{
+        AcquiredAggregationJob, AcquiredCollectionJob, AggregationJobDatastoreId, LeaseToken,
+    },
     task,
 };
 
@@ -140,7 +142,7 @@ WHERE collection_jobs.task_id = $1
     >(
         &self,
         task_id: &TaskId,
-        aggregation_job_id: &AggregationJobId,
+        aggregation_job_datastore_id: AggregationJobDatastoreId,
     ) -> Result<Option<MaybeLease<AcquiredAggregationJob>>, Error> {
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
@@ -152,11 +154,11 @@ WHERE collection_jobs.task_id = $1
                 r#"-- get_aggregation_job_lease
 SELECT
     aggregation_jobs.id, aggregation_jobs.aggregation_job_id, aggregation_jobs.lease_expiry,
-    aggregation_jobs.lease_token, aggregation_jobs.lease_attempts,  tasks.batch_mode, tasks.vdaf,
+    aggregation_jobs.lease_token, aggregation_jobs.lease_attempts, tasks.batch_mode, tasks.vdaf,
     tasks.task_id
 FROM aggregation_jobs JOIN tasks ON tasks.id = aggregation_jobs.task_id
 WHERE aggregation_jobs.task_id = $1
-    AND aggregation_jobs.aggregation_job_id = $2
+    AND aggregation_jobs.id = $2
     AND UPPER(aggregation_jobs.client_timestamp_interval) >= $3"#,
             )
             .await?;
@@ -165,9 +167,8 @@ WHERE aggregation_jobs.task_id = $1
             &stmt,
             &[
                 /* task ID */ &task_info.pkey,
-                /* aggregation_job_id */ &aggregation_job_id.as_ref(),
-                /* threshold */
-                &task_info.report_expiry_threshold(self.clock.now())?,
+                /* aggregation_job_id */ &aggregation_job_datastore_id,
+                /* threshold */ &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
@@ -305,8 +306,7 @@ impl LeaseRowExt for Row {
 
     fn acquired_aggregation_job(&self) -> Result<AcquiredAggregationJob, Error> {
         let task_id = TaskId::get_decoded(self.get("task_id"))?;
-        let aggregation_job_id =
-            self.get_bytea_and_convert::<AggregationJobId>("aggregation_job_id")?;
+        let aggregation_job_id = self.get("id");
         let query_type = self.try_get::<_, Json<task::BatchMode>>("batch_mode")?.0;
         let vdaf = self.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
         Ok(AcquiredAggregationJob::new(

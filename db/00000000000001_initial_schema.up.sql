@@ -262,36 +262,65 @@ CREATE INDEX client_reports_task_and_timestamp_index ON client_reports(task_id, 
 
 -- Specifies the possible state of an aggregation job.
 CREATE TYPE AGGREGATION_JOB_STATE AS ENUM(
-    'ACTIVE',            -- at least one included report is in a non-terminal state, processing can continue at will
-    'AWAITING_REQUEST',  -- at least one included report is in a non-terminal state, awaiting a request from the Leader to continue processing
-    'FINISHED',          -- all reports have reached a terminal state (FINISHED, FAILED)
-    'ABANDONED',         -- we have given up on the aggregation job entirely
-    'DELETED'            -- this aggregation job has been deleted
+    -- At least one included report is in a non-terminal state, processing can continue at will.
+    -- Aggregation job ID is not known by the leader.
+    'ACTIVE',
+    -- at least one included report is in a non-terminal state, awaiting a request from the Leader
+    -- to continue processing
+    'AWAITING_REQUEST',
+    -- all reports have reached a terminal state (FINISHED, FAILED)
+    'FINISHED',
+    -- we have given up on the aggregation job entirely
+    'ABANDONED',
+    -- this aggregation job has been deleted
+    'DELETED'
 );
 
 -- An aggregation job, representing the aggregation of a number of client reports.
 CREATE TABLE aggregation_jobs(
-    id                         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
-    task_id                    BIGINT NOT NULL,                 -- ID of related task
-    aggregation_job_id         BYTEA NOT NULL,                  -- 16-byte AggregationJobID as defined by the DAP specification
-    aggregation_param          BYTEA NOT NULL,                  -- encoded aggregation parameter (opaque VDAF message)
-    batch_id                   BYTEA NOT NULL,                  -- batch ID (leader-selected only; corresponds to identifier in BatchSelector)
+    -- Primary key and unique identifier for the job.
+    --
+    -- Since the DAP aggregation job ID is not always available, this identifier is used in Janus to
+    -- uniquely refer to an aggregation job, but it has no meaning outside of a particular
+    -- aggregator.
+    id                         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    -- ID of related task
+    task_id                    BIGINT NOT NULL,
+    -- The 16-byte AggregationJobID as defined by DAP. Chosen by the helper.
+    --
+    -- This column is populated for either role if in states AWAITING_REQUEST, FINISHED, ABANDONED
+    -- or DELETED and for helper jobs in state ACTIVE. The column is NULL for leader jobs in state
+    -- ACTIVE, because the helper hasn't yet assigned an aggregation job ID.
+    aggregation_job_id BYTEA,
+    -- encoded aggregation parameter (opaque VDAF message)
+    aggregation_param          BYTEA NOT NULL,
+    -- batch ID (leader-selected only; corresponds to identifier in BatchSelector)
+    batch_id                   BYTEA NOT NULL,
     -- The minimal interval, in time precision units, containing all of client timestamps included
     -- in this aggregation job
     client_timestamp_interval  INT8RANGE NOT NULL,
-    state                      AGGREGATION_JOB_STATE NOT NULL,  -- current state of the aggregation job
-    step                       INTEGER NOT NULL,                -- current step of the aggregation job
-    last_request_hash          BYTEA,                           -- SHA-256 hash of the most recently received AggregationJobInitReq or AggregationJobContinueReq (helper only)
+    -- current state of the aggregation job
+    state                      AGGREGATION_JOB_STATE NOT NULL,
+    -- current step of the aggregation job
+    step                       INTEGER NOT NULL,
+    -- SHA-256 hash of the most recently received AggregationJobInitReq or AggregationJobContinueReq
+    -- (helper only)
+    last_request_hash          BYTEA,
 
     -- when lease on this aggregation job expires; -infinity implies no current lease
     lease_expiry             TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT TIMESTAMP WITH TIME ZONE '-infinity',
-    lease_token              BYTEA,                                             -- a value identifying the current leaseholder; NULL implies no current lease
-    lease_attempts           BIGINT NOT NULL DEFAULT 0,                         -- the number of lease acquiries since the last successful lease release
+    -- a value identifying the current leaseholder; NULL implies no current lease
+    lease_token              BYTEA,
+    -- the number of lease acquiries since the last successful lease release
+    lease_attempts           BIGINT NOT NULL DEFAULT 0,
 
     -- creation/update records
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL,  -- when the row was created
-    updated_at TIMESTAMP WITH TIME ZONE NOT NULL,  -- when the row was last changed
-    updated_by TEXT NOT NULL,       -- the name of the transaction that last updated the row
+    -- when the row was created
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    -- when the row was last changed
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    -- the name of the transaction that last updated the row
+    updated_by TEXT NOT NULL,
 
     CONSTRAINT aggregation_jobs_unique_id UNIQUE(task_id, aggregation_job_id),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
@@ -319,7 +348,10 @@ CREATE TYPE REPORT_AGGREGATION_STATE AS ENUM(
 CREATE TABLE report_aggregations(
     id                  BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
     task_id             BIGINT NOT NULL,                    -- ID of related task
-    aggregation_job_id  BIGINT NOT NULL,                    -- the aggregation job ID this report aggregation is associated with
+    -- The aggregation job this report aggregation is associated with.
+    --
+    -- This value is the primary key `aggregation_jobs.id`, not a DAP `AggregationJobId`.
+    aggregation_job_id  BIGINT NOT NULL,
     ord                 BIGINT NOT NULL,                    -- a value used to specify the ordering of client reports in the aggregation job
     client_report_id    BYTEA NOT NULL,                     -- the client report ID this report aggregation is associated with
     -- the client timestamp this report aggregation is associated with

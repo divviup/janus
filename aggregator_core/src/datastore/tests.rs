@@ -24,11 +24,11 @@ use janus_core::{
     vdaf::{VERIFY_KEY_LENGTH_PRIO3, VdafInstance, vdaf_dp_strategies},
 };
 use janus_messages::{
-    AggregateShareAad, AggregationJobId, AggregationJobStep, BatchConfig, BatchId,
-    CollectionJobExtension, CollectionJobExtensionType, CollectionJobId, CollectionJobReq,
-    Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, Interval, Query, ReportError,
-    ReportId, ReportIdChecksum, ReportMetadata, ReportShare, Role, TaskId, Time, TimePrecision,
-    VdafConfig, VerifyContinue, VerifyInit, VerifyResp, VerifyStepResult,
+    AggregateShareAad, AggregationJobStep, BatchConfig, BatchId, CollectionJobExtension,
+    CollectionJobExtensionType, CollectionJobId, CollectionJobReq, Duration, Extension,
+    ExtensionType, HpkeCiphertext, HpkeConfigId, Interval, Query, ReportError, ReportId,
+    ReportIdChecksum, ReportMetadata, ReportShare, Role, TaskId, Time, TimePrecision, VdafConfig,
+    VerifyContinue, VerifyInit, VerifyResp, VerifyStepResult,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
 };
 use postgres_types::Timestamp;
@@ -40,7 +40,7 @@ use prio::{
     topology::ping_pong::PingPongMessage,
     vdaf::{dummy, prio3::Prio3Count},
 };
-use rand::{RngExt, distr::StandardUniform, random, rng};
+use rand::random;
 use tokio::{time::timeout, try_join};
 use url::Url;
 
@@ -53,11 +53,12 @@ use crate::{
         Crypter, Datastore, Error, RowExt, SUPPORTED_SCHEMA_VERSIONS, Transaction,
         models::{
             AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob,
-            AggregateShareJobState, AggregationJob, AggregationJobState, BatchAggregation,
-            BatchAggregationState, CollectionJob, CollectionJobState, CollectionJobStateCode,
-            ExpirableAggregateShareJob, HpkeKeyState, HpkeKeypair, LeaderStoredReport, Lease,
-            OutstandingBatch, ReportAggregation, ReportAggregationMetadata,
-            ReportAggregationMetadataState, ReportAggregationState, SqlInterval,
+            AggregateShareJobState, AggregationJob, AggregationJobDatastoreId, AggregationJobState,
+            BatchAggregation, BatchAggregationState, CollectionJob, CollectionJobState,
+            CollectionJobStateCode, ExpirableAggregateShareJob, HpkeKeyState, HpkeKeypair,
+            LeaderStoredReport, Lease, OutstandingBatch, ReportAggregation,
+            ReportAggregationMetadata, ReportAggregationMetadataState, ReportAggregationState,
+            SqlInterval,
         },
         schema_versions_template,
         test_util::{
@@ -1165,6 +1166,8 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
     ds.run_unnamed_tx(|tx| {
         let (task, aggregated_report) = (task.clone(), aggregated_report.clone());
         Box::pin(async move {
+            use crate::datastore::models::AggregationJobDatastoreId;
+
             tx.put_collection_job(&CollectionJob::<0, TimeInterval, dummy::Vdaf>::new(
                 *task.id(),
                 random(),
@@ -1225,17 +1228,17 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
             ))
             .await?;
 
-            let aggregation_job_id = random();
-            tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
-                *task.id(),
-                aggregation_job_id,
-                dummy::AggregationParam(0),
-                (),
-                Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
-                AggregationJobState::Active,
-                AggregationJobStep::from(0),
-            ))
-            .await?;
+            let aggregation_job_id = tx
+                .put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
+                    AggregationJobDatastoreId::TEST,
+                    *task.id(),
+                    dummy::AggregationParam(0),
+                    (),
+                    Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
+                    AggregationJobState::leader_active(),
+                    AggregationJobStep::from(0),
+                ))
+                .await?;
             tx.put_report_aggregation(
                 &aggregated_report.as_leader_init_report_aggregation(aggregation_job_id, 0),
             )
@@ -1541,58 +1544,43 @@ async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatasto
                     START_TIME.add_duration(&Duration::ONE).unwrap(),
                 );
 
-                let expired_aggregation_job = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
-                    *task.id(),
-                    random(),
-                    dummy::AggregationParam(22),
-                    batch_id,
-                    Interval::minimal(START_TIME.sub_duration(&Duration::ONE).unwrap()).unwrap(),
-                    AggregationJobState::Active,
-                    AggregationJobStep::from(0),
-                );
-                let expired_report_aggregation = expired_report
-                    .as_leader_init_report_aggregation(*expired_aggregation_job.id(), 0);
-
-                let aggregation_job_0 = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
-                    *task.id(),
-                    random(),
-                    dummy::AggregationParam(22),
-                    batch_id,
-                    Interval::minimal(START_TIME).unwrap(),
-                    AggregationJobState::Active,
-                    AggregationJobStep::from(0),
-                );
-                let aggregation_job_0_report_aggregation_0 =
-                    report_0.as_leader_init_report_aggregation(*aggregation_job_0.id(), 1);
-                let aggregation_job_0_report_aggregation_1 =
-                    report_1.as_leader_init_report_aggregation(*aggregation_job_0.id(), 2);
-
-                let aggregation_job_1 = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
-                    *task.id(),
-                    random(),
-                    dummy::AggregationParam(23),
-                    batch_id,
-                    Interval::minimal(Time::from_time_precision_units(1)).unwrap(),
-                    AggregationJobState::Active,
-                    AggregationJobStep::from(0),
-                );
-                let aggregation_job_1_report_aggregation_0 =
-                    report_0.as_leader_init_report_aggregation(*aggregation_job_1.id(), 0);
-                let aggregation_job_1_report_aggregation_1 =
-                    report_1.as_leader_init_report_aggregation(*aggregation_job_1.id(), 1);
-
                 tx.put_client_report(&expired_report).await.unwrap();
                 tx.put_client_report(&report_0).await.unwrap();
                 tx.put_client_report(&report_1).await.unwrap();
 
-                tx.put_aggregation_job(&expired_aggregation_job)
+                let expired_aggregation_job = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
+                    AggregationJobDatastoreId::TEST,
+                    *task.id(),
+                    dummy::AggregationParam(22),
+                    batch_id,
+                    Interval::minimal(START_TIME.sub_duration(&Duration::ONE).unwrap()).unwrap(),
+                    AggregationJobState::leader_active(),
+                    AggregationJobStep::from(0),
+                );
+                let id = tx
+                    .put_aggregation_job(&expired_aggregation_job)
                     .await
                     .unwrap();
+                let expired_report_aggregation =
+                    expired_report.as_leader_init_report_aggregation(id, 0);
                 tx.put_report_aggregation(&expired_report_aggregation)
                     .await
                     .unwrap();
 
-                tx.put_aggregation_job(&aggregation_job_0).await.unwrap();
+                let aggregation_job_0 = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
+                    AggregationJobDatastoreId::TEST,
+                    *task.id(),
+                    dummy::AggregationParam(22),
+                    batch_id,
+                    Interval::minimal(START_TIME).unwrap(),
+                    AggregationJobState::leader_active(),
+                    AggregationJobStep::from(0),
+                );
+                let id = tx.put_aggregation_job(&aggregation_job_0).await.unwrap();
+                let aggregation_job_0_report_aggregation_0 =
+                    report_0.as_leader_init_report_aggregation(id, 1);
+                let aggregation_job_0_report_aggregation_1 =
+                    report_1.as_leader_init_report_aggregation(id, 2);
                 tx.put_report_aggregation(&aggregation_job_0_report_aggregation_0)
                     .await
                     .unwrap();
@@ -1600,7 +1588,21 @@ async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatasto
                     .await
                     .unwrap();
 
-                tx.put_aggregation_job(&aggregation_job_1).await.unwrap();
+                let aggregation_job_1 = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
+                    AggregationJobDatastoreId::TEST,
+                    *task.id(),
+                    dummy::AggregationParam(23),
+                    batch_id,
+                    Interval::minimal(Time::from_time_precision_units(1)).unwrap(),
+                    AggregationJobState::leader_active(),
+                    AggregationJobStep::from(0),
+                );
+                let id = tx.put_aggregation_job(&aggregation_job_1).await.unwrap();
+                let aggregation_job_1_report_aggregation_0 =
+                    report_0.as_leader_init_report_aggregation(id, 0);
+                let aggregation_job_1_report_aggregation_1 =
+                    report_1.as_leader_init_report_aggregation(id, 1);
+
                 tx.put_report_aggregation(&aggregation_job_1_report_aggregation_0)
                     .await
                     .unwrap();
@@ -1809,47 +1811,55 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
     .unwrap();
     let batch_id = random();
     let leader_aggregation_job = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
+        AggregationJobDatastoreId::TEST,
         *task.id(),
-        random(),
         dummy::AggregationParam(23),
         batch_id,
         Interval::minimal(START_TIME).unwrap(),
-        AggregationJobState::Active,
+        AggregationJobState::leader_active(),
         AggregationJobStep::from(0),
     );
     let helper_aggregation_job = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
+        AggregationJobDatastoreId::TEST,
         *task.id(),
-        random(),
         dummy::AggregationParam(23),
         random(),
         Interval::minimal(START_TIME).unwrap(),
-        AggregationJobState::Active,
+        AggregationJobState::Active {
+            helper_aggregation_job_id: Some(random()),
+        },
         AggregationJobStep::from(0),
     );
 
-    ds.run_tx("test-put-aggregation-jobs", |tx| {
-        let (task, leader_aggregation_job, helper_aggregation_job) = (
-            task.clone(),
-            leader_aggregation_job.clone(),
-            helper_aggregation_job.clone(),
-        );
-        Box::pin(async move {
-            tx.put_aggregator_task(&task).await.unwrap();
-            tx.put_aggregation_job(&leader_aggregation_job)
-                .await
-                .unwrap();
-            tx.put_aggregation_job(&helper_aggregation_job)
-                .await
-                .unwrap();
+    let (leader_id, helper_id) = ds
+        .run_tx("test-put-aggregation-jobs", |tx| {
+            let (task, leader_aggregation_job, helper_aggregation_job) = (
+                task.clone(),
+                leader_aggregation_job.clone(),
+                helper_aggregation_job.clone(),
+            );
+            Box::pin(async move {
+                tx.put_aggregator_task(&task).await.unwrap();
+                let leader_id = tx
+                    .put_aggregation_job(&leader_aggregation_job)
+                    .await
+                    .unwrap();
+                let helper_id = tx
+                    .put_aggregation_job(&helper_aggregation_job)
+                    .await
+                    .unwrap();
 
-            tx.check_timestamp_columns("aggregation_jobs", "test-put-aggregation-jobs", true)
-                .await;
+                tx.check_timestamp_columns("aggregation_jobs", "test-put-aggregation-jobs", true)
+                    .await;
 
-            Ok(())
+                Ok((leader_id, helper_id))
+            })
         })
-    })
-    .await
-    .unwrap();
+        .await
+        .unwrap();
+
+    let leader_aggregation_job = leader_aggregation_job.with_datastore_id(leader_id);
+    let helper_aggregation_job = helper_aggregation_job.with_datastore_id(helper_id);
 
     // Advance the clock to "enable" report expiry.
     clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
@@ -1864,13 +1874,13 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
                 Ok((
                     tx.get_aggregation_job(
                         leader_aggregation_job.task_id(),
-                        leader_aggregation_job.id(),
+                        leader_aggregation_job.datastore_id(),
                     )
                     .await
                     .unwrap(),
                     tx.get_aggregation_job(
                         helper_aggregation_job.task_id(),
-                        helper_aggregation_job.id(),
+                        helper_aggregation_job.datastore_id(),
                     )
                     .await
                     .unwrap(),
@@ -1888,10 +1898,15 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
         got_helper_aggregation_job.as_ref()
     );
 
-    let new_leader_aggregation_job = leader_aggregation_job
+    let new_leader_aggregation_job =
+        leader_aggregation_job
+            .clone()
+            .with_state(AggregationJobState::Finished {
+                helper_aggregation_job_id: random(),
+            });
+    let new_helper_aggregation_job = helper_aggregation_job
         .clone()
-        .with_state(AggregationJobState::Finished);
-    let new_helper_aggregation_job = helper_aggregation_job.with_last_request_hash([3; 32]);
+        .with_last_request_hash([3; 32]);
     ds.run_tx("test-update-aggregation-jobs", |tx| {
         let (new_leader_aggregation_job, new_helper_aggregation_job) = (
             new_leader_aggregation_job.clone(),
@@ -1929,13 +1944,13 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
                 Ok((
                     tx.get_aggregation_job(
                         new_leader_aggregation_job.task_id(),
-                        new_leader_aggregation_job.id(),
+                        new_leader_aggregation_job.datastore_id(),
                     )
                     .await
                     .unwrap(),
                     tx.get_aggregation_job(
                         new_helper_aggregation_job.task_id(),
-                        new_helper_aggregation_job.id(),
+                        new_helper_aggregation_job.datastore_id(),
                     )
                     .await
                     .unwrap(),
@@ -1954,20 +1969,20 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
     );
 
     // Trying to write an aggregation job again should fail.
-    let new_leader_aggregation_job = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
+    let new_helper_aggregation_job = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
+        AggregationJobDatastoreId::TEST,
         *task.id(),
-        *leader_aggregation_job.id(),
         dummy::AggregationParam(24),
         batch_id,
         Interval::minimal(Time::from_seconds_since_epoch(2300, task.time_precision())).unwrap(),
-        AggregationJobState::Active,
+        helper_aggregation_job.state().clone(),
         AggregationJobStep::from(0),
     );
     ds.run_unnamed_tx(|tx| {
-        let new_leader_aggregation_job = new_leader_aggregation_job.clone();
+        let new_helper_aggregation_job = new_helper_aggregation_job.clone();
         Box::pin(async move {
             let error = tx
-                .put_aggregation_job(&new_leader_aggregation_job)
+                .put_aggregation_job(&new_helper_aggregation_job)
                 .await
                 .unwrap_err();
             assert_matches!(error, Error::MutationTargetAlreadyExists);
@@ -1992,13 +2007,13 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
                 Ok((
                     tx.get_aggregation_job::<0, LeaderSelected, dummy::Vdaf>(
                         new_leader_aggregation_job.task_id(),
-                        new_leader_aggregation_job.id(),
+                        new_leader_aggregation_job.datastore_id(),
                     )
                     .await
                     .unwrap(),
                     tx.get_aggregation_job::<0, LeaderSelected, dummy::Vdaf>(
                         new_helper_aggregation_job.task_id(),
-                        new_helper_aggregation_job.id(),
+                        new_helper_aggregation_job.datastore_id(),
                     )
                     .await
                     .unwrap(),
@@ -2013,7 +2028,7 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
     // Make a "new" aggregation job with the same ID, but that is not expired. It should get
     // upserted, replacing the effectively GCed job.
     ds.run_unnamed_tx(|tx| {
-        let unexpired_aggregation_job = leader_aggregation_job
+        let unexpired_aggregation_job = helper_aggregation_job
             .clone()
             .with_client_timestamp_interval(
                 Interval::minimal(clock.now().to_time(&TIME_PRECISION)).unwrap(),
@@ -2026,7 +2041,7 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
             let aggregation_job_again = tx
                 .get_aggregation_job::<0, LeaderSelected, dummy::Vdaf>(
                     unexpired_aggregation_job.task_id(),
-                    unexpired_aggregation_job.id(),
+                    unexpired_aggregation_job.datastore_id(),
                 )
                 .await
                 .unwrap()
@@ -2078,24 +2093,15 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
     .helper_view()
     .unwrap();
 
-    let mut task_and_aggregation_job_ids: Vec<_> = [*leader_task.id(), *helper_task.id()]
-        .into_iter()
-        .cycle()
-        .zip(rng().sample_iter(StandardUniform))
-        .take(AGGREGATION_JOB_COUNT)
-        .collect();
-    task_and_aggregation_job_ids.sort();
-    let leader_aggregation_job_ids: Vec<_> = task_and_aggregation_job_ids
-        .iter()
-        .filter(|(t, _)| t == leader_task.id())
-        .map(|(_, j)| *j)
-        .collect();
-
-    let (finished_aggregation_job_id, expired_aggregation_job_id) = ds
+    let (
+        leader_aggregation_job_ids,
+        helper_aggregation_job_ids,
+        finished_aggregation_job_id,
+        expired_aggregation_job_id,
+    ) = ds
         .run_unnamed_tx(|tx| {
             let leader_task = leader_task.clone();
             let helper_task = helper_task.clone();
-            let task_and_aggregation_job_ids = task_and_aggregation_job_ids.clone();
 
             Box::pin(async move {
                 // Write a few aggregation jobs we expect to be able to retrieve with
@@ -2103,15 +2109,28 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
                 tx.put_aggregator_task(&leader_task).await.unwrap();
                 tx.put_aggregator_task(&helper_task).await.unwrap();
 
-                try_join_all(task_and_aggregation_job_ids.into_iter().map(
-                    |(task_id, aggregation_job_id)| async move {
-                        tx.put_aggregation_job(&AggregationJob::<
+                let mut leader_aggregation_job_datastore_ids = Vec::new();
+                let mut helper_aggregation_job_datastore_ids = Vec::new();
+
+                for idx in 0..AGGREGATION_JOB_COUNT {
+                    let (task_id, state) = if idx % 2 == 0 {
+                        (leader_task.id(), AggregationJobState::leader_active())
+                    } else {
+                        (
+                            helper_task.id(),
+                            AggregationJobState::Active {
+                                helper_aggregation_job_id: Some(random()),
+                            },
+                        )
+                    };
+                    let job_id = tx
+                        .put_aggregation_job(&AggregationJob::<
                             VERIFY_KEY_LENGTH_PRIO3,
                             TimeInterval,
                             Prio3Count,
                         >::new(
-                            task_id,
-                            aggregation_job_id,
+                            AggregationJobDatastoreId::TEST,
+                            *task_id,
                             (),
                             (),
                             Interval::minimal(
@@ -2122,55 +2141,60 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
                                     .unwrap(),
                             )
                             .unwrap(),
-                            AggregationJobState::Active,
+                            state,
                             AggregationJobStep::from(0),
                         ))
                         .await
-                    },
-                ))
-                .await
-                .unwrap();
+                        .unwrap();
+                    if idx % 2 == 0 {
+                        leader_aggregation_job_datastore_ids.push(job_id);
+                    } else {
+                        helper_aggregation_job_datastore_ids.push(job_id);
+                    }
+                }
 
                 // Write an aggregation job that is finished. We don't want to retrieve this one.
-                let finished_aggregation_job_id = random();
-                tx.put_aggregation_job(&AggregationJob::<
-                    VERIFY_KEY_LENGTH_PRIO3,
-                    TimeInterval,
-                    Prio3Count,
-                >::new(
-                    *leader_task.id(),
-                    finished_aggregation_job_id,
-                    (),
-                    (),
-                    Interval::minimal(START_TIME).unwrap(),
-                    AggregationJobState::Finished,
-                    AggregationJobStep::from(1),
-                ))
-                .await
-                .unwrap();
+                let finished_aggregation_job_id = tx
+                    .put_aggregation_job(&AggregationJob::<
+                        VERIFY_KEY_LENGTH_PRIO3,
+                        TimeInterval,
+                        Prio3Count,
+                    >::new(
+                        AggregationJobDatastoreId::TEST,
+                        *leader_task.id(),
+                        (),
+                        (),
+                        Interval::minimal(START_TIME).unwrap(),
+                        AggregationJobState::Finished {
+                            helper_aggregation_job_id: random(),
+                        },
+                        AggregationJobStep::from(1),
+                    ))
+                    .await
+                    .unwrap();
 
                 // Write an aggregation job with old timestamp that will be expired after clock
                 // advance. Use a time that's not yet expired but will be after advancing the
                 // clock.
-                let expired_aggregation_job_id = random();
-                tx.put_aggregation_job(&AggregationJob::<
-                    VERIFY_KEY_LENGTH_PRIO3,
-                    TimeInterval,
-                    Prio3Count,
-                >::new(
-                    *leader_task.id(),
-                    expired_aggregation_job_id,
-                    (),
-                    (),
-                    Interval::minimal(Time::from_time_precision_units(
-                        START_TIME_UNITS - REPORT_EXPIRY_AGE_UNITS + 1,
+                let expired_aggregation_job_id = tx
+                    .put_aggregation_job(&AggregationJob::<
+                        VERIFY_KEY_LENGTH_PRIO3,
+                        TimeInterval,
+                        Prio3Count,
+                    >::new(
+                        AggregationJobDatastoreId::TEST,
+                        *leader_task.id(),
+                        (),
+                        (),
+                        Interval::minimal(Time::from_time_precision_units(
+                            START_TIME_UNITS - REPORT_EXPIRY_AGE_UNITS + 1,
+                        ))
+                        .unwrap(),
+                        AggregationJobState::leader_active(),
+                        AggregationJobStep::from(0),
                     ))
-                    .unwrap(),
-                    AggregationJobState::Active,
-                    AggregationJobStep::from(0),
-                ))
-                .await
-                .unwrap();
+                    .await
+                    .unwrap();
 
                 // Write an aggregation job that is awaiting a request from the Leader. We
                 // don't want to retrieve this one, either.
@@ -2179,18 +2203,25 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
                     TimeInterval,
                     Prio3Count,
                 >::new(
+                    AggregationJobDatastoreId::TEST,
                     *helper_task.id(),
-                    random(),
                     (),
                     (),
                     Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
-                    AggregationJobState::AwaitingRequest,
+                    AggregationJobState::AwaitingRequest {
+                        helper_aggregation_job_id: random(),
+                    },
                     AggregationJobStep::from(0),
                 ))
                 .await
                 .unwrap();
 
-                Ok((finished_aggregation_job_id, expired_aggregation_job_id))
+                Ok((
+                    leader_aggregation_job_datastore_ids,
+                    helper_aggregation_job_datastore_ids,
+                    finished_aggregation_job_id,
+                    expired_aggregation_job_id,
+                ))
             })
         })
         .await
@@ -2230,7 +2261,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
                 assert_eq!(maybe_lease.lease_token, None);
                 assert_eq!(maybe_lease.lease_attempts, 0);
 
-                seen_aggregation_job_ids.push(*maybe_lease.leased().aggregation_job_id());
+                seen_aggregation_job_ids.push(maybe_lease.leased().aggregation_job_id());
             }
 
             maybe_leased_aggregation_job_ids.sort();
@@ -2252,7 +2283,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
             let maybe_lease = tx
                 .get_aggregation_job_lease::<VERIFY_KEY_LENGTH_PRIO3, TimeInterval, Prio3Count>(
                     task.id(),
-                    &maybe_leased_aggregation_job_ids[0],
+                    maybe_leased_aggregation_job_ids[0],
                 )
                 .await
                 .unwrap()
@@ -2265,7 +2296,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
             let no_such_aggregation_job = tx
                 .get_aggregation_job_lease::<VERIFY_KEY_LENGTH_PRIO3, TimeInterval, Prio3Count>(
                     task.id(),
-                    &random(),
+                    random(),
                 )
                 .await
                 .unwrap();
@@ -2274,7 +2305,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
             let no_such_task = tx
                 .get_aggregation_job_lease::<VERIFY_KEY_LENGTH_PRIO3, TimeInterval, Prio3Count>(
                     &random(),
-                    &random(),
+                    random(),
                 )
                 .await
                 .unwrap();
@@ -2310,12 +2341,18 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
     }
 
     let want_expiry_time = clock.now() + lease_duration_timedelta;
-    let want_aggregation_jobs: Vec<_> = task_and_aggregation_job_ids
+    let want_aggregation_jobs: Vec<_> = leader_aggregation_job_ids
         .iter()
+        .map(|aggregation_job_id| (*leader_task.id(), aggregation_job_id))
+        .chain(
+            helper_aggregation_job_ids
+                .iter()
+                .map(|aggregation_job_id| (*helper_task.id(), aggregation_job_id)),
+        )
         .map(|(task_id, aggregation_job_id)| {
             (
                 AcquiredAggregationJob::new(
-                    *task_id,
+                    task_id,
                     *aggregation_job_id,
                     task::BatchMode::TimeInterval,
                     VdafInstance::Prio3Count,
@@ -2408,7 +2445,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
 
             let mut seen_aggregation_job_ids = Vec::new();
             for maybe_lease in maybe_leases {
-                if leased_aggregation_job_ids.contains(maybe_lease.leased().aggregation_job_id()) {
+                if leased_aggregation_job_ids.contains(&maybe_lease.leased().aggregation_job_id()) {
                     assert_ne!(maybe_lease.lease_expiry_time, Timestamp::NegInfinity);
                     assert_ne!(maybe_lease.lease_expiry_time, Timestamp::PosInfinity);
                     assert!(maybe_lease.lease_token.is_some());
@@ -2419,7 +2456,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
                     assert_eq!(maybe_lease.lease_attempts, 0);
                 }
 
-                seen_aggregation_job_ids.push(*maybe_lease.leased().aggregation_job_id());
+                seen_aggregation_job_ids.push(maybe_lease.leased().aggregation_job_id());
             }
 
             maybe_leased_aggregation_job_ids.sort();
@@ -2429,7 +2466,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
             let maybe_lease = tx
                 .get_aggregation_job_lease::<VERIFY_KEY_LENGTH_PRIO3, TimeInterval, Prio3Count>(
                     task.id(),
-                    &leased_aggregation_job_ids[0],
+                    leased_aggregation_job_ids[0],
                 )
                 .await
                 .unwrap()
@@ -2529,12 +2566,18 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
         lease_duration_sec as i64 - REACQUIRE_DELAY.num_seconds(),
     ));
     let want_expiry_time = clock.now() + lease_duration_timedelta;
-    let want_aggregation_jobs: Vec<_> = task_and_aggregation_job_ids
+    let want_aggregation_jobs: Vec<_> = leader_aggregation_job_ids
         .iter()
+        .map(|aggregation_job_id| (*leader_task.id(), aggregation_job_id))
+        .chain(
+            helper_aggregation_job_ids
+                .iter()
+                .map(|aggregation_job_id| (*helper_task.id(), aggregation_job_id)),
+        )
         .map(|(task_id, aggregation_job_id)| {
             (
                 AcquiredAggregationJob::new(
-                    *task_id,
+                    task_id,
                     *aggregation_job_id,
                     task::BatchMode::TimeInterval,
                     VdafInstance::Prio3Count,
@@ -2620,7 +2663,7 @@ async fn aggregation_job_not_found(ephemeral_datastore: EphemeralDatastore) {
             Box::pin(async move {
                 tx.get_aggregation_job::<VERIFY_KEY_LENGTH_PRIO3, TimeInterval, Prio3Count>(
                     &random(),
-                    &random(),
+                    random(),
                 )
                 .await
             })
@@ -2639,7 +2682,7 @@ async fn aggregation_job_not_found(ephemeral_datastore: EphemeralDatastore) {
                         (),
                         (),
                         Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
-                        AggregationJobState::Active,
+                        AggregationJobState::leader_active(),
                         AggregationJobStep::from(0),
                     ),
                 )
@@ -2670,79 +2713,89 @@ async fn get_aggregation_jobs_for_task(ephemeral_datastore: EphemeralDatastore) 
     .leader_view()
     .unwrap();
     let first_aggregation_job = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
+        AggregationJobDatastoreId::TEST,
         *task.id(),
-        random(),
         dummy::AggregationParam(23),
         random(),
         Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
-        AggregationJobState::Active,
+        AggregationJobState::leader_active(),
         AggregationJobStep::from(0),
     );
     let second_aggregation_job = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
+        AggregationJobDatastoreId::TEST,
         *task.id(),
-        random(),
         dummy::AggregationParam(42),
         random(),
         Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
-        AggregationJobState::Active,
+        AggregationJobState::leader_active(),
         AggregationJobStep::from(0),
     );
     let aggregation_job_with_request_hash = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
+        AggregationJobDatastoreId::TEST,
         *task.id(),
-        random(),
         dummy::AggregationParam(42),
         random(),
         Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
-        AggregationJobState::Active,
+        AggregationJobState::leader_active(),
         AggregationJobStep::from(0),
     )
     .with_last_request_hash([3; 32]);
 
-    let mut want_agg_jobs = Vec::from([
-        first_aggregation_job,
-        second_aggregation_job,
-        aggregation_job_with_request_hash,
+    let want_agg_jobs = Vec::from([
+        first_aggregation_job.clone(),
+        second_aggregation_job.clone(),
+        aggregation_job_with_request_hash.clone(),
     ]);
 
-    ds.run_unnamed_tx(|tx| {
-        let (task, want_agg_jobs) = (task.clone(), want_agg_jobs.clone());
-        Box::pin(async move {
-            tx.put_aggregator_task(&task).await.unwrap();
+    let job_ids = ds
+        .run_unnamed_tx(|tx| {
+            let (task, want_agg_jobs) = (task.clone(), want_agg_jobs.clone());
+            Box::pin(async move {
+                tx.put_aggregator_task(&task).await.unwrap();
 
-            for agg_job in want_agg_jobs {
-                tx.put_aggregation_job(&agg_job).await.unwrap();
-            }
+                let mut job_ids = Vec::new();
+                for agg_job in want_agg_jobs {
+                    job_ids.push(tx.put_aggregation_job(&agg_job).await.unwrap());
+                }
 
-            // Also write an unrelated aggregation job with a different task ID to check that it
-            // is not returned.
-            let unrelated_task = TaskBuilder::new(
-                task::BatchMode::LeaderSelected {
-                    batch_time_window_size: None,
-                },
-                AggregationMode::Synchronous,
-                VdafInstance::Fake { rounds: 1 },
-            )
-            .build()
-            .leader_view()
-            .unwrap();
-            tx.put_aggregator_task(&unrelated_task).await.unwrap();
-            tx.put_aggregation_job(&AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
-                *unrelated_task.id(),
-                random(),
-                dummy::AggregationParam(82),
-                random(),
-                Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
-                AggregationJobState::Active,
-                AggregationJobStep::from(0),
-            ))
-            .await
+                // Also write an unrelated aggregation job with a different task ID to check that it
+                // is not returned.
+                let unrelated_task = TaskBuilder::new(
+                    task::BatchMode::LeaderSelected {
+                        batch_time_window_size: None,
+                    },
+                    AggregationMode::Synchronous,
+                    VdafInstance::Fake { rounds: 1 },
+                )
+                .build()
+                .leader_view()
+                .unwrap();
+                tx.put_aggregator_task(&unrelated_task).await.unwrap();
+                tx.put_aggregation_job(&AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
+                    AggregationJobDatastoreId::TEST,
+                    *unrelated_task.id(),
+                    dummy::AggregationParam(82),
+                    random(),
+                    Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
+                    AggregationJobState::leader_active(),
+                    AggregationJobStep::from(0),
+                ))
+                .await
+                .unwrap();
+
+                Ok(job_ids)
+            })
         })
-    })
-    .await
-    .unwrap();
+        .await
+        .unwrap();
+
+    let want_agg_jobs = Vec::from([
+        first_aggregation_job.with_datastore_id(job_ids[0]),
+        second_aggregation_job.with_datastore_id(job_ids[1]),
+        aggregation_job_with_request_hash.with_datastore_id(job_ids[2]),
+    ]);
 
     // Run.
-    want_agg_jobs.sort_by_key(|agg_job| *agg_job.id());
     let mut got_agg_jobs = ds
         .run_unnamed_tx(|tx| {
             let task = task.clone();
@@ -2750,7 +2803,7 @@ async fn get_aggregation_jobs_for_task(ephemeral_datastore: EphemeralDatastore) 
         })
         .await
         .unwrap();
-    got_agg_jobs.sort_by_key(|agg_job| *agg_job.id());
+    got_agg_jobs.sort_by_key(|agg_job| agg_job.datastore_id());
 
     // Verify.
     assert_eq!(want_agg_jobs, got_agg_jobs);
@@ -2898,47 +2951,53 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
         .view_for_role(role)
         .unwrap();
 
-        let aggregation_job_id = random();
         let report_id = random();
 
-        let report_aggregation = ReportAggregation::new(
-            *task.id(),
-            aggregation_job_id,
-            report_id,
-            START_TIME,
-            ord.try_into().unwrap(),
-            Some(VerifyResp::new(
-                report_id,
-                VerifyStepResult::Continue {
-                    message: PingPongMessage::Continue {
-                        verifier_message: format!("verifier_message_{ord}").into(),
-                        verifier_share: format!("verifier_share_{ord}").into(),
-                    },
-                },
-            )),
-            state,
-        );
-
-        let want_report_aggregation = ds
+        let (aggregation_job_datastore_id, want_report_aggregation) = ds
             .run_tx("test-put-report-aggregations", |tx| {
-                let (task, report_aggregation, aggregation_param) =
-                    (task.clone(), report_aggregation.clone(), aggregation_param);
+                let (task, aggregation_param, state) =
+                    (task.clone(), aggregation_param, state.clone());
                 Box::pin(async move {
                     tx.put_aggregator_task(&task).await.unwrap();
-                    tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
-                        *task.id(),
-                        *report_aggregation.aggregation_job_id(),
-                        aggregation_param,
-                        (),
-                        Interval::minimal(START_TIME).unwrap(),
-                        AggregationJobState::Active,
-                        AggregationJobStep::from(0),
-                    ))
-                    .await
-                    .unwrap();
+                    let job_id = tx
+                        .put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
+                            AggregationJobDatastoreId::TEST,
+                            *task.id(),
+                            aggregation_param,
+                            (),
+                            Interval::minimal(START_TIME).unwrap(),
+                            AggregationJobState::Active {
+                                helper_aggregation_job_id: if role == Role::Leader {
+                                    None
+                                } else {
+                                    Some(random())
+                                },
+                            },
+                            AggregationJobStep::from(0),
+                        ))
+                        .await
+                        .unwrap();
                     tx.put_scrubbed_report(task.id(), &report_id, &START_TIME)
                         .await
                         .unwrap();
+
+                    let report_aggregation = ReportAggregation::new(
+                        *task.id(),
+                        job_id,
+                        report_id,
+                        START_TIME,
+                        ord.try_into().unwrap(),
+                        Some(VerifyResp::new(
+                            report_id,
+                            VerifyStepResult::Continue {
+                                message: PingPongMessage::Continue {
+                                    verifier_message: format!("verifier_message_{ord}").into(),
+                                    verifier_share: format!("verifier_share_{ord}").into(),
+                                },
+                            },
+                        )),
+                        state,
+                    );
 
                     tx.put_report_aggregation(&report_aggregation)
                         .await
@@ -2959,7 +3018,7 @@ WHERE client_report_id = $1",
                     assert_eq!(updated_at, tx.clock.now());
                     assert_eq!(updated_by, "test-put-report-aggregations");
 
-                    Ok(report_aggregation)
+                    Ok((job_id, report_aggregation))
                 })
             })
             .await
@@ -2972,14 +3031,13 @@ WHERE client_report_id = $1",
             .run_unnamed_tx(|tx| {
                 let vdaf = Arc::clone(&vdaf);
                 let task = task.clone();
-                let report_aggregation = report_aggregation.clone();
 
                 Box::pin(async move {
                     tx.get_report_aggregation_by_report_id(
                         vdaf.as_ref(),
                         &role,
                         task.id(),
-                        report_aggregation.aggregation_job_id(),
+                        aggregation_job_datastore_id,
                         &report_id,
                     )
                     .await
@@ -2993,7 +3051,7 @@ WHERE client_report_id = $1",
 
         let want_report_aggregation = ReportAggregation::new(
             *want_report_aggregation.task_id(),
-            *want_report_aggregation.aggregation_job_id(),
+            aggregation_job_datastore_id,
             *want_report_aggregation.report_id(),
             *want_report_aggregation.time(),
             want_report_aggregation.ord(),
@@ -3041,7 +3099,7 @@ SELECT updated_at, updated_by FROM report_aggregations
             .run_unnamed_tx(|tx| {
                 let vdaf = Arc::clone(&vdaf);
                 let task = task.clone();
-                let report_aggregation = report_aggregation.clone();
+                let report_aggregation = want_report_aggregation.clone();
 
                 Box::pin(async move {
                     tx.get_report_aggregation_by_report_id(
@@ -3056,7 +3114,7 @@ SELECT updated_at, updated_by FROM report_aggregations
             })
             .await
             .unwrap();
-        assert_eq!(Some(want_report_aggregation), got_report_aggregation);
+        assert_eq!(want_report_aggregation, got_report_aggregation.unwrap());
 
         // Advance the clock again to expire relevant datastore items.
         clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
@@ -3065,7 +3123,7 @@ SELECT updated_at, updated_by FROM report_aggregations
             .run_unnamed_tx(|tx| {
                 let vdaf = Arc::clone(&vdaf);
                 let task = task.clone();
-                let report_aggregation = report_aggregation.clone();
+                let report_aggregation = want_report_aggregation.clone();
 
                 Box::pin(async move {
                     tx.get_report_aggregation_by_report_id(
@@ -3085,7 +3143,7 @@ SELECT updated_at, updated_by FROM report_aggregations
         // Make a "new" report aggregation with the same ID, but which is not expired. It should get
         // upserted, replacing the effectively GCed report aggregation.
         ds.run_unnamed_tx(|tx| {
-            let unexpired_report_aggregation = report_aggregation
+            let unexpired_report_aggregation = want_report_aggregation
                 .clone()
                 .with_time(clock.now().to_time(&TIME_PRECISION));
             Box::pin(async move {
@@ -3126,7 +3184,7 @@ async fn report_aggregation_not_found(ephemeral_datastore: EphemeralDatastore) {
                     vdaf.as_ref(),
                     &Role::Leader,
                     &random(),
-                    &random(),
+                    random(),
                     &ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                 )
                 .await
@@ -3189,26 +3247,26 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
     .build()
     .helper_view()
     .unwrap();
-    let aggregation_job_id = random();
 
-    let want_report_aggregations = ds
+    let (aggregation_job_id, want_report_aggregations) = ds
         .run_unnamed_tx(|tx| {
             let (task, vdaf_transcript, aggregation_param) =
                 (task.clone(), vdaf_transcript.clone(), aggregation_param);
             Box::pin(async move {
                 tx.put_aggregator_task(&task).await.unwrap();
 
-                tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
-                    *task.id(),
-                    aggregation_job_id,
-                    aggregation_param,
-                    (),
-                    Interval::minimal(START_TIME).unwrap(),
-                    AggregationJobState::Active,
-                    AggregationJobStep::from(0),
-                ))
-                .await
-                .unwrap();
+                let aggregation_job_id = tx
+                    .put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
+                        AggregationJobDatastoreId::TEST,
+                        *task.id(),
+                        aggregation_param,
+                        (),
+                        Interval::minimal(START_TIME).unwrap(),
+                        AggregationJobState::leader_active(),
+                        AggregationJobStep::from(0),
+                    ))
+                    .await
+                    .unwrap();
 
                 let mut want_report_aggregations = Vec::new();
                 for (ord, state) in [
@@ -3253,7 +3311,7 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
                         .unwrap();
                     want_report_aggregations.push(report_aggregation);
                 }
-                Ok(want_report_aggregations)
+                Ok((aggregation_job_id, want_report_aggregations))
             })
         })
         .await
@@ -3270,7 +3328,7 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
                     vdaf.as_ref(),
                     &Role::Helper,
                     task.id(),
-                    &aggregation_job_id,
+                    aggregation_job_id,
                 )
                 .await
             })
@@ -3290,7 +3348,7 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
                     vdaf.as_ref(),
                     &Role::Helper,
                     task.id(),
-                    &aggregation_job_id,
+                    aggregation_job_id,
                 )
                 .await
             })
@@ -3361,12 +3419,12 @@ async fn create_report_aggregation_from_client_reports_table(
     .unwrap();
 
     let aggregation_job = AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
+        AggregationJobDatastoreId::TEST,
         *task.id(),
-        random(),
         aggregation_param,
         (),
         Interval::minimal(START_TIME).unwrap(),
-        AggregationJobState::Active,
+        AggregationJobState::leader_active(),
         AggregationJobStep::from(0),
     );
     let leader_stored_report = LeaderStoredReport::<0, dummy::Vdaf>::new(
@@ -3410,44 +3468,49 @@ async fn create_report_aggregation_from_client_reports_table(
             ReportAggregationState::Failed { report_error }
         }
     };
-    let report_aggregation_metadata = ReportAggregationMetadata::new(
-        *task.id(),
-        *aggregation_job.id(),
-        report_id,
-        clock.now().to_time(task.time_precision()),
-        0,
-        state,
-    );
 
-    let want_report_aggregations = ds
+    let (aggregation_job_id, report_aggregation_metadata, want_report_aggregations) = ds
         .run_unnamed_tx(|tx| {
             let clock = clock.clone();
             let task = task.clone();
             let aggregation_job = aggregation_job.clone();
             let leader_stored_report = leader_stored_report.clone();
-            let report_aggregation_metadata = report_aggregation_metadata.clone();
+            let state = state.clone();
             let expected_report_aggregation_state = expected_report_aggregation_state.clone();
 
             Box::pin(async move {
                 tx.put_aggregator_task(&task).await.unwrap();
-                tx.put_aggregation_job(&aggregation_job).await.unwrap();
+                let aggregation_job_id = tx.put_aggregation_job(&aggregation_job).await.unwrap();
 
                 let timestamp = clock.now();
                 tx.put_client_report(&leader_stored_report).await.unwrap();
+
+                let report_aggregation_metadata = ReportAggregationMetadata::new(
+                    *task.id(),
+                    aggregation_job_id,
+                    report_id,
+                    clock.now().to_time(task.time_precision()),
+                    0,
+                    state,
+                );
 
                 tx.put_leader_report_aggregation(&report_aggregation_metadata)
                     .await
                     .unwrap();
 
-                Ok(Vec::from([ReportAggregation::new(
-                    *task.id(),
-                    *aggregation_job.id(),
-                    report_id,
-                    timestamp.to_time(task.time_precision()),
-                    0,
-                    None,
-                    expected_report_aggregation_state,
-                )]))
+                Ok((
+                    aggregation_job_id,
+                    report_aggregation_metadata,
+                    Vec::from([ReportAggregation::new(
+                        *task.id(),
+                        aggregation_job_id,
+                        report_id,
+                        timestamp.to_time(task.time_precision()),
+                        0,
+                        None,
+                        expected_report_aggregation_state,
+                    )]),
+                ))
             })
         })
         .await
@@ -3457,13 +3520,12 @@ async fn create_report_aggregation_from_client_reports_table(
         .run_unnamed_tx(|tx| {
             let vdaf = vdaf.clone();
             let task = task.clone();
-            let aggregation_job = aggregation_job.clone();
             Box::pin(async move {
                 tx.get_report_aggregations_for_aggregation_job(
                     vdaf.as_ref(),
                     &Role::Leader,
                     task.id(),
-                    aggregation_job.id(),
+                    aggregation_job_id,
                 )
                 .await
             })
@@ -4414,8 +4476,10 @@ struct CollectionJobAcquireTestCase<B: CollectableBatchMode> {
     task_ids: Vec<TaskId>,
     batch_mode: task::BatchMode,
     reports: Vec<LeaderStoredReport<0, dummy::Vdaf>>,
-    aggregation_jobs: Vec<AggregationJob<0, B, dummy::Vdaf>>,
-    report_aggregations: Vec<ReportAggregation<0, dummy::Vdaf>>,
+    aggregation_jobs: Vec<(
+        AggregationJob<0, B, dummy::Vdaf>,
+        Vec<ReportAggregation<0, dummy::Vdaf>>,
+    )>,
     collection_job_test_cases: Vec<CollectionJobTestCase<B>>,
 }
 
@@ -4506,12 +4570,16 @@ async fn setup_collection_job_acquire_test_case<B: TestBatchModeExt>(
             for report in &test_case.reports {
                 tx.put_client_report(report).await.unwrap();
             }
-            for aggregation_job in &test_case.aggregation_jobs {
-                tx.put_aggregation_job(aggregation_job).await.unwrap();
-            }
+            for (aggregation_job, report_aggregations) in &test_case.aggregation_jobs {
+                let job_id = tx.put_aggregation_job(&aggregation_job).await.unwrap();
 
-            for report_aggregation in &test_case.report_aggregations {
-                tx.put_report_aggregation(report_aggregation).await.unwrap();
+                for report_aggregation in report_aggregations {
+                    tx.put_report_aggregation(
+                        &report_aggregation.clone().with_aggregation_job_id(job_id),
+                    )
+                    .await
+                    .unwrap();
+                }
             }
 
             for test_case in test_case.collection_job_test_cases.iter_mut() {
@@ -4662,66 +4730,39 @@ async fn get_collection_job_maybe_leases(ephemeral_datastore: EphemeralDatastore
     let aggregation_jobs = Vec::from([
         // First collection job
         AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
+            AggregationJobDatastoreId::TEST,
             task_id,
-            random(),
             dummy::AggregationParam(0),
             (),
             Interval::minimal(now).unwrap(),
-            AggregationJobState::Finished,
+            AggregationJobState::Finished {
+                helper_aggregation_job_id: random(),
+            },
             AggregationJobStep::from(1),
         ),
         // Second collection job
         AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
+            AggregationJobDatastoreId::TEST,
             task_id,
-            random(),
             dummy::AggregationParam(0),
             (),
             Interval::minimal(three_hundred_seconds_later).unwrap(),
-            AggregationJobState::Finished,
+            AggregationJobState::Finished {
+                helper_aggregation_job_id: random(),
+            },
             AggregationJobStep::from(1),
         ),
         // Other task collection job
         AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
+            AggregationJobDatastoreId::TEST,
             other_task_id,
-            random(),
             dummy::AggregationParam(0),
             (),
             Interval::minimal(now).unwrap(),
-            AggregationJobState::Finished,
+            AggregationJobState::Finished {
+                helper_aggregation_job_id: random(),
+            },
             AggregationJobStep::from(1),
-        ),
-    ]);
-    let report_aggregations = Vec::from([
-        // First collection job
-        ReportAggregation::<0, dummy::Vdaf>::new(
-            task_id,
-            *aggregation_jobs[0].id(),
-            *reports[0].metadata().id(),
-            *reports[0].metadata().time(),
-            0,
-            None,
-            // Doesn't matter what state the report aggregation is in
-            ReportAggregationState::Finished,
-        ),
-        // Second collection job
-        ReportAggregation::<0, dummy::Vdaf>::new(
-            task_id,
-            *aggregation_jobs[1].id(),
-            *reports[1].metadata().id(),
-            *reports[1].metadata().time(),
-            0,
-            None,
-            ReportAggregationState::Finished,
-        ),
-        // Other task collection job
-        ReportAggregation::<0, dummy::Vdaf>::new(
-            other_task_id,
-            *aggregation_jobs[2].id(),
-            *reports[2].metadata().id(),
-            *reports[2].metadata().time(),
-            0,
-            None,
-            ReportAggregationState::Finished,
         ),
     ]);
     let batch_aggregations = Vec::from([
@@ -4797,17 +4838,9 @@ async fn get_collection_job_maybe_leases(ephemeral_datastore: EphemeralDatastore
     ]);
 
     ds.run_unnamed_tx(|tx| {
-        let (
-            tasks,
-            reports,
-            report_aggregations,
-            aggregation_jobs,
-            batch_aggregations,
-            collection_jobs,
-        ) = (
+        let (tasks, reports, aggregation_jobs, batch_aggregations, collection_jobs) = (
             tasks.clone(),
             reports.clone(),
-            report_aggregations.clone(),
             aggregation_jobs.clone(),
             batch_aggregations.clone(),
             collection_jobs.clone(),
@@ -4822,9 +4855,44 @@ async fn get_collection_job_maybe_leases(ephemeral_datastore: EphemeralDatastore
             for report in &reports {
                 tx.put_client_report(report).await.unwrap();
             }
+            let mut aggregation_job_ids = Vec::new();
             for aggregation_job in &aggregation_jobs {
-                tx.put_aggregation_job(aggregation_job).await.unwrap();
+                aggregation_job_ids.push(tx.put_aggregation_job(aggregation_job).await.unwrap());
             }
+
+            let report_aggregations = Vec::from([
+                // First collection job
+                ReportAggregation::<0, dummy::Vdaf>::new(
+                    *tasks[0].id(),
+                    aggregation_job_ids[0],
+                    *reports[0].metadata().id(),
+                    *reports[0].metadata().time(),
+                    0,
+                    None,
+                    // Doesn't matter what state the report aggregation is in
+                    ReportAggregationState::Finished,
+                ),
+                // Second collection job
+                ReportAggregation::<0, dummy::Vdaf>::new(
+                    *tasks[0].id(),
+                    aggregation_job_ids[1],
+                    *reports[1].metadata().id(),
+                    *reports[1].metadata().time(),
+                    0,
+                    None,
+                    ReportAggregationState::Finished,
+                ),
+                // Other task collection job
+                ReportAggregation::<0, dummy::Vdaf>::new(
+                    *tasks[1].id(),
+                    aggregation_job_ids[2],
+                    *reports[2].metadata().id(),
+                    *reports[2].metadata().time(),
+                    0,
+                    None,
+                    ReportAggregationState::Finished,
+                ),
+            ]);
 
             for report_aggregation in &report_aggregations {
                 tx.put_report_aggregation(report_aggregation).await.unwrap();
@@ -5048,10 +5116,9 @@ async fn time_interval_collection_job_acquire_release_happy_path(
         Duration::from_hours(8, &TIME_PRECISION),
     )
     .unwrap();
-    let aggregation_job_id = random();
-    let aggregation_jobs = Vec::from([AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
+    let aggregation_job = AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
+        AggregationJobDatastoreId::TEST,
         task_id,
-        aggregation_job_id,
         dummy::AggregationParam(0),
         (),
         Interval::new(
@@ -5059,12 +5126,14 @@ async fn time_interval_collection_job_acquire_release_happy_path(
             Duration::from_hours(8, &TIME_PRECISION),
         )
         .unwrap(),
-        AggregationJobState::Finished,
+        AggregationJobState::Finished {
+            helper_aggregation_job_id: random(),
+        },
         AggregationJobStep::from(1),
-    )]);
+    );
     let report_aggregations = Vec::from([ReportAggregation::<0, dummy::Vdaf>::new(
         task_id,
-        aggregation_job_id,
+        AggregationJobDatastoreId::TEST,
         *reports[0].metadata().id(),
         *reports[0].metadata().time(),
         0,
@@ -5088,8 +5157,7 @@ async fn time_interval_collection_job_acquire_release_happy_path(
             task_ids: Vec::from([task_id]),
             batch_mode: task::BatchMode::TimeInterval,
             reports,
-            aggregation_jobs,
-            report_aggregations,
+            aggregation_jobs: Vec::from([(aggregation_job, report_aggregations)]),
             collection_job_test_cases,
         },
     )
@@ -5235,19 +5303,20 @@ async fn leader_selected_collection_job_acquire_release_happy_path(
         Time::from_time_precision_units(0),
     )]);
     let batch_id = random();
-    let aggregation_job_id = random();
-    let aggregation_jobs = Vec::from([AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
+    let aggregation_job = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
+        AggregationJobDatastoreId::TEST,
         task_id,
-        aggregation_job_id,
         dummy::AggregationParam(0),
         batch_id,
         Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
-        AggregationJobState::Finished,
+        AggregationJobState::Finished {
+            helper_aggregation_job_id: random(),
+        },
         AggregationJobStep::from(1),
-    )]);
+    );
     let report_aggregations = Vec::from([ReportAggregation::<0, dummy::Vdaf>::new(
         task_id,
-        aggregation_job_id,
+        AggregationJobDatastoreId::TEST,
         *reports[0].metadata().id(),
         *reports[0].metadata().time(),
         0,
@@ -5263,8 +5332,7 @@ async fn leader_selected_collection_job_acquire_release_happy_path(
                 batch_time_window_size: None,
             },
             reports,
-            aggregation_jobs,
-            report_aggregations,
+            aggregation_jobs: Vec::from([(aggregation_job, report_aggregations)]),
             collection_job_test_cases: Vec::from([CollectionJobTestCase::<LeaderSelected> {
                 should_be_acquired: true,
                 task_id,
@@ -5407,21 +5475,22 @@ async fn collection_job_acquire_release_job_finished(ephemeral_datastore: Epheme
         task_id,
         Time::from_time_precision_units(0),
     )]);
-    let aggregation_job_id = random();
     let batch_interval = Interval::minimal(Time::from_time_precision_units(0)).unwrap();
-    let aggregation_jobs = Vec::from([AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
+    let aggregation_job = AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
+        AggregationJobDatastoreId::TEST,
         task_id,
-        aggregation_job_id,
         dummy::AggregationParam(0),
         (),
         Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
-        AggregationJobState::Finished,
+        AggregationJobState::Finished {
+            helper_aggregation_job_id: random(),
+        },
         AggregationJobStep::from(1),
-    )]);
+    );
 
     let report_aggregations = Vec::from([ReportAggregation::<0, dummy::Vdaf>::new(
         task_id,
-        aggregation_job_id,
+        AggregationJobDatastoreId::TEST,
         *reports[0].metadata().id(),
         *reports[0].metadata().time(),
         0,
@@ -5446,8 +5515,7 @@ async fn collection_job_acquire_release_job_finished(ephemeral_datastore: Epheme
             task_ids: Vec::from([task_id]),
             batch_mode: task::BatchMode::TimeInterval,
             reports,
-            aggregation_jobs,
-            report_aggregations,
+            aggregation_jobs: Vec::from([(aggregation_job, report_aggregations)]),
             collection_job_test_cases,
         },
     )
@@ -5466,58 +5534,63 @@ async fn collection_job_acquire_job_max(ephemeral_datastore: EphemeralDatastore)
         task_id,
         Time::from_time_precision_units(0),
     )]);
-    let aggregation_job_ids: [_; 2] = random();
     let batch_interval = Interval::new(
         Time::from_time_precision_units(0),
         Duration::from_hours(8, &TIME_PRECISION),
     )
     .unwrap();
     let aggregation_jobs = Vec::from([
-        AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
-            task_id,
-            aggregation_job_ids[0],
-            dummy::AggregationParam(0),
-            (),
-            Interval::new(
-                Time::from_time_precision_units(0),
-                Duration::from_hours(8, &TIME_PRECISION),
-            )
-            .unwrap(),
-            AggregationJobState::Finished,
-            AggregationJobStep::from(1),
+        (
+            AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
+                AggregationJobDatastoreId::TEST,
+                task_id,
+                dummy::AggregationParam(0),
+                (),
+                Interval::new(
+                    Time::from_time_precision_units(0),
+                    Duration::from_hours(8, &TIME_PRECISION),
+                )
+                .unwrap(),
+                AggregationJobState::Finished {
+                    helper_aggregation_job_id: random(),
+                },
+                AggregationJobStep::from(1),
+            ),
+            Vec::from([ReportAggregation::<0, dummy::Vdaf>::new(
+                task_id,
+                AggregationJobDatastoreId::TEST,
+                *reports[0].metadata().id(),
+                *reports[0].metadata().time(),
+                0,
+                None,
+                ReportAggregationState::Finished,
+            )]),
         ),
-        AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
-            task_id,
-            aggregation_job_ids[1],
-            dummy::AggregationParam(1),
-            (),
-            Interval::new(
-                Time::from_time_precision_units(0),
-                Duration::from_hours(8, &TIME_PRECISION),
-            )
-            .unwrap(),
-            AggregationJobState::Finished,
-            AggregationJobStep::from(1),
-        ),
-    ]);
-    let report_aggregations = Vec::from([
-        ReportAggregation::<0, dummy::Vdaf>::new(
-            task_id,
-            aggregation_job_ids[0],
-            *reports[0].metadata().id(),
-            *reports[0].metadata().time(),
-            0,
-            None,
-            ReportAggregationState::Finished,
-        ),
-        ReportAggregation::<0, dummy::Vdaf>::new(
-            task_id,
-            aggregation_job_ids[1],
-            *reports[0].metadata().id(),
-            *reports[0].metadata().time(),
-            0,
-            None,
-            ReportAggregationState::Finished,
+        (
+            AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
+                AggregationJobDatastoreId::TEST,
+                task_id,
+                dummy::AggregationParam(1),
+                (),
+                Interval::new(
+                    Time::from_time_precision_units(0),
+                    Duration::from_hours(8, &TIME_PRECISION),
+                )
+                .unwrap(),
+                AggregationJobState::Finished {
+                    helper_aggregation_job_id: random(),
+                },
+                AggregationJobStep::from(1),
+            ),
+            Vec::from([ReportAggregation::<0, dummy::Vdaf>::new(
+                task_id,
+                AggregationJobDatastoreId::TEST,
+                *reports[0].metadata().id(),
+                *reports[0].metadata().time(),
+                0,
+                None,
+                ReportAggregationState::Finished,
+            )]),
         ),
     ]);
 
@@ -5549,7 +5622,6 @@ async fn collection_job_acquire_job_max(ephemeral_datastore: EphemeralDatastore)
             batch_mode: task::BatchMode::TimeInterval,
             reports,
             aggregation_jobs,
-            report_aggregations,
             collection_job_test_cases,
         },
     )
@@ -5624,80 +5696,89 @@ async fn collection_job_acquire_state_filtering(ephemeral_datastore: EphemeralDa
         task_id,
         Time::from_time_precision_units(0),
     )]);
-    let aggregation_job_ids: [_; 3] = random();
     let batch_interval = Interval::new(
         Time::from_time_precision_units(0),
         Duration::from_seconds(28800, &TIME_PRECISION),
     )
     .unwrap();
     let aggregation_jobs = Vec::from([
-        AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
-            task_id,
-            aggregation_job_ids[0],
-            dummy::AggregationParam(0),
-            (),
-            Interval::new(
-                Time::from_time_precision_units(0),
-                Duration::from_seconds(28800, &TIME_PRECISION),
-            )
-            .unwrap(),
-            AggregationJobState::Finished,
-            AggregationJobStep::from(1),
+        (
+            AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
+                AggregationJobDatastoreId::TEST,
+                task_id,
+                dummy::AggregationParam(0),
+                (),
+                Interval::new(
+                    Time::from_time_precision_units(0),
+                    Duration::from_seconds(28800, &TIME_PRECISION),
+                )
+                .unwrap(),
+                AggregationJobState::Finished {
+                    helper_aggregation_job_id: random(),
+                },
+                AggregationJobStep::from(1),
+            ),
+            Vec::from([ReportAggregation::<0, dummy::Vdaf>::new(
+                task_id,
+                AggregationJobDatastoreId::TEST,
+                *reports[0].metadata().id(),
+                *reports[0].metadata().time(),
+                0,
+                None,
+                ReportAggregationState::Finished,
+            )]),
         ),
-        AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
-            task_id,
-            aggregation_job_ids[1],
-            dummy::AggregationParam(1),
-            (),
-            Interval::new(
-                Time::from_time_precision_units(0),
-                Duration::from_seconds(28800, &TIME_PRECISION),
-            )
-            .unwrap(),
-            AggregationJobState::Finished,
-            AggregationJobStep::from(1),
+        (
+            AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
+                AggregationJobDatastoreId::TEST,
+                task_id,
+                dummy::AggregationParam(1),
+                (),
+                Interval::new(
+                    Time::from_time_precision_units(0),
+                    Duration::from_seconds(28800, &TIME_PRECISION),
+                )
+                .unwrap(),
+                AggregationJobState::Finished {
+                    helper_aggregation_job_id: random(),
+                },
+                AggregationJobStep::from(1),
+            ),
+            Vec::from([ReportAggregation::<0, dummy::Vdaf>::new(
+                task_id,
+                AggregationJobDatastoreId::TEST,
+                *reports[0].metadata().id(),
+                *reports[0].metadata().time(),
+                0,
+                None,
+                ReportAggregationState::Finished,
+            )]),
         ),
-        AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
-            task_id,
-            aggregation_job_ids[2],
-            dummy::AggregationParam(2),
-            (),
-            Interval::new(
-                Time::from_time_precision_units(0),
-                Duration::from_seconds(28800, &TIME_PRECISION),
-            )
-            .unwrap(),
-            AggregationJobState::Finished,
-            AggregationJobStep::from(1),
-        ),
-    ]);
-    let report_aggregations = Vec::from([
-        ReportAggregation::<0, dummy::Vdaf>::new(
-            task_id,
-            aggregation_job_ids[0],
-            *reports[0].metadata().id(),
-            *reports[0].metadata().time(),
-            0,
-            None,
-            ReportAggregationState::Finished,
-        ),
-        ReportAggregation::<0, dummy::Vdaf>::new(
-            task_id,
-            aggregation_job_ids[1],
-            *reports[0].metadata().id(),
-            *reports[0].metadata().time(),
-            0,
-            None,
-            ReportAggregationState::Finished,
-        ),
-        ReportAggregation::<0, dummy::Vdaf>::new(
-            task_id,
-            aggregation_job_ids[2],
-            *reports[0].metadata().id(),
-            *reports[0].metadata().time(),
-            0,
-            None,
-            ReportAggregationState::Finished,
+        (
+            AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
+                AggregationJobDatastoreId::TEST,
+                task_id,
+                dummy::AggregationParam(2),
+                (),
+                Interval::new(
+                    Time::from_time_precision_units(0),
+                    Duration::from_seconds(28800, &TIME_PRECISION),
+                )
+                .unwrap(),
+                AggregationJobState::Finished {
+                    helper_aggregation_job_id: random(),
+                },
+                AggregationJobStep::from(1),
+            ),
+            Vec::from([ReportAggregation::<0, dummy::Vdaf>::new(
+                task_id,
+                AggregationJobDatastoreId::TEST,
+                *reports[0].metadata().id(),
+                *reports[0].metadata().time(),
+                0,
+                None,
+                ReportAggregationState::Finished,
+            )]),
         ),
     ]);
 
@@ -5738,7 +5819,6 @@ async fn collection_job_acquire_state_filtering(ephemeral_datastore: EphemeralDa
             batch_mode: task::BatchMode::TimeInterval,
             reports,
             aggregation_jobs,
-            report_aggregations,
             collection_job_test_cases,
         },
     )
@@ -6986,16 +7066,19 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                 // Write a few aggregation jobs & report aggregations to produce useful
                 // min_size/max_size values to validate later.
                 let aggregation_job_0 = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
+                    AggregationJobDatastoreId::TEST,
                     *task_1.id(),
-                    random(),
                     dummy::AggregationParam(0),
                     batch_id_1,
                     Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
-                    AggregationJobState::Finished,
+                    AggregationJobState::Finished {
+                        helper_aggregation_job_id: random(),
+                    },
                     AggregationJobStep::from(1),
                 );
+                let job_id_0 = tx.put_aggregation_job(&aggregation_job_0).await.unwrap();
                 let report_aggregation_0_0 =
-                    report_1.as_leader_init_report_aggregation(*aggregation_job_0.id(), 0);
+                    report_1.as_leader_init_report_aggregation(job_id_0, 0);
 
                 let report_id_0_1 = random();
                 let transcript = run_vdaf(
@@ -7009,7 +7092,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
 
                 let report_aggregation_0_1 = ReportAggregation::<0, dummy::Vdaf>::new(
                     *task_1.id(),
-                    *aggregation_job_0.id(),
+                    job_id_0,
                     report_id_0_1,
                     clock.now().to_time(&TIME_PRECISION),
                     1,
@@ -7024,7 +7107,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                 );
                 let report_aggregation_0_2 = ReportAggregation::<0, dummy::Vdaf>::new(
                     *task_1.id(),
-                    *aggregation_job_0.id(),
+                    job_id_0,
                     random(),
                     clock.now().to_time(&TIME_PRECISION),
                     2,
@@ -7035,17 +7118,20 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                 );
 
                 let aggregation_job_1 = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
+                    AggregationJobDatastoreId::TEST,
                     *task_1.id(),
-                    random(),
                     dummy::AggregationParam(0),
                     batch_id_1,
                     Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
-                    AggregationJobState::Finished,
+                    AggregationJobState::Finished {
+                        helper_aggregation_job_id: random(),
+                    },
                     AggregationJobStep::from(1),
                 );
+                let job_id_1 = tx.put_aggregation_job(&aggregation_job_1).await.unwrap();
                 let report_aggregation_1_0 = ReportAggregation::<0, dummy::Vdaf>::new(
                     *task_1.id(),
-                    *aggregation_job_1.id(),
+                    job_id_1,
                     random(),
                     clock.now().to_time(&TIME_PRECISION),
                     0,
@@ -7054,7 +7140,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                 );
                 let report_aggregation_1_1 = ReportAggregation::<0, dummy::Vdaf>::new(
                     *task_1.id(),
-                    *aggregation_job_1.id(),
+                    job_id_1,
                     random(),
                     clock.now().to_time(&TIME_PRECISION),
                     1,
@@ -7063,7 +7149,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                 );
                 let report_aggregation_1_2 = ReportAggregation::<0, dummy::Vdaf>::new(
                     *task_1.id(),
-                    *aggregation_job_1.id(),
+                    job_id_1,
                     random(),
                     clock.now().to_time(&TIME_PRECISION),
                     2,
@@ -7074,20 +7160,21 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                 );
 
                 let aggregation_job_2 = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
+                    AggregationJobDatastoreId::TEST,
                     *task_2.id(),
-                    random(),
                     dummy::AggregationParam(0),
                     batch_id_2,
                     Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
-                    AggregationJobState::Finished,
+                    AggregationJobState::Finished {
+                        helper_aggregation_job_id: random(),
+                    },
                     AggregationJobStep::from(1),
                 );
-                let report_aggregation_2_0 =
-                    report_2.as_leader_init_report_aggregation(*aggregation_job_2.id(), 0);
+                let job_id_2 = tx.put_aggregation_job(&aggregation_job_2).await.unwrap();
 
-                for aggregation_job in &[aggregation_job_0, aggregation_job_1, aggregation_job_2] {
-                    tx.put_aggregation_job(aggregation_job).await.unwrap();
-                }
+                let report_aggregation_2_0 =
+                    report_2.as_leader_init_report_aggregation(job_id_2, 0);
+
                 for report_aggregation in &[
                     report_aggregation_0_0,
                     report_aggregation_0_1,
@@ -7443,8 +7530,8 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
         client_timestamps: &[Time],
     ) -> (
         B::BatchIdentifier,
-        AggregationJobId, // aggregation job ID
-        Vec<ReportId>,    // client report IDs
+        AggregationJobDatastoreId, // aggregation job ID
+        Vec<ReportId>,             // client report IDs
     ) {
         let batch_identifier = B::batch_identifier_for_client_timestamps(client_timestamps);
 
@@ -7462,19 +7549,19 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
             });
 
         let aggregation_job = AggregationJob::<0, B, dummy::Vdaf>::new(
+            AggregationJobDatastoreId::TEST,
             *task_id,
-            random(),
             *aggregation_param,
             B::partial_batch_identifier(&batch_identifier).clone(),
             client_timestamp_interval,
-            AggregationJobState::Active,
+            AggregationJobState::leader_active(),
             AggregationJobStep::from(0),
         );
-        tx.put_aggregation_job(&aggregation_job).await.unwrap();
+        let job_id = tx.put_aggregation_job(&aggregation_job).await.unwrap();
 
         for (ord, report) in reports.iter().enumerate() {
-            let report_aggregation = report
-                .as_leader_init_report_aggregation(*aggregation_job.id(), ord.try_into().unwrap());
+            let report_aggregation =
+                report.as_leader_init_report_aggregation(job_id, ord.try_into().unwrap());
             tx.put_report_aggregation(&report_aggregation)
                 .await
                 .unwrap();
@@ -7482,7 +7569,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
 
         (
             batch_identifier,
-            *aggregation_job.id(),
+            job_id,
             reports
                 .into_iter()
                 .map(|report| *report.metadata().id())
@@ -7783,7 +7870,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                     .await
                     .unwrap()
                     .into_iter()
-                    .map(|job| *job.id());
+                    .map(|job| job.datastore_id());
                 let helper_time_interval_aggregation_job_ids = tx
                     .get_aggregation_jobs_for_task::<0, TimeInterval, dummy::Vdaf>(
                         &helper_time_interval_task_id,
@@ -7791,7 +7878,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                     .await
                     .unwrap()
                     .into_iter()
-                    .map(|job| *job.id());
+                    .map(|job| job.datastore_id());
                 let leader_leader_selected_aggregation_job_ids = tx
                     .get_aggregation_jobs_for_task::<0, LeaderSelected, dummy::Vdaf>(
                         &leader_leader_selected_task_id,
@@ -7799,7 +7886,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                     .await
                     .unwrap()
                     .into_iter()
-                    .map(|job| *job.id());
+                    .map(|job| job.datastore_id());
                 let helper_leader_selected_aggregation_job_ids = tx
                     .get_aggregation_jobs_for_task::<0, LeaderSelected, dummy::Vdaf>(
                         &helper_leader_selected_task_id,
@@ -7807,7 +7894,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                     .await
                     .unwrap()
                     .into_iter()
-                    .map(|job| *job.id());
+                    .map(|job| job.datastore_id());
                 let got_aggregation_job_ids = leader_time_interval_aggregation_job_ids
                     .chain(helper_time_interval_aggregation_job_ids)
                     .chain(leader_leader_selected_aggregation_job_ids)
