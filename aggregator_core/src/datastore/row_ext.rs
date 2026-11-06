@@ -105,7 +105,6 @@ pub(super) trait RowExt {
     fn aggregation_job<const SEED_SIZE: usize, B, A>(
         &self,
         task_id: &TaskId,
-        aggregation_job_datastore_id: AggregationJobDatastoreId,
     ) -> Result<AggregationJob<SEED_SIZE, B, A>, Error>
     where
         B: BatchMode,
@@ -419,7 +418,6 @@ impl RowExt for Row {
     fn aggregation_job<const SEED_SIZE: usize, B, A>(
         &self,
         task_id: &TaskId,
-        aggregation_job_datastore_id: AggregationJobDatastoreId,
     ) -> Result<AggregationJob<SEED_SIZE, B, A>, Error>
     where
         B: BatchMode,
@@ -430,7 +428,7 @@ impl RowExt for Row {
             .into();
 
         let mut job = AggregationJob::new(
-            aggregation_job_datastore_id,
+            self.get("id"),
             *task_id,
             A::AggregationParam::get_decoded(self.get("aggregation_param"))?,
             B::PartialBatchIdentifier::get_decoded(self.get::<_, &[u8]>("batch_id"))?,

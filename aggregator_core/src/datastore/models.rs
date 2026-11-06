@@ -378,6 +378,11 @@ impl AggregationJobDatastoreId {
     /// Fake datastore ID suitable for use in tests where the value doesn't matter.
     #[cfg(feature = "test-util")]
     pub const TEST: Self = Self(0);
+
+    /// The next aggregation job datastore ID.
+    pub fn successor(&self) -> Self {
+        Self(self.0 + 1)
+    }
 }
 
 impl From<i64> for AggregationJobDatastoreId {
@@ -386,9 +391,15 @@ impl From<i64> for AggregationJobDatastoreId {
     }
 }
 
+impl Display for AggregationJobDatastoreId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 impl Debug for AggregationJobDatastoreId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "AggregationJobDatastoreId({}", self.0)
+        write!(f, "AggregationJobDatastoreId({})", self.0)
     }
 }
 
@@ -647,14 +658,15 @@ impl AggregationJobState {
         }
     }
 
-    pub(super) fn leader_active() -> Self {
+    /// Active job state for the leader.
+    ///
+    /// The helper aggregation job ID, which cannot yet be known, is `None`.
+    pub fn leader_active() -> Self {
         Self::Active {
             helper_aggregation_job_id: None,
         }
     }
-}
 
-impl AggregationJobState {
     /// The [`AggregationJobStateCode`] corresponding to this state.
     pub(super) fn code(&self) -> AggregationJobStateCode {
         match self {
@@ -691,6 +703,18 @@ impl AggregationJobState {
     /// `FromSql`.
     pub fn aggregation_job_id_bytes(&self) -> Option<&[u8; AggregationJobId::LEN]> {
         self.aggregation_job_id().map(|id| id.as_ref())
+    }
+
+    /// Whether this state is terminal.
+    pub fn terminal(&self) -> bool {
+        matches!(
+            self,
+            Self::Finished { .. } | Self::Abandoned { .. } | Self::Deleted { .. }
+        )
+    }
+
+    pub fn abandoned(&self) -> bool {
+        matches!(self, Self::Abandoned { .. })
     }
 }
 
@@ -845,7 +869,7 @@ impl<T> Lease<T> {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AcquiredAggregationJob {
     task_id: TaskId,
-    aggregation_job_id: AggregationJobDatastoreId,
+    aggregation_job_datastore_id: AggregationJobDatastoreId,
     batch_mode: task::BatchMode,
     vdaf: VdafInstance,
 }
@@ -854,13 +878,13 @@ impl AcquiredAggregationJob {
     /// Creates a new [`AcquiredAggregationJob`].
     pub fn new(
         task_id: TaskId,
-        aggregation_job_id: AggregationJobDatastoreId,
+        aggregation_job_datastore_id: AggregationJobDatastoreId,
         batch_mode: task::BatchMode,
         vdaf: VdafInstance,
     ) -> Self {
         Self {
             task_id,
-            aggregation_job_id,
+            aggregation_job_datastore_id,
             batch_mode,
             vdaf,
         }
@@ -872,8 +896,8 @@ impl AcquiredAggregationJob {
     }
 
     /// The aggregation job datastore ID.
-    pub fn aggregation_job_id(&self) -> AggregationJobDatastoreId {
-        self.aggregation_job_id
+    pub fn aggregation_job_datastore_id(&self) -> AggregationJobDatastoreId {
+        self.aggregation_job_datastore_id
     }
 
     /// Returns the batch mode associated with this acquired aggregation job.
@@ -984,7 +1008,7 @@ impl AcquiredCollectionJob {
 #[cfg_attr(feature = "test-util", educe(PartialEq, Eq))]
 pub struct ReportAggregation<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> {
     task_id: TaskId,
-    aggregation_job_id: AggregationJobDatastoreId,
+    aggregation_job_datastore_id: AggregationJobDatastoreId,
     report_id: ReportId,
     time: Time,
     ord: u64,
@@ -996,7 +1020,7 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> ReportAggregation<SE
     /// Creates a new [`ReportAggregation`].
     pub fn new(
         task_id: TaskId,
-        aggregation_job_id: AggregationJobDatastoreId,
+        aggregation_job_datastore_id: AggregationJobDatastoreId,
         report_id: ReportId,
         time: Time,
         ord: u64,
@@ -1005,7 +1029,7 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> ReportAggregation<SE
     ) -> Self {
         Self {
             task_id,
-            aggregation_job_id,
+            aggregation_job_datastore_id,
             report_id,
             time,
             ord,
@@ -1020,14 +1044,17 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> ReportAggregation<SE
     }
 
     /// The aggregation job datastore ID.
-    pub fn aggregation_job_id(&self) -> AggregationJobDatastoreId {
-        self.aggregation_job_id
+    pub fn aggregation_job_datastore_id(&self) -> AggregationJobDatastoreId {
+        self.aggregation_job_datastore_id
     }
 
     /// Set the aggregation job datastore ID.
-    pub fn with_aggregation_job_id(self, aggregation_job_id: AggregationJobDatastoreId) -> Self {
+    pub fn with_aggregation_job_id(
+        self,
+        aggregation_job_datastore_id: AggregationJobDatastoreId,
+    ) -> Self {
         Self {
-            aggregation_job_id,
+            aggregation_job_datastore_id,
             ..self
         }
     }
@@ -1504,6 +1531,17 @@ impl ReportAggregationMetadata {
     /// The aggregation job datastore ID.
     pub fn aggregation_job_datastore_id(&self) -> AggregationJobDatastoreId {
         self.aggregation_job_datastore_id
+    }
+
+    /// Set the aggregation job datastore ID.
+    pub fn with_aggregation_job_id(
+        self,
+        aggregation_job_datastore_id: AggregationJobDatastoreId,
+    ) -> Self {
+        Self {
+            aggregation_job_datastore_id,
+            ..self
+        }
     }
 
     /// Returns the report ID associated with this report aggregation.

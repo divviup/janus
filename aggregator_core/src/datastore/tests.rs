@@ -1810,7 +1810,7 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
     .leader_view()
     .unwrap();
     let batch_id = random();
-    let leader_aggregation_job = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
+    let leader_aggregation_job = AggregationJob::new(
         AggregationJobDatastoreId::TEST,
         *task.id(),
         dummy::AggregationParam(23),
@@ -1819,7 +1819,7 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
         AggregationJobState::leader_active(),
         AggregationJobStep::from(0),
     );
-    let helper_aggregation_job = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
+    let helper_aggregation_job = AggregationJob::new(
         AggregationJobDatastoreId::TEST,
         *task.id(),
         dummy::AggregationParam(23),
@@ -1829,7 +1829,8 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
             helper_aggregation_job_id: Some(random()),
         },
         AggregationJobStep::from(0),
-    );
+    )
+    .with_last_request_hash([2; 32]);
 
     let (leader_id, helper_id) = ds
         .run_tx("test-put-aggregation-jobs", |tx| {
@@ -1864,46 +1865,85 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
     // Advance the clock to "enable" report expiry.
     clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
 
-    let (got_leader_aggregation_job, got_helper_aggregation_job) = ds
-        .run_unnamed_tx(|tx| {
-            let (leader_aggregation_job, helper_aggregation_job) = (
-                leader_aggregation_job.clone(),
-                helper_aggregation_job.clone(),
-            );
-            Box::pin(async move {
-                Ok((
-                    tx.get_aggregation_job(
-                        leader_aggregation_job.task_id(),
-                        leader_aggregation_job.datastore_id(),
-                    )
-                    .await
-                    .unwrap(),
-                    tx.get_aggregation_job(
-                        helper_aggregation_job.task_id(),
-                        helper_aggregation_job.datastore_id(),
-                    )
-                    .await
-                    .unwrap(),
-                ))
-            })
-        })
-        .await
-        .unwrap();
-    assert_eq!(
-        Some(&leader_aggregation_job),
-        got_leader_aggregation_job.as_ref()
-    );
-    assert_eq!(
-        Some(&helper_aggregation_job),
-        got_helper_aggregation_job.as_ref()
-    );
+    // Get the two jobs out of the datastore using all three identifiers and ensure we get the same
+    // job back
+    let get_jobs =
+        async |leader_aggregation_job: &AggregationJob<0, LeaderSelected, dummy::Vdaf>,
+               helper_aggregation_job: &AggregationJob<0, LeaderSelected, dummy::Vdaf>| {
+            ds.run_unnamed_tx(|tx| {
+                let (leader_aggregation_job, helper_aggregation_job) = (
+                    leader_aggregation_job.clone(),
+                    helper_aggregation_job.clone(),
+                );
+                Box::pin(async move {
+                    let leader_by_datastore_id = tx
+                        .get_aggregation_job(
+                            leader_aggregation_job.task_id(),
+                            leader_aggregation_job.datastore_id(),
+                        )
+                        .await
+                        .unwrap();
+                    if let Some(id) = leader_aggregation_job.id() {
+                        let leader_by_dap_id = tx
+                            .get_aggregation_job_by_dap_id(leader_aggregation_job.task_id(), *id)
+                            .await
+                            .unwrap();
 
-    let new_leader_aggregation_job =
-        leader_aggregation_job
-            .clone()
-            .with_state(AggregationJobState::Finished {
-                helper_aggregation_job_id: random(),
-            });
+                        assert_eq!(leader_by_dap_id, leader_by_datastore_id);
+                    }
+                    if let Some(hash) = leader_aggregation_job.last_request_hash() {
+                        let leader_by_last_request_hash = tx
+                            .get_aggregation_job_by_last_request_hash(
+                                leader_aggregation_job.task_id(),
+                                hash,
+                            )
+                            .await
+                            .unwrap();
+                        assert_eq!(leader_by_last_request_hash, leader_by_datastore_id);
+                    }
+
+                    let helper_by_datastore_id = tx
+                        .get_aggregation_job(
+                            helper_aggregation_job.task_id(),
+                            helper_aggregation_job.datastore_id(),
+                        )
+                        .await
+                        .unwrap();
+                    let helper_by_dap_id = tx
+                        .get_aggregation_job_by_dap_id(
+                            helper_aggregation_job.task_id(),
+                            *helper_aggregation_job.id().unwrap(),
+                        )
+                        .await
+                        .unwrap();
+                    assert_eq!(helper_by_dap_id, helper_by_datastore_id);
+                    let helper_by_last_request_hash = tx
+                        .get_aggregation_job_by_last_request_hash(
+                            helper_aggregation_job.task_id(),
+                            helper_aggregation_job.last_request_hash().unwrap(),
+                        )
+                        .await
+                        .unwrap();
+                    assert_eq!(helper_by_last_request_hash, helper_by_datastore_id);
+
+                    Ok((leader_by_datastore_id, helper_by_datastore_id))
+                })
+            })
+            .await
+            .unwrap()
+        };
+
+    let (got_leader_aggregation_job, got_helper_aggregation_job) =
+        get_jobs(&leader_aggregation_job, &helper_aggregation_job).await;
+    assert_eq!(leader_aggregation_job, got_leader_aggregation_job.unwrap());
+    assert_eq!(helper_aggregation_job, got_helper_aggregation_job.unwrap());
+
+    let new_leader_aggregation_job = leader_aggregation_job
+        .clone()
+        .with_state(AggregationJobState::Finished {
+            helper_aggregation_job_id: random(),
+        })
+        .with_last_request_hash([1; 32]);
     let new_helper_aggregation_job = helper_aggregation_job
         .clone()
         .with_last_request_hash([3; 32]);
@@ -1934,42 +1974,20 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
     .await
     .unwrap();
 
-    let (got_leader_aggregation_job, got_helper_aggregation_job) = ds
-        .run_unnamed_tx(|tx| {
-            let (new_leader_aggregation_job, new_helper_aggregation_job) = (
-                new_leader_aggregation_job.clone(),
-                new_helper_aggregation_job.clone(),
-            );
-            Box::pin(async move {
-                Ok((
-                    tx.get_aggregation_job(
-                        new_leader_aggregation_job.task_id(),
-                        new_leader_aggregation_job.datastore_id(),
-                    )
-                    .await
-                    .unwrap(),
-                    tx.get_aggregation_job(
-                        new_helper_aggregation_job.task_id(),
-                        new_helper_aggregation_job.datastore_id(),
-                    )
-                    .await
-                    .unwrap(),
-                ))
-            })
-        })
-        .await
-        .unwrap();
+    let (got_leader_aggregation_job, got_helper_aggregation_job) =
+        get_jobs(&new_leader_aggregation_job, &new_helper_aggregation_job).await;
     assert_eq!(
-        Some(new_leader_aggregation_job.clone()),
-        got_leader_aggregation_job
+        new_leader_aggregation_job,
+        got_leader_aggregation_job.unwrap(),
     );
     assert_eq!(
-        Some(new_helper_aggregation_job.clone()),
-        got_helper_aggregation_job
+        new_helper_aggregation_job,
+        got_helper_aggregation_job.unwrap(),
     );
 
-    // Trying to write an aggregation job again should fail.
-    let new_helper_aggregation_job = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
+    // Trying to write a new aggregation job with a previously used DAP aggregation job ID should
+    // fail
+    let duplicate_aggregation_job_id = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
         AggregationJobDatastoreId::TEST,
         *task.id(),
         dummy::AggregationParam(24),
@@ -1979,10 +1997,10 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
         AggregationJobStep::from(0),
     );
     ds.run_unnamed_tx(|tx| {
-        let new_helper_aggregation_job = new_helper_aggregation_job.clone();
+        let duplicate_aggregation_job_id = duplicate_aggregation_job_id.clone();
         Box::pin(async move {
             let error = tx
-                .put_aggregation_job(&new_helper_aggregation_job)
+                .put_aggregation_job(&duplicate_aggregation_job_id)
                 .await
                 .unwrap_err();
             assert_matches!(error, Error::MutationTargetAlreadyExists);
@@ -1997,31 +2015,8 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
     // returned.
     clock.advance(TIME_PRECISION.to_chrono().unwrap());
     clock.advance(TimeDelta::seconds(1));
-    let (got_leader_aggregation_job, got_helper_aggregation_job) = ds
-        .run_unnamed_tx(|tx| {
-            let (new_leader_aggregation_job, new_helper_aggregation_job) = (
-                new_leader_aggregation_job.clone(),
-                new_helper_aggregation_job.clone(),
-            );
-            Box::pin(async move {
-                Ok((
-                    tx.get_aggregation_job::<0, LeaderSelected, dummy::Vdaf>(
-                        new_leader_aggregation_job.task_id(),
-                        new_leader_aggregation_job.datastore_id(),
-                    )
-                    .await
-                    .unwrap(),
-                    tx.get_aggregation_job::<0, LeaderSelected, dummy::Vdaf>(
-                        new_helper_aggregation_job.task_id(),
-                        new_helper_aggregation_job.datastore_id(),
-                    )
-                    .await
-                    .unwrap(),
-                ))
-            })
-        })
-        .await
-        .unwrap();
+    let (got_leader_aggregation_job, got_helper_aggregation_job) =
+        get_jobs(&new_leader_aggregation_job, &new_helper_aggregation_job).await;
     assert_eq!(None, got_leader_aggregation_job);
     assert_eq!(None, got_helper_aggregation_job);
 
@@ -2261,7 +2256,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
                 assert_eq!(maybe_lease.lease_token, None);
                 assert_eq!(maybe_lease.lease_attempts, 0);
 
-                seen_aggregation_job_ids.push(maybe_lease.leased().aggregation_job_id());
+                seen_aggregation_job_ids.push(maybe_lease.leased().aggregation_job_datastore_id());
             }
 
             maybe_leased_aggregation_job_ids.sort();
@@ -2341,7 +2336,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
     }
 
     let want_expiry_time = clock.now() + lease_duration_timedelta;
-    let want_aggregation_jobs: Vec<_> = leader_aggregation_job_ids
+    let mut want_aggregation_jobs: Vec<_> = leader_aggregation_job_ids
         .iter()
         .map(|aggregation_job_id| (*leader_task.id(), aggregation_job_id))
         .chain(
@@ -2361,6 +2356,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
             )
         })
         .collect();
+    want_aggregation_jobs.sort();
 
     let got_leases = timeout(StdDuration::from_secs(10), {
         let ds = Arc::clone(&ds);
@@ -2445,7 +2441,9 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
 
             let mut seen_aggregation_job_ids = Vec::new();
             for maybe_lease in maybe_leases {
-                if leased_aggregation_job_ids.contains(&maybe_lease.leased().aggregation_job_id()) {
+                if leased_aggregation_job_ids
+                    .contains(&maybe_lease.leased().aggregation_job_datastore_id())
+                {
                     assert_ne!(maybe_lease.lease_expiry_time, Timestamp::NegInfinity);
                     assert_ne!(maybe_lease.lease_expiry_time, Timestamp::PosInfinity);
                     assert!(maybe_lease.lease_token.is_some());
@@ -2456,7 +2454,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
                     assert_eq!(maybe_lease.lease_attempts, 0);
                 }
 
-                seen_aggregation_job_ids.push(maybe_lease.leased().aggregation_job_id());
+                seen_aggregation_job_ids.push(maybe_lease.leased().aggregation_job_datastore_id());
             }
 
             maybe_leased_aggregation_job_ids.sort();
@@ -2566,7 +2564,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
         lease_duration_sec as i64 - REACQUIRE_DELAY.num_seconds(),
     ));
     let want_expiry_time = clock.now() + lease_duration_timedelta;
-    let want_aggregation_jobs: Vec<_> = leader_aggregation_job_ids
+    let mut want_aggregation_jobs: Vec<_> = leader_aggregation_job_ids
         .iter()
         .map(|aggregation_job_id| (*leader_task.id(), aggregation_job_id))
         .chain(
@@ -2586,6 +2584,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
             )
         })
         .collect();
+    want_aggregation_jobs.sort();
     let mut got_aggregation_jobs: Vec<_> = ds
         .run_unnamed_tx(|tx| {
             Box::pin(async move {
@@ -3106,7 +3105,7 @@ SELECT updated_at, updated_by FROM report_aggregations
                         vdaf.as_ref(),
                         &role,
                         task.id(),
-                        report_aggregation.aggregation_job_id(),
+                        report_aggregation.aggregation_job_datastore_id(),
                         &report_id,
                     )
                     .await
@@ -3130,7 +3129,7 @@ SELECT updated_at, updated_by FROM report_aggregations
                         vdaf.as_ref(),
                         &role,
                         task.id(),
-                        report_aggregation.aggregation_job_id(),
+                        report_aggregation.aggregation_job_datastore_id(),
                         &report_id,
                     )
                     .await
@@ -4570,7 +4569,7 @@ async fn setup_collection_job_acquire_test_case<B: TestBatchModeExt>(
             for report in &test_case.reports {
                 tx.put_client_report(report).await.unwrap();
             }
-            for (aggregation_job, report_aggregations) in &test_case.aggregation_jobs {
+            for (aggregation_job, report_aggregations) in &mut test_case.aggregation_jobs {
                 let job_id = tx.put_aggregation_job(&aggregation_job).await.unwrap();
 
                 for report_aggregation in report_aggregations {

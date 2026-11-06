@@ -25,8 +25,8 @@ use janus_core::{
     time::{Clock, TimeExt},
 };
 use janus_messages::{
-    AggregateShareId, BatchId, CollectionJobId, CollectionJobReq, HpkeConfigId, Interval, Query,
-    ReportId, Role, TaskId, Time, TimePrecision, VerifyResp,
+    AggregateShareId, AggregationJobId, BatchId, CollectionJobId, CollectionJobReq, HpkeConfigId,
+    Interval, Query, ReportId, Role, TaskId, Time, TimePrecision, VerifyResp,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
 };
 use leases::LeaseRowExt;
@@ -1637,17 +1637,17 @@ WHERE client_reports.client_timestamp < $7",
         )
     }
 
-    /// get_aggregation_job retrieves an aggregation job by ID.
+    /// Retrieve an aggregation job by its datastore ID.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
-    pub async fn get_aggregation_job<
-        const SEED_SIZE: usize,
-        B: BatchMode,
-        A: AsyncAggregator<SEED_SIZE>,
-    >(
+    pub async fn get_aggregation_job<const SEED_SIZE: usize, B, A>(
         &self,
         task_id: &TaskId,
         datastore_id: AggregationJobDatastoreId,
-    ) -> Result<Option<AggregationJob<SEED_SIZE, B, A>>, Error> {
+    ) -> Result<Option<AggregationJob<SEED_SIZE, B, A>>, Error>
+    where
+        B: BatchMode,
+        A: AsyncAggregator<SEED_SIZE>,
+    {
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
             None => return Ok(None),
@@ -1657,12 +1657,10 @@ WHERE client_reports.client_timestamp < $7",
             .prepare_cached(
                 "-- get_aggregation_job()
 SELECT
-    aggregation_param, batch_id, client_timestamp_interval, state, step, last_request_hash,
+    id, aggregation_param, batch_id, client_timestamp_interval, state, step, last_request_hash,
     aggregation_job_id
 FROM aggregation_jobs
-WHERE aggregation_jobs.task_id = $1
-  AND aggregation_jobs.id = $2
-  AND UPPER(aggregation_jobs.client_timestamp_interval) >= $3",
+WHERE task_id = $1 AND id = $2 AND UPPER(client_timestamp_interval) >= $3",
             )
             .await?;
         self.query_opt(
@@ -1674,7 +1672,85 @@ WHERE aggregation_jobs.task_id = $1
             ],
         )
         .await?
-        .map(|row| row.aggregation_job(task_id, datastore_id))
+        .map(|row| row.aggregation_job(task_id))
+        .transpose()
+    }
+
+    /// Retrieve an aggregation job by its DAP ID.
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
+    pub async fn get_aggregation_job_by_dap_id<const SEED_SIZE: usize, B, A>(
+        &self,
+        task_id: &TaskId,
+        dap_id: AggregationJobId,
+    ) -> Result<Option<AggregationJob<SEED_SIZE, B, A>>, Error>
+    where
+        B: BatchMode,
+        A: AsyncAggregator<SEED_SIZE>,
+    {
+        let task_info = match self.task_info_for(task_id).await? {
+            Some(task_info) => task_info,
+            None => return Ok(None),
+        };
+
+        let stmt = self
+            .prepare_cached(
+                "-- get_aggregation_job_by_dap_id()
+SELECT
+    id, aggregation_param, batch_id, client_timestamp_interval, state, step, last_request_hash,
+    aggregation_job_id
+FROM aggregation_jobs
+WHERE task_id = $1 AND aggregation_job_id = $2 AND UPPER(client_timestamp_interval) >= $3",
+            )
+            .await?;
+        self.query_opt(
+            &stmt,
+            &[
+                /* task_id */ &task_info.pkey,
+                /* aggregation_job_id */ dap_id.as_ref(),
+                /* threshold */ &task_info.report_expiry_threshold(self.clock.now())?,
+            ],
+        )
+        .await?
+        .map(|row| row.aggregation_job(task_id))
+        .transpose()
+    }
+
+    /// Retrieve an aggregation job by the hash of the last request that acted on it.
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
+    pub async fn get_aggregation_job_by_last_request_hash<const SEED_SIZE: usize, B, A>(
+        &self,
+        task_id: &TaskId,
+        last_request_hash: [u8; 32],
+    ) -> Result<Option<AggregationJob<SEED_SIZE, B, A>>, Error>
+    where
+        B: BatchMode,
+        A: AsyncAggregator<SEED_SIZE>,
+    {
+        let task_info = match self.task_info_for(task_id).await? {
+            Some(task_info) => task_info,
+            None => return Ok(None),
+        };
+
+        let stmt = self
+            .prepare_cached(
+                "-- get_aggregation_job_by_last_request_hash()
+SELECT
+    id, aggregation_param, batch_id, client_timestamp_interval, state, step, last_request_hash,
+    aggregation_job_id
+FROM aggregation_jobs
+WHERE task_id = $1 AND last_request_hash = $2 AND UPPER(client_timestamp_interval) >= $3",
+            )
+            .await?;
+        self.query_opt(
+            &stmt,
+            &[
+                /* task_id */ &task_info.pkey,
+                &last_request_hash,
+                /* threshold */ &task_info.report_expiry_threshold(self.clock.now())?,
+            ],
+        )
+        .await?
+        .map(|row| row.aggregation_job(task_id))
         .transpose()
     }
 
@@ -1701,8 +1777,7 @@ SELECT
     id, aggregation_job_id, aggregation_param, batch_id, client_timestamp_interval, state, step,
     last_request_hash
 FROM aggregation_jobs
-WHERE aggregation_jobs.task_id = $1
-  AND UPPER(aggregation_jobs.client_timestamp_interval) >= $2",
+WHERE task_id = $1 AND UPPER(client_timestamp_interval) >= $2",
             )
             .await?;
         self.query(
@@ -1714,7 +1789,7 @@ WHERE aggregation_jobs.task_id = $1
         )
         .await?
         .into_iter()
-        .map(|row| row.aggregation_job(task_id, row.get("id")))
+        .map(|row| row.aggregation_job(task_id))
         .collect()
     }
 
@@ -1839,7 +1914,7 @@ WHERE aggregation_jobs.task_id = $4
                     /* updated_at */ &now,
                     /* updated_by */ &self.name,
                     /* task_id */ &task_info.pkey,
-                    /* aggregation_job_id */ &lease.leased().aggregation_job_id(),
+                    /* aggregation_job_id */ &lease.leased().aggregation_job_datastore_id(),
                     /* lease_expiry */ &lease.lease_expiry_time(),
                     /* lease_token */ &lease.lease_token().as_ref(),
                     /* threshold */
@@ -2214,7 +2289,8 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
                 &stmt,
                 &[
                     /* task_id */ &task_info.pkey,
-                    /* aggregation_job_id */ &report_aggregation.aggregation_job_id(),
+                    /* aggregation_job_id */
+                    &report_aggregation.aggregation_job_datastore_id(),
                     /* ord */ &TryInto::<i64>::try_into(report_aggregation.ord())?,
                     /* client_report_id */ &report_aggregation.report_id().as_ref(),
                     /* client_timestamp */
@@ -2462,7 +2538,8 @@ WHERE report_aggregations.aggregation_job_id = aggregation_jobs.id
                     /* error_code */ &encoded_state_values.report_error,
                     /* updated_at */ &now,
                     /* updated_by */ &self.name,
-                    /* aggregation_jobs.id */ &report_aggregation.aggregation_job_id(),
+                    /* aggregation_jobs.id */
+                    &report_aggregation.aggregation_job_datastore_id(),
                     /* task_id */ &task_info.pkey,
                     /* client_report_id */ &report_aggregation.report_id().as_ref(),
                     /* client_timestamp */
