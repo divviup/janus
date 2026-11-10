@@ -11,9 +11,9 @@ use janus_aggregator_core::{
     datastore::{
         Error, Transaction,
         models::{
-            AggregationJob, AggregationJobState, BatchAggregation, BatchAggregationState,
-            ReportAggregation, ReportAggregationMetadata, ReportAggregationMetadataState,
-            ReportAggregationState,
+            AggregationJob, AggregationJobDatastoreId, AggregationJobState, BatchAggregation,
+            BatchAggregationState, ReportAggregation, ReportAggregationMetadata,
+            ReportAggregationMetadataState, ReportAggregationState, UnwrittenAggregationJob,
         },
         task_counters::TaskAggregationCounter,
     },
@@ -21,8 +21,7 @@ use janus_aggregator_core::{
 };
 use janus_core::{report_id::ReportIdChecksumExt as _, vdaf::VdafInstance};
 use janus_messages::{
-    AggregationJobId, Interval, ReportError, ReportId, ReportIdChecksum, Time, VerifyResp,
-    VerifyStepResult,
+    Interval, ReportError, ReportId, ReportIdChecksum, Time, VerifyResp, VerifyStepResult,
 };
 use opentelemetry::{
     KeyValue,
@@ -43,8 +42,18 @@ where
     task: Arc<AggregatorTask>,
     batch_aggregation_shard_count: u64,
     aggregation_parameter: Option<A::AggregationParam>,
-    aggregation_jobs: HashMap<AggregationJobId, AggregationJobInfo<SEED_SIZE, B, A, RA>>,
-    by_batch_identifier_index: HashMap<B::BatchIdentifier, HashMap<AggregationJobId, Vec<usize>>>,
+    /// Generator for keys in aggregation job hashmaps.
+    ///
+    /// Ultimately, an [`AggregationJobDatastoreID`] represents a DB primary key value, but this
+    /// structure's job is to buffer writes to the database, meaning that it can't yet know what
+    /// `id` will be assigned to some job. But we still need to be able to distinguish aggregation
+    /// jobs and map report aggregations to them. So we use synthetic datastore IDs gnerated from
+    /// this counter, which are used purely within this module. When aggregation jobs and report
+    /// aggregations are written to storage, they get updated with a real ID value.
+    aggregation_job_datastore_id_counter: AggregationJobDatastoreId,
+    aggregation_jobs: HashMap<AggregationJobDatastoreId, AggregationJobInfo<SEED_SIZE, B, A, RA>>,
+    by_batch_identifier_index:
+        HashMap<B::BatchIdentifier, HashMap<AggregationJobDatastoreId, Vec<usize>>>,
     metrics: Option<AggregationJobWriterMetrics>,
     task_aggregation_counters: TaskAggregationCounter,
 
@@ -78,6 +87,7 @@ where
             task,
             batch_aggregation_shard_count,
             aggregation_parameter: None,
+            aggregation_job_datastore_id_counter: AggregationJobDatastoreId::from(0),
             aggregation_jobs: HashMap::new(),
             by_batch_identifier_index: HashMap::new(),
             metrics,
@@ -117,6 +127,39 @@ where
         }
     }
 
+    /// Add a single aggregation job and write it to storage right away.
+    ///
+    /// This is equivalent to calling [`Self::put`] once and then [`Self::write`], except that this
+    /// also returns [`VerifyResp`]s for the job's reports.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the aggregation parameter of the aggregation job does not match that of previous
+    /// aggregation jobs.
+    pub async fn put_and_write(
+        &mut self,
+        vdaf: &A,
+        tx: &Transaction<'_>,
+        aggregation_job: AggregationJob<SEED_SIZE, B, A>,
+        report_aggregations: Vec<RA>,
+    ) -> Result<Vec<VerifyResp>, Error> {
+        self.put(aggregation_job, report_aggregations)?;
+        let state = self.write_inner(vdaf, tx).await?;
+
+        assert_eq!(
+            state.by_aggregation_job.len(),
+            1,
+            "write state should contain exactly one aggregation job",
+        );
+        // Unwrap safety: we just checked the length of the HashMap
+        let (_, agg_job_info) = state.by_aggregation_job.into_iter().next().unwrap();
+        Ok(agg_job_info
+            .report_aggregations
+            .into_iter()
+            .filter_map(|ra| ra.last_verify_resp().cloned())
+            .collect())
+    }
+
     /// Add an aggregation job to be written.
     ///
     /// # Panics
@@ -125,7 +168,7 @@ where
     /// aggregation jobs.
     pub fn put(
         &mut self,
-        aggregation_job: AggregationJob<SEED_SIZE, B, A>,
+        aggregation_job: UnwrittenAggregationJob<B::PartialBatchIdentifier, A::AggregationParam>,
         mut report_aggregations: Vec<RA>,
     ) -> Result<(), Error> {
         self.update_aggregation_parameter(aggregation_job.aggregation_parameter());
@@ -141,17 +184,24 @@ where
         assert_eq!(batch_identifiers.len(), report_aggregations.len());
 
         // Modify our state to record this aggregation job. (starting here, failure is not allowed)
+        let datastore_id = self.aggregation_job_datastore_id_counter.successor();
+        let aggregation_job = aggregation_job.with_datastore_id(datastore_id);
+        let report_aggregations = report_aggregations
+            .into_iter()
+            .map(|ra| ra.with_aggregation_job_datastore_id(datastore_id))
+            .collect();
+
         for (idx, batch_identifier) in batch_identifiers.into_iter().enumerate() {
             self.by_batch_identifier_index
                 .entry(batch_identifier)
                 .or_default()
-                .entry(*aggregation_job.id())
+                .entry(aggregation_job.datastore_id())
                 .or_default()
                 .push(idx);
         }
 
         self.aggregation_jobs.insert(
-            *aggregation_job.id(),
+            aggregation_job.datastore_id(),
             AggregationJobInfo {
                 aggregation_job,
                 report_aggregations,
@@ -176,15 +226,20 @@ where
         skip(self, tx),
         err(level = Level::DEBUG),
     )]
-    pub async fn write(
+    pub async fn write(&self, vdaf: &A, tx: &Transaction<'_>) -> Result<(), Error> {
+        self.write_inner(vdaf, tx).await?;
+        Ok(())
+    }
+
+    async fn write_inner(
         &self,
+        vdaf: &A,
         tx: &Transaction<'_>,
-        vdaf: Arc<A>,
-    ) -> Result<HashMap<AggregationJobId, Vec<VerifyResp>>, Error> {
+    ) -> Result<WriteState<'_, SEED_SIZE, B, A, WT, RA>, Error> {
         // Read & update state based on the aggregation jobs to be written. We will read batch
         // aggregations, then update aggregation jobs/report aggregations/batch aggregations based
         // on the state we read.
-        let mut state = WriteState::new(tx, vdaf.as_ref(), self).await?;
+        let mut state = WriteState::new(tx, vdaf, self).await?;
         state.fail_report_aggregations_for_collected_batches();
         state.update_batch_aggregations_from_report_aggregations()?;
         state.update_aggregation_job_state_from_report_aggregations();
@@ -231,22 +286,7 @@ where
             }));
         try_join!(write_agg_jobs_future, write_batch_aggs_future)?;
 
-        Ok(state
-            .by_aggregation_job
-            .into_iter()
-            .map(|(agg_job_id, agg_job_info)| {
-                (
-                    agg_job_id,
-                    agg_job_info
-                        .report_aggregations
-                        .iter()
-                        .map(AsRef::as_ref)
-                        .filter_map(RA::Borrowed::last_verify_resp)
-                        .cloned()
-                        .collect(),
-                )
-            })
-            .collect())
+        Ok(state)
     }
 
     fn update_metrics<F: FnOnce(&AggregationJobWriterMetrics)>(&self, f: F) {
@@ -319,9 +359,7 @@ impl WriteType for InitialWrite {
     {
         // For new writes (inserts) of aggregation jobs in a non-terminal state, increment
         // aggregation_jobs_created.
-        if aggregation_job.state() == &AggregationJobState::Active
-            || aggregation_job.state() == &AggregationJobState::AwaitingRequest
-        {
+        if !aggregation_job.state().terminal() {
             *batch_aggregation = BatchAggregation::new(
                 *batch_aggregation.task_id(),
                 batch_aggregation.batch_identifier().clone(),
@@ -379,9 +417,7 @@ impl WriteType for UpdateWrite {
         // For updates of aggregation jobs into a terminal state, increment
         // aggregation_jobs_terminated. (This is safe to do since we will not process a terminal
         // aggregation job again.)
-        if aggregation_job.state() != &AggregationJobState::Active
-            && aggregation_job.state() != &AggregationJobState::AwaitingRequest
-        {
+        if aggregation_job.state().terminal() {
             *batch_aggregation = BatchAggregation::new(
                 *batch_aggregation.task_id(),
                 batch_aggregation.batch_identifier().clone(),
@@ -415,7 +451,8 @@ where
 {
     writer: &'a AggregationJobWriter<SEED_SIZE, B, A, WT, RA>,
     batch_aggregation_ord: u64,
-    by_aggregation_job: HashMap<AggregationJobId, CowAggregationJobInfo<'a, SEED_SIZE, B, A, RA>>,
+    by_aggregation_job:
+        HashMap<AggregationJobDatastoreId, CowAggregationJobInfo<'a, SEED_SIZE, B, A, RA>>,
     batch_aggregations: HashMap<B::BatchIdentifier, (Operation, BatchAggregation<SEED_SIZE, B, A>)>,
 }
 
@@ -425,7 +462,7 @@ where
     B: AccumulableBatchMode,
     A: AsyncAggregator<SEED_SIZE>,
 {
-    aggregation_job: AggregationJob<SEED_SIZE, B, A>,
+    aggregation_job: UnwrittenAggregationJob<B::PartialBatchIdentifier, A::AggregationParam>,
     report_aggregations: Vec<RA>,
 }
 
@@ -436,7 +473,8 @@ where
     A: AsyncAggregator<SEED_SIZE>,
     RA: ReportAggregationUpdate<SEED_SIZE, A>,
 {
-    aggregation_job: Cow<'a, AggregationJob<SEED_SIZE, B, A>>,
+    aggregation_job:
+        Cow<'a, UnwrittenAggregationJob<B::PartialBatchIdentifier, A::AggregationParam>>,
     report_aggregations: Vec<Cow<'a, RA::Borrowed>>,
 }
 
@@ -551,7 +589,7 @@ where
                     .get(aggregation_job_id)
                     .unwrap()
                     .aggregation_job;
-                if matches!(aggregation_job.state(), AggregationJobState::Abandoned) {
+                if aggregation_job.state().abandoned() {
                     continue;
                 }
 
@@ -778,18 +816,22 @@ where
             report_aggregations,
         } in self.by_aggregation_job.values_mut()
         {
-            if matches!(
-                aggregation_job.state(),
-                AggregationJobState::Finished | AggregationJobState::Abandoned
-            ) {
+            if aggregation_job.state().terminal() {
                 continue;
             }
 
+            let helper_aggregation_job_id = *aggregation_job
+                .id()
+                .expect("job transitioning to finished must have aggregation job ID assigned");
+
             if report_aggregations.iter().all(|ra| ra.is_terminal()) {
-                *aggregation_job.to_mut() = aggregation_job
-                    .as_ref()
-                    .clone()
-                    .with_state(AggregationJobState::Finished);
+                *aggregation_job.to_mut() =
+                    aggregation_job
+                        .as_ref()
+                        .clone()
+                        .with_state(AggregationJobState::Finished {
+                            helper_aggregation_job_id,
+                        });
             }
         }
     }
@@ -914,6 +956,12 @@ pub trait ReportAggregationUpdate<const SEED_SIZE: usize, A: AsyncAggregator<SEE
     /// the "Failed" state, with the given [`ReportError`].
     fn with_failure(self, report_error: ReportError) -> Self;
 
+    /// Returns a new report aggregation with the given aggregation job datastore ID assigned to it.
+    fn with_aggregation_job_datastore_id(
+        self,
+        aggregation_job_datastore_id: AggregationJobDatastoreId,
+    ) -> Self;
+
     /// Returns the last verification response from this report aggregation, if any.
     fn last_verify_resp(&self) -> Option<&VerifyResp>;
 
@@ -985,6 +1033,18 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> ReportAggregationUpd
         }
     }
 
+    fn with_aggregation_job_datastore_id(
+        self,
+        aggregation_job_datastore_id: AggregationJobDatastoreId,
+    ) -> Self {
+        Self {
+            report_aggregation: self
+                .report_aggregation
+                .with_aggregation_job_id(aggregation_job_datastore_id),
+            ..self
+        }
+    }
+
     /// Returns the last verification response from this report aggregation, if any.
     fn last_verify_resp(&self) -> Option<&VerifyResp> {
         self.report_aggregation.last_verify_resp()
@@ -1043,6 +1103,13 @@ where
         tx.put_leader_report_aggregation(self).await
     }
 
+    fn with_aggregation_job_datastore_id(
+        self,
+        aggregation_job_datastore_id: AggregationJobDatastoreId,
+    ) -> Self {
+        ReportAggregationMetadata::with_aggregation_job_id(self, aggregation_job_datastore_id)
+    }
+
     async fn write_update(&self, _tx: &Transaction) -> Result<(), Error> {
         panic!("tried to update an existing report aggregation via ReportAggregationMetadata")
     }
@@ -1084,6 +1151,17 @@ where
     fn with_failure(self, report_error: ReportError) -> Self {
         // Since `with_failure` consumes the caller, we must own the CoW.
         Self::Owned(self.into_owned().with_failure(report_error))
+    }
+
+    fn with_aggregation_job_datastore_id(
+        self,
+        aggregation_job_datastore_id: AggregationJobDatastoreId,
+    ) -> Self {
+        // Since `with_aggregation_job_datastore_id` consumes the caller, we must own the CoW.
+        Self::Owned(
+            self.into_owned()
+                .with_aggregation_job_datastore_id(aggregation_job_datastore_id),
+        )
     }
 
     /// Returns the last verification response from this report aggregation, if any.

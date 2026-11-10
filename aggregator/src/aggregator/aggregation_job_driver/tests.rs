@@ -12,8 +12,8 @@ use janus_aggregator_core::{
     datastore::{
         Datastore,
         models::{
-            AcquiredAggregationJob, AggregationJob, AggregationJobState, BatchAggregation,
-            BatchAggregationState, LeaderStoredReport, Lease, ReportAggregation,
+            AcquiredAggregationJob, AggregationJob, AggregationJobDatastoreId, AggregationJobState,
+            BatchAggregation, BatchAggregationState, LeaderStoredReport, Lease, ReportAggregation,
             ReportAggregationState, merge_batch_aggregations_by_batch,
         },
         task_counters::TaskAggregationCounter,
@@ -158,8 +158,6 @@ async fn aggregation_job_driver() {
         .collect();
     rejected_reports.sort_by_key(|(report, _)| *report.metadata().id());
 
-    let aggregation_job_id = random();
-
     ds.run_unnamed_tx(|tx| {
         let (task, accepted_report, rejected_reports, aggregation_param) = (
             leader_task.clone(),
@@ -188,20 +186,21 @@ async fn aggregation_job_driver() {
                     .unwrap();
             }
 
-            tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
-                *task.id(),
-                aggregation_job_id,
-                aggregation_param,
-                (),
-                Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
-                AggregationJobState::Active,
-                AggregationJobStep::from(0),
-            ))
-            .await
-            .unwrap();
+            let job_id = tx
+                .put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
+                    AggregationJobDatastoreId::TEST,
+                    *task.id(),
+                    aggregation_param,
+                    (),
+                    Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
+                    AggregationJobState::Active,
+                    AggregationJobStep::from(0),
+                ))
+                .await
+                .unwrap();
 
             tx.put_report_aggregation(
-                &accepted_report.as_leader_init_report_aggregation(aggregation_job_id, 0),
+                &accepted_report.as_leader_init_report_aggregation(job_id, 0),
             )
             .await
             .unwrap();
@@ -673,7 +672,10 @@ async fn leader_sync_time_interval_aggregation_job_init_single_step() {
         .await
         .unwrap();
     assert_eq!(lease.leased().task_id(), task.id());
-    assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
+    assert_eq!(
+        lease.leased().aggregation_job_datastore_id(),
+        &aggregation_job_id
+    );
 
     // Setup: prepare mocked HTTP response. (first an error response, then a success)
     // (This is fragile in that it expects the leader request to be deterministically encoded.
@@ -1060,7 +1062,10 @@ async fn leader_sync_time_interval_aggregation_job_init_two_steps() {
         .await
         .unwrap();
     assert_eq!(lease.leased().task_id(), task.id());
-    assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
+    assert_eq!(
+        lease.leased().aggregation_job_datastore_id(),
+        &aggregation_job_id
+    );
 
     // Setup: prepare mocked HTTP response. (first an error response, then a success)
     // (This is fragile in that it expects the leader request to be deterministically encoded.
@@ -1427,7 +1432,10 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
         .await
         .unwrap();
     assert_eq!(lease.leased().task_id(), task.id());
-    assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
+    assert_eq!(
+        lease.leased().aggregation_job_datastore_id(),
+        &aggregation_job_id
+    );
 
     // Advance the clock to "enable" report expiry.
     clock.advance(report_expiry_age.to_chrono(&time_precision_const).unwrap());
@@ -1754,7 +1762,10 @@ async fn leader_sync_leader_selected_aggregation_job_init_single_step() {
         .await
         .unwrap();
     assert_eq!(lease.leased().task_id(), task.id());
-    assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
+    assert_eq!(
+        lease.leased().aggregation_job_datastore_id(),
+        &aggregation_job_id
+    );
 
     // Setup: prepare mocked HTTP response. (first an error response, then a success)
     // (This is fragile in that it expects the leader request to be deterministically encoded.
@@ -2062,7 +2073,10 @@ async fn leader_sync_leader_selected_aggregation_job_init_two_steps() {
         .await
         .unwrap();
     assert_eq!(lease.leased().task_id(), task.id());
-    assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
+    assert_eq!(
+        lease.leased().aggregation_job_datastore_id(),
+        &aggregation_job_id
+    );
 
     // Setup: prepare mocked HTTP response. (first an error response, then a success)
     // (This is fragile in that it expects the leader request to be deterministically encoded.
@@ -2367,7 +2381,10 @@ async fn leader_sync_time_interval_aggregation_job_continue() {
         .await
         .unwrap();
     assert_eq!(lease.leased().task_id(), task.id());
-    assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
+    assert_eq!(
+        lease.leased().aggregation_job_datastore_id(),
+        &aggregation_job_id
+    );
 
     // Setup: prepare mocked HTTP responses. (first an error response, then a success)
     // (This is fragile in that it expects the leader request to be deterministically encoded.
@@ -2691,7 +2708,10 @@ async fn leader_sync_leader_selected_aggregation_job_continue() {
         .await
         .unwrap();
     assert_eq!(lease.leased().task_id(), task.id());
-    assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
+    assert_eq!(
+        lease.leased().aggregation_job_datastore_id(),
+        &aggregation_job_id
+    );
 
     // Setup: prepare mocked HTTP responses. (first an error response, then a success)
     // (This is fragile in that it expects the leader request to be deterministically encoded.
@@ -2958,7 +2978,10 @@ async fn leader_async_aggregation_job_init_to_pending() {
         .await
         .unwrap();
     assert_eq!(lease.leased().task_id(), task.id());
-    assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
+    assert_eq!(
+        lease.leased().aggregation_job_datastore_id(),
+        &aggregation_job_id
+    );
 
     // Setup: prepare mocked HTTP response.
     let leader_request = AggregationJobInitializeReq::new(
@@ -3208,7 +3231,10 @@ async fn leader_async_aggregation_job_init_to_pending_two_step() {
         .await
         .unwrap();
     assert_eq!(lease.leased().task_id(), task.id());
-    assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
+    assert_eq!(
+        lease.leased().aggregation_job_datastore_id(),
+        &aggregation_job_id
+    );
 
     // Setup: prepare mocked HTTP response.
     let leader_request = AggregationJobInitializeReq::new(
@@ -3469,7 +3495,10 @@ async fn leader_async_aggregation_job_continue_to_pending() {
         .await
         .unwrap();
     assert_eq!(lease.leased().task_id(), task.id());
-    assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
+    assert_eq!(
+        lease.leased().aggregation_job_datastore_id(),
+        &aggregation_job_id
+    );
 
     // Setup: prepare mocked HTTP response.
     let leader_request = AggregationJobContinueReq::new(
@@ -3720,7 +3749,10 @@ async fn leader_async_aggregation_job_init_poll_to_pending() {
         .await
         .unwrap();
     assert_eq!(lease.leased().task_id(), task.id());
-    assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
+    assert_eq!(
+        lease.leased().aggregation_job_datastore_id(),
+        &aggregation_job_id
+    );
 
     // Setup: prepare mocked HTTP response.
     let mocked_aggregate_request = server
@@ -3957,7 +3989,10 @@ async fn leader_async_aggregation_job_init_poll_to_pending_two_step() {
         .await
         .unwrap();
     assert_eq!(lease.leased().task_id(), task.id());
-    assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
+    assert_eq!(
+        lease.leased().aggregation_job_datastore_id(),
+        &aggregation_job_id
+    );
 
     // Setup: prepare mocked HTTP response.
     let mocked_aggregate_request = server
@@ -4194,7 +4229,10 @@ async fn leader_async_aggregation_job_init_poll_to_finished() {
         .await
         .unwrap();
     assert_eq!(lease.leased().task_id(), task.id());
-    assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
+    assert_eq!(
+        lease.leased().aggregation_job_datastore_id(),
+        &aggregation_job_id
+    );
 
     // Setup: prepare mocked HTTP response.
     let helper_response = AggregationJobResp {
@@ -4448,7 +4486,10 @@ async fn leader_async_aggregation_job_init_poll_to_continue() {
         .await
         .unwrap();
     assert_eq!(lease.leased().task_id(), task.id());
-    assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
+    assert_eq!(
+        lease.leased().aggregation_job_datastore_id(),
+        &aggregation_job_id
+    );
 
     // Setup: prepare mocked HTTP response.
     let helper_response = AggregationJobResp {
@@ -4709,7 +4750,10 @@ async fn leader_async_aggregation_job_continue_poll_to_pending() {
         .await
         .unwrap();
     assert_eq!(lease.leased().task_id(), task.id());
-    assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
+    assert_eq!(
+        lease.leased().aggregation_job_datastore_id(),
+        &aggregation_job_id
+    );
 
     // Setup: prepare mocked HTTP responses.
     let mocked_aggregate_success = server
@@ -4955,7 +4999,10 @@ async fn leader_async_aggregation_job_continue_poll_to_finished() {
         .await
         .unwrap();
     assert_eq!(lease.leased().task_id(), task.id());
-    assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
+    assert_eq!(
+        lease.leased().aggregation_job_datastore_id(),
+        &aggregation_job_id
+    );
 
     // Setup: prepare mocked HTTP responses.
     let helper_response = AggregationJobResp {
@@ -5207,7 +5254,10 @@ async fn helper_async_init_processing_to_finished() {
         .await
         .unwrap();
     assert_eq!(lease.leased().task_id(), task.id());
-    assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
+    assert_eq!(
+        lease.leased().aggregation_job_datastore_id(),
+        &aggregation_job_id
+    );
 
     // Run.
     let aggregation_job_driver = AggregationJobDriver::new(
@@ -5443,7 +5493,10 @@ async fn helper_async_init_processing_to_continue() {
         .await
         .unwrap();
     assert_eq!(lease.leased().task_id(), task.id());
-    assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
+    assert_eq!(
+        lease.leased().aggregation_job_datastore_id(),
+        &aggregation_job_id
+    );
 
     // Run.
     let aggregation_job_driver = AggregationJobDriver::new(
@@ -5677,7 +5730,10 @@ async fn helper_async_continue_processing_to_finished() {
         .await
         .unwrap();
     assert_eq!(lease.leased().task_id(), task.id());
-    assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
+    assert_eq!(
+        lease.leased().aggregation_job_datastore_id(),
+        &aggregation_job_id
+    );
 
     // Run.
     let aggregation_job_driver = AggregationJobDriver::new(
@@ -5908,7 +5964,10 @@ async fn setup_cancel_aggregation_job_test() -> CancelAggregationJobTestCase {
         .await
         .unwrap();
     assert_eq!(lease.leased().task_id(), task.id());
-    assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
+    assert_eq!(
+        lease.leased().aggregation_job_datastore_id(),
+        &aggregation_job_id
+    );
 
     CancelAggregationJobTestCase {
         task,

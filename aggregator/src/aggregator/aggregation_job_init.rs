@@ -102,7 +102,7 @@ pub async fn compute_helper_aggregate_init<const SEED_SIZE: usize, B, A>(
     vdaf: Arc<A>,
     metrics: AggregateInitMetrics,
     task: Arc<AggregatorTask>,
-    aggregation_job: Arc<AggregationJob<SEED_SIZE, B, A>>,
+    aggregation_job: &AggregationJob<SEED_SIZE, B, A>,
     report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
 ) -> Result<Vec<WritableReportAggregation<SEED_SIZE, A>>, Error>
 where
@@ -128,7 +128,7 @@ where
         let vdaf = Arc::clone(&vdaf);
         let task = Arc::clone(&task);
         let metrics = metrics.clone();
-        let aggregation_job = Arc::clone(&aggregation_job);
+        let aggregation_parameter = aggregation_job.aggregation_parameter().clone();
 
         move || {
             let span =
@@ -450,7 +450,7 @@ where
                             vdaf.helper_initialized(
                                 verify_key.as_bytes(),
                                 &ctx,
-                                aggregation_job.aggregation_parameter(),
+                                &aggregation_parameter,
                                 /* report ID is used as VDAF nonce */
                                 verify_init.report_share().metadata().id().as_ref(),
                                 &public_share,

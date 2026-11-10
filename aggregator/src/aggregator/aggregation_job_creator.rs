@@ -14,8 +14,8 @@ use janus_aggregator_core::{
     datastore::{
         self, Datastore,
         models::{
-            AggregationJob, AggregationJobState, ReportAggregationMetadata,
-            ReportAggregationMetadataState, UnaggregatedReport,
+            AggregationJob, AggregationJobDatastoreId, AggregationJobState,
+            ReportAggregationMetadata, ReportAggregationMetadataState, UnaggregatedReport,
         },
         task_counters::TaskAggregationCounter,
     },
@@ -43,7 +43,7 @@ use prio::{
         prio3::{Prio3, Prio3Count, Prio3Histogram, Prio3Sum, Prio3SumVec},
     },
 };
-use rand::{RngExt, random, rng};
+use rand::{RngExt, rng};
 use tokio::{
     time::{self, Instant, MissedTickBehavior, sleep_until},
     try_join,
@@ -636,10 +636,8 @@ impl AggregationJobCreator {
                                 )
                                 .collect();
 
-                            let aggregation_job_id = random();
                             debug!(
                                 task_id = %task.id(),
-                                %aggregation_job_id,
                                 report_count = %agg_job_reports.len(),
                                 "Creating aggregation job"
                             );
@@ -651,12 +649,12 @@ impl AggregationJobCreator {
                                     left.merged_with(right).unwrap()
                                 });
                             let aggregation_job = AggregationJob::<SEED_SIZE, TimeInterval, A>::new(
+                                AggregationJobDatastoreId::TEST,
                                 *task.id(),
-                                aggregation_job_id,
                                 (),
                                 (),
                                 client_timestamp_interval,
-                                AggregationJobState::Active,
+                                AggregationJobState::leader_active(),
                                 AggregationJobStep::from(0),
                             );
 
@@ -666,7 +664,7 @@ impl AggregationJobCreator {
                                 .map(|(ord, report)| {
                                     Ok(ReportAggregationMetadata::new(
                                         *task.id(),
-                                        aggregation_job_id,
+                                        AggregationJobDatastoreId::TEST,
                                         *report.report_id(),
                                         *report.client_timestamp(),
                                         ord.try_into()?,
@@ -686,7 +684,7 @@ impl AggregationJobCreator {
                     }
 
                     // Write the aggregation jobs and report aggregations we created.
-                    aggregation_job_writer.write(tx, vdaf).await?;
+                    aggregation_job_writer.write(vdaf.as_ref(), tx).await?;
                     // Report scrubbing must wait until after report aggregations have been created,
                     // because they have a write-after-read antidependency on the report shares.
                     try_join!(
@@ -766,10 +764,8 @@ impl AggregationJobCreator {
                                 continue;
                             }
 
-                            let aggregation_job_id = random();
                             debug!(
                                 task_id = %task.id(),
-                                %aggregation_job_id,
                                 report_count = %agg_job_reports.len(),
                                 "Creating aggregation job"
                             );
@@ -782,12 +778,12 @@ impl AggregationJobCreator {
                                 });
 
                             let aggregation_job = AggregationJob::<SEED_SIZE, TimeInterval, A>::new(
+                                AggregationJobDatastoreId::TEST,
                                 *task.id(),
-                                aggregation_job_id,
                                 aggregation_param.clone(),
                                 (),
                                 client_timestamp_interval,
-                                AggregationJobState::Active,
+                                AggregationJobState::leader_active(),
                                 AggregationJobStep::from(0),
                             );
                             let report_aggregations: Vec<_> = agg_job_reports
@@ -796,7 +792,7 @@ impl AggregationJobCreator {
                                 .map(|(ord, report)| {
                                     Ok(ReportAggregationMetadata::new(
                                         *task.id(),
-                                        aggregation_job_id,
+                                        AggregationJobDatastoreId::TEST,
                                         *report.report_id(),
                                         *report.client_timestamp(),
                                         ord.try_into()?,
@@ -812,7 +808,7 @@ impl AggregationJobCreator {
                         }
 
                         // Write the aggregation jobs and report aggregations we created
-                        aggregation_job_writer.write(tx, Arc::clone(&vdaf)).await?;
+                        aggregation_job_writer.write(vdaf.as_ref(), tx).await?;
                         writers_are_empty = writers_are_empty && aggregation_job_writer.is_empty();
                     }
                     Ok(!writers_are_empty)
@@ -3296,8 +3292,8 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(agg_jobs.len(), quiescent_check_agg_jobs.len());
-        agg_jobs.sort_by_key(|(agg_job, _)| *agg_job.id());
-        quiescent_check_agg_jobs.sort_by_key(|(agg_job, _)| *agg_job.id());
+        agg_jobs.sort_by_key(|(agg_job, _)| agg_job.datastore_id());
+        quiescent_check_agg_jobs.sort_by_key(|(agg_job, _)| agg_job.datastore_id());
         assert_eq!(agg_jobs, quiescent_check_agg_jobs);
     }
 
@@ -3335,13 +3331,13 @@ mod tests {
                     .unwrap()
                     .into_iter()
                     .map(|agg_job: AggregationJob<SEED_SIZE, B, A>| async {
-                        let agg_job_id = *agg_job.id();
+                        let agg_job_id = agg_job.datastore_id();
                         let report_aggs = tx
                             .get_report_aggregations_for_aggregation_job(
                                 vdaf,
                                 &Role::Leader,
                                 task_id,
-                                &agg_job_id,
+                                agg_job_id,
                             )
                             .await
                             .unwrap();

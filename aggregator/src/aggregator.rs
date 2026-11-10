@@ -30,9 +30,9 @@ use janus_aggregator_core::{
     datastore::{
         self, Datastore, Error as DatastoreError, Transaction,
         models::{
-            AggregateShareJob, AggregateShareJobState, AggregationJob, AggregationJobState,
-            CollectionJob, CollectionJobState, LeaderStoredReport, ReportAggregation,
-            ReportAggregationState,
+            AggregateShareJob, AggregateShareJobState, AggregationJob, AggregationJobDatastoreId,
+            AggregationJobState, CollectionJob, CollectionJobState, LeaderStoredReport,
+            ReportAggregation, ReportAggregationState,
         },
         task_counters::TaskAggregationCounter,
     },
@@ -107,7 +107,6 @@ use crate::{
         TASK_AGGREGATOR_CACHE_DEFAULT_TTL, TaskAggregatorCache,
     },
     config::TaskprovConfig,
-    diagnostic::AggregationJobInitForbiddenMutationEvent,
     metrics::{
         aggregate_step_failure_counter, aggregated_report_share_dimension_histogram,
         early_report_clock_skew_histogram, keypair_use_counter, past_report_clock_skew_histogram,
@@ -484,7 +483,6 @@ impl Aggregator {
                 self.cfg.task_counter_shard_count,
                 aggregation_job_id,
                 taskprov_task_config.is_some(),
-                self.cfg.log_forbidden_mutations.clone(),
                 req_bytes,
             )
             .await
@@ -1139,7 +1137,6 @@ impl TaskAggregator {
         task_counter_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
         require_taskbind_extension: bool,
-        log_forbidden_mutations: Option<PathBuf>,
         req_bytes: &[u8],
     ) -> Result<Option<AggregationJobResp>, Error> {
         self.vdaf_ops
@@ -1152,7 +1149,6 @@ impl TaskAggregator {
                 task_counter_shard_count,
                 aggregation_job_id,
                 require_taskbind_extension,
-                log_forbidden_mutations,
                 req_bytes,
             )
             .await
@@ -1555,7 +1551,6 @@ impl VdafOps {
         task_counter_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
         require_taskbind_extension: bool,
-        log_forbidden_mutations: Option<PathBuf>,
         req_bytes: &[u8],
     ) -> Result<Option<AggregationJobResp>, Error> {
         match task.batch_mode() {
@@ -1575,7 +1570,6 @@ impl VdafOps {
                         task_counter_shard_count,
                         aggregation_job_id,
                         require_taskbind_extension,
-                        log_forbidden_mutations,
                         req_bytes,
                     )
                     .await
@@ -1597,7 +1591,6 @@ impl VdafOps {
                         task_counter_shard_count,
                         aggregation_job_id,
                         require_taskbind_extension,
-                        log_forbidden_mutations,
                         req_bytes,
                     )
                     .await
@@ -2100,121 +2093,6 @@ impl VdafOps {
 }
 
 impl VdafOps {
-    async fn check_aggregate_init_idempotency<const SEED_SIZE: usize, B, A>(
-        tx: &Transaction<'_>,
-        vdaf: &A,
-        task_id: &TaskId,
-        request_hash: [u8; 32],
-        mutating_aggregation_job: &AggregationJob<SEED_SIZE, B, A>,
-        mutating_report_aggregations: impl IntoIterator<Item = &ReportAggregation<SEED_SIZE, A>>,
-        log_forbidden_mutations: Option<PathBuf>,
-    ) -> Result<Option<Vec<VerifyResp>>, datastore::Error>
-    where
-        B: AccumulableBatchMode,
-        A: AsyncAggregator<SEED_SIZE>,
-    {
-        let existing_aggregation_job = match tx
-            .get_aggregation_job::<SEED_SIZE, B, A>(task_id, mutating_aggregation_job.id())
-            .await?
-        {
-            Some(existing_aggregation_job) => existing_aggregation_job,
-            None => return Ok(None),
-        };
-
-        if existing_aggregation_job.state() == &AggregationJobState::Deleted {
-            return Err(datastore::Error::User(
-                Error::DeletedAggregationJob(*task_id, *mutating_aggregation_job.id()).into(),
-            ));
-        }
-
-        if existing_aggregation_job.last_request_hash() != Some(request_hash) {
-            if let Some(log_forbidden_mutations) = log_forbidden_mutations {
-                let original_report_ids: Vec<_> = tx
-                    .get_report_aggregations_for_aggregation_job(
-                        vdaf,
-                        &Role::Helper,
-                        task_id,
-                        mutating_aggregation_job.id(),
-                    )
-                    .await?
-                    .iter()
-                    .map(|ra| *ra.report_id())
-                    .collect();
-                let mutating_request_report_ids: Vec<_> = mutating_report_aggregations
-                    .into_iter()
-                    .map(|ra| *ra.report_id())
-                    .collect();
-                let event = AggregationJobInitForbiddenMutationEvent {
-                    task_id: *task_id,
-                    aggregation_job_id: *mutating_aggregation_job.id(),
-                    original_request_hash: existing_aggregation_job.last_request_hash(),
-                    original_report_ids,
-                    original_batch_id: format!(
-                        "{:?}",
-                        existing_aggregation_job.partial_batch_identifier()
-                    ),
-                    original_aggregation_parameter: existing_aggregation_job
-                        .aggregation_parameter()
-                        .get_encoded()
-                        .map_err(|e| datastore::Error::User(e.into()))?,
-                    mutating_request_hash: Some(request_hash),
-                    mutating_request_report_ids,
-                    mutating_request_batch_id: format!(
-                        "{:?}",
-                        mutating_aggregation_job.partial_batch_identifier()
-                    ),
-                    mutating_request_aggregation_parameter: mutating_aggregation_job
-                        .aggregation_parameter()
-                        .get_encoded()
-                        .map_err(|e| datastore::Error::User(e.into()))?,
-                };
-                let event_id = crate::diagnostic::write_event(
-                    log_forbidden_mutations,
-                    "agg-job-illegal-mutation",
-                    event,
-                )
-                .await
-                .map(|event_id| format!("{event_id:?}"))
-                .unwrap_or_else(|error| {
-                    tracing::error!(?error, "failed to write hash mismatch event");
-                    "no event id".to_string()
-                });
-
-                tracing::info!(
-                    ?event_id,
-                    original_request_hash = existing_aggregation_job
-                        .last_request_hash()
-                        .map(hex::encode),
-                    mutating_request_hash = hex::encode(request_hash),
-                    "request hash mismatch on retried aggregation job request",
-                );
-            }
-
-            return Err(datastore::Error::User(
-                Error::ForbiddenMutation {
-                    resource_type: "aggregation job",
-                    identifier: mutating_aggregation_job.id().to_string(),
-                }
-                .into(),
-            ));
-        }
-
-        // This is a repeated request. Send the verification responses we computed last time.
-        return Ok(Some(
-            tx.get_report_aggregations_for_aggregation_job(
-                vdaf,
-                &Role::Helper,
-                task_id,
-                existing_aggregation_job.id(),
-            )
-            .await?
-            .iter()
-            .filter_map(ReportAggregation::last_verify_resp)
-            .cloned()
-            .collect(),
-        ));
-    }
-
     /// Implements [helper aggregate initialization][1].
     ///
     /// [1]: https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#name-helper-initialization
@@ -2228,7 +2106,6 @@ impl VdafOps {
         task_counter_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
         require_taskbind_extension: bool,
-        log_forbidden_mutations: Option<PathBuf>,
         req_bytes: &[u8],
     ) -> Result<Option<AggregationJobResp>, Error>
     where
@@ -2250,7 +2127,6 @@ impl VdafOps {
             task_counter_shard_count,
             aggregation_job_id,
             require_taskbind_extension,
-            log_forbidden_mutations,
             req,
             request_hash,
         )
@@ -2272,7 +2148,6 @@ impl VdafOps {
         task_counter_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
         require_taskbind_extension: bool,
-        log_forbidden_mutations: Option<PathBuf>,
         req: AggregationJobInitializeReq,
         request_hash: [u8; 32],
     ) -> Result<Option<AggregationJobResp>, Error>
@@ -2327,13 +2202,15 @@ impl VdafOps {
                 interval.merged_with(&timestamp).unwrap()
             });
         let aggregation_job = AggregationJob::<SEED_SIZE, B, A>::new(
+            AggregationJobDatastoreId::from(0),
             *task.id(),
-            *aggregation_job_id,
             A::AggregationParam::get_decoded(req.aggregation_parameter())
                 .map_err(Error::MessageDecode)?,
             partial_batch_identifier,
             client_timestamp_interval,
-            AggregationJobState::AwaitingRequest,
+            AggregationJobState::AwaitingRequest {
+                helper_aggregation_job_id: *aggregation_job_id,
+            },
             AggregationJobStep::from(0),
         )
         .with_last_request_hash(request_hash);
@@ -2345,7 +2222,7 @@ impl VdafOps {
             .map(|(ord, verify_init)| {
                 Ok(ReportAggregation::<SEED_SIZE, A>::new(
                     *task.id(),
-                    *aggregation_job_id,
+                    AggregationJobDatastoreId::from(0),
                     *verify_init.report_share().metadata().id(),
                     *verify_init.report_share().metadata().time(),
                     u64::try_from(ord)?,
@@ -2368,7 +2245,6 @@ impl VdafOps {
                     task,
                     batch_aggregation_shard_count,
                     task_counter_shard_count,
-                    log_forbidden_mutations,
                     request_hash,
                     aggregation_job,
                     report_aggregations,
@@ -2384,7 +2260,6 @@ impl VdafOps {
                     task,
                     batch_aggregation_shard_count,
                     task_counter_shard_count,
-                    log_forbidden_mutations,
                     request_hash,
                     aggregation_job,
                     report_aggregations,
@@ -2405,7 +2280,6 @@ impl VdafOps {
         task: Arc<AggregatorTask>,
         batch_aggregation_shard_count: u64,
         task_counter_shard_count: u64,
-        log_forbidden_mutations: Option<PathBuf>,
         request_hash: [u8; 32],
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
@@ -2414,36 +2288,6 @@ impl VdafOps {
         B: AccumulableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
     {
-        // Check if this is a repeated request, and if it is the same as before, send
-        // the same response as last time.
-        let aggregation_job = Arc::new(aggregation_job);
-        let report_aggregations = Arc::new(report_aggregations);
-        if let Some(verify_resps) = datastore
-            .run_tx("aggregate_init_idempotecy", |tx| {
-                let vdaf = Arc::clone(&vdaf);
-                let task = Arc::clone(&task);
-                let aggregation_job = Arc::clone(&aggregation_job);
-                let report_aggregations = Arc::clone(&report_aggregations);
-                let log_forbidden_mutations = log_forbidden_mutations.clone();
-
-                Box::pin(async move {
-                    Self::check_aggregate_init_idempotency(
-                        tx,
-                        vdaf.as_ref(),
-                        task.id(),
-                        request_hash,
-                        &aggregation_job,
-                        report_aggregations.iter(),
-                        log_forbidden_mutations,
-                    )
-                    .await
-                })
-            })
-            .await?
-        {
-            return Ok(Some(AggregationJobResp { verify_resps }));
-        }
-
         // Compute the next aggregation step.
         let report_aggregations = compute_helper_aggregate_init(
             datastore.clock(),
@@ -2451,8 +2295,8 @@ impl VdafOps {
             Arc::clone(&vdaf),
             metrics.clone().into(),
             Arc::clone(&task),
-            Arc::clone(&aggregation_job),
-            Arc::unwrap_or_clone(report_aggregations),
+            &aggregation_job,
+            report_aggregations,
         )
         .await?;
 
@@ -2464,10 +2308,9 @@ impl VdafOps {
             task,
             batch_aggregation_shard_count,
             task_counter_shard_count,
-            log_forbidden_mutations,
             request_hash,
             aggregation_job,
-            Arc::new(report_aggregations),
+            report_aggregations,
         )
         .await?;
 
@@ -2482,7 +2325,6 @@ impl VdafOps {
         task: Arc<AggregatorTask>,
         batch_aggregation_shard_count: u64,
         task_counter_shard_count: u64,
-        log_forbidden_mutations: Option<PathBuf>,
         request_hash: [u8; 32],
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
@@ -2498,15 +2340,14 @@ impl VdafOps {
             task,
             batch_aggregation_shard_count,
             task_counter_shard_count,
-            log_forbidden_mutations,
             request_hash,
-            Arc::new(aggregation_job.with_state(AggregationJobState::Active)),
-            Arc::new(
-                report_aggregations
-                    .into_iter()
-                    .map(|ra| WritableReportAggregation::new(ra, None))
-                    .collect(),
-            ),
+            aggregation_job.with_state(AggregationJobState::Active {
+                helper_aggregation_job_id: todo!("derive agg job id"),
+            }),
+            report_aggregations
+                .into_iter()
+                .map(|ra| WritableReportAggregation::new(ra, None))
+                .collect(),
         )
         .await?;
 
@@ -2520,10 +2361,9 @@ impl VdafOps {
         task: Arc<AggregatorTask>,
         batch_aggregation_shard_count: u64,
         task_counter_shard_count: u64,
-        log_forbidden_mutations: Option<PathBuf>,
         request_hash: [u8; 32],
-        aggregation_job: Arc<AggregationJob<SEED_SIZE, B, A>>,
-        report_aggregations: Arc<Vec<WritableReportAggregation<SEED_SIZE, A>>>,
+        aggregation_job: AggregationJob<SEED_SIZE, B, A>,
+        report_aggregations: Vec<WritableReportAggregation<SEED_SIZE, A>>,
     ) -> Result<Vec<VerifyResp>, Error>
     where
         B: AccumulableBatchMode,
@@ -2532,31 +2372,45 @@ impl VdafOps {
         let task_aggregation_counters = TaskAggregationCounter::default();
         let verify_resps = datastore
             .run_tx("aggregate_init_aggregator_write", |tx| {
-                let vdaf = Arc::clone(&vdaf);
+                let vdaf = vdaf.clone();
                 let task = Arc::clone(&task);
                 let aggregation_job_writer_metrics = metrics.for_aggregation_job_writer();
-                let aggregation_job = Arc::clone(&aggregation_job);
-                let report_aggregations = Arc::clone(&report_aggregations);
-                let log_forbidden_mutations = log_forbidden_mutations.clone();
+                let aggregation_job = aggregation_job.clone();
+                let report_aggregations = report_aggregations.clone();
                 let task_aggregation_counters = task_aggregation_counters.clone();
 
                 Box::pin(async move {
                     // Check if this is a repeated request, and if it is the same as before, send
-                    // the same response as last time. We check during the write transaction, even
-                    // if we have checked before, to avoid the possibility of races for concurrent
-                    // requests.
-                    if let Some(verify_resps) = Self::check_aggregate_init_idempotency(
-                        tx,
-                        vdaf.as_ref(),
-                        task.id(),
-                        request_hash,
-                        &aggregation_job,
-                        report_aggregations.iter().map(|ra| ra.report_aggregation()),
-                        log_forbidden_mutations,
-                    )
-                    .await?
+                    // the same response as last time.
+                    if let Some(existing_aggregation_job) = tx
+                        .get_aggregation_job_by_last_request_hash::<SEED_SIZE, B, A>(
+                            task.id(),
+                            request_hash,
+                        )
+                        .await?
                     {
-                        return Ok(verify_resps);
+                        if existing_aggregation_job.state().deleted() {
+                            return Err(datastore::Error::User(
+                                Error::DeletedAggregationJob(
+                                    *task.id(),
+                                    todo!("wire up real agg job id here"),
+                                )
+                                .into(),
+                            ));
+                        }
+
+                        // This is a repeated request. Send the verification responses we computed last time.
+                        return Ok(tx
+                            .get_report_aggregations_for_aggregation_job(
+                                vdaf.as_ref(),
+                                &Role::Helper,
+                                task.id(),
+                                existing_aggregation_job.datastore_id(),
+                            )
+                            .await?
+                            .into_iter()
+                            .filter_map(|ra| ra.last_verify_resp().cloned())
+                            .collect());
                     }
 
                     // Write report shares, and ensure this isn't a repeated report aggregation.
@@ -2596,13 +2450,9 @@ impl VdafOps {
                             Some(aggregation_job_writer_metrics),
                             task_aggregation_counters,
                         );
-                    aggregation_job_writer
-                        .put(aggregation_job.as_ref().clone(), report_aggregations)?;
-                    let mut verify_resps_by_agg_job =
-                        aggregation_job_writer.write(tx, vdaf).await?;
-                    Ok(verify_resps_by_agg_job
-                        .remove(aggregation_job.id())
-                        .unwrap_or_default())
+                    Ok(aggregation_job_writer
+                        .put_and_write(vdaf.as_ref(), tx, aggregation_job, report_aggregations)
+                        .await?)
                 })
             })
             .await?;
@@ -2653,7 +2503,10 @@ impl VdafOps {
                 Box::pin(async move {
                     // Read existing state.
                     let aggregation_job = tx
-                        .get_aggregation_job::<SEED_SIZE, B, A>(task.id(), &aggregation_job_id)
+                        .get_aggregation_job_by_dap_id::<SEED_SIZE, B, A>(
+                            task.id(),
+                            aggregation_job_id,
+                        )
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::User(
@@ -2666,14 +2519,14 @@ impl VdafOps {
                             vdaf.as_ref(),
                             &Role::Helper,
                             task.id(),
-                            &aggregation_job_id,
+                            aggregation_job.datastore_id(),
                         )
                         .await?;
 
                     // Deleted aggregation jobs cannot be stepped
-                    if *aggregation_job.state() == AggregationJobState::Deleted {
+                    if matches!(aggregation_job.state(), AggregationJobState::Deleted { .. }) {
                         return Err(datastore::Error::User(
-                            Error::DeletedAggregationJob(*task.id(), *aggregation_job.id()).into(),
+                            Error::DeletedAggregationJob(*task.id(), aggregation_job_id).into(),
                         ));
                     }
 
@@ -2965,7 +2818,9 @@ impl VdafOps {
             batch_aggregation_shard_count,
             metrics,
             task_aggregation_counters,
-            aggregation_job.with_state(AggregationJobState::Active),
+            aggregation_job.with_state(AggregationJobState::Active {
+                helper_aggregation_job_id: todo!("job should already have an ID. why do we transition to active? isn't it already?"),
+            }),
             report_aggregations_to_write,
         )
         .await?;
@@ -2992,7 +2847,6 @@ impl VdafOps {
 
         // Write accumulated aggregation values back to the datastore; this will mark any reports
         // that can't be aggregated because the batch is collected with error BatchCollected.
-        let aggregation_job_id = *aggregation_job.id();
         let mut aggregation_job_writer =
             AggregationJobWriter::<SEED_SIZE, _, _, UpdateWrite, _>::new(
                 task,
@@ -3000,11 +2854,9 @@ impl VdafOps {
                 Some(metrics.for_aggregation_job_writer()),
                 task_aggregation_counters,
             );
-        aggregation_job_writer.put(aggregation_job, report_aggregations)?;
-        let mut verify_resps_by_agg_job = aggregation_job_writer.write(tx, vdaf).await?;
-        Ok(verify_resps_by_agg_job
-            .remove(&aggregation_job_id)
-            .unwrap_or_default())
+        Ok(aggregation_job_writer
+            .put_and_write(vdaf.as_ref(), tx, aggregation_job, report_aggregations)
+            .await?)
     }
 
     /// Handle requests to the helper to get an aggregation job.
@@ -3028,7 +2880,10 @@ impl VdafOps {
                 Box::pin(async move {
                     // Read aggregation job & report aggregations.
                     let aggregation_job = tx
-                        .get_aggregation_job::<SEED_SIZE, B, A>(task.id(), &aggregation_job_id)
+                        .get_aggregation_job_by_dap_id::<SEED_SIZE, B, A>(
+                            task.id(),
+                            aggregation_job_id,
+                        )
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::User(
@@ -3041,7 +2896,7 @@ impl VdafOps {
                             vdaf.as_ref(),
                             &Role::Helper,
                             task.id(),
-                            &aggregation_job_id,
+                            aggregation_job.datastore_id(),
                         )
                         .await?;
 
@@ -3060,28 +2915,37 @@ impl VdafOps {
 
                     // Return a value based on the report aggregations.
                     Ok(match aggregation_job.state() {
-                        AggregationJobState::Active => None,
+                        AggregationJobState::Active { .. } => None,
 
-                        AggregationJobState::AwaitingRequest | AggregationJobState::Finished => {
-                            Some(AggregationJobResp {
-                                verify_resps: report_aggregations
-                                    .into_iter()
-                                    .filter_map(|ra| ra.last_verify_resp().cloned())
-                                    .collect(),
-                            })
-                        }
+                        AggregationJobState::AwaitingRequest { .. }
+                        | AggregationJobState::Finished { .. } => Some(AggregationJobResp {
+                            verify_resps: report_aggregations
+                                .into_iter()
+                                .filter_map(|ra| ra.last_verify_resp().cloned())
+                                .collect(),
+                        }),
 
-                        AggregationJobState::Abandoned => {
+                        AggregationJobState::Abandoned {
+                            helper_aggregation_job_id,
+                        } => {
                             return Err(datastore::Error::User(
-                                Error::AbandonedAggregationJob(*task.id(), *aggregation_job.id())
-                                    .into(),
+                                Error::AbandonedAggregationJob(
+                                    *task.id(),
+                                    *helper_aggregation_job_id,
+                                )
+                                .into(),
                             ));
                         }
 
-                        AggregationJobState::Deleted => {
+                        AggregationJobState::Deleted {
+                            helper_aggregation_job_id,
+                        } => {
                             return Err(datastore::Error::User(
-                                Error::DeletedAggregationJob(*task.id(), *aggregation_job.id())
-                                    .into(),
+                                Error::DeletedAggregationJob(
+                                    *task.id(),
+                                    *helper_aggregation_job_id,
+                                )
+                                .into(),
                             ));
                         }
                     })
@@ -3105,7 +2969,10 @@ impl VdafOps {
                 let (task_id, aggregation_job_id) = (*task.id(), *aggregation_job_id);
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<SEED_SIZE, B, A>(&task_id, &aggregation_job_id)
+                        .get_aggregation_job_by_dap_id::<SEED_SIZE, B, A>(
+                            &task_id,
+                            aggregation_job_id,
+                        )
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::User(
@@ -3113,7 +2980,9 @@ impl VdafOps {
                                     .into(),
                             )
                         })?
-                        .with_state(AggregationJobState::Deleted);
+                        .with_state(AggregationJobState::Deleted {
+                            helper_aggregation_job_id: aggregation_job_id,
+                        });
 
                     tx.update_aggregation_job(&aggregation_job).await?;
 

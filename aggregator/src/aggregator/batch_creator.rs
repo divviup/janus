@@ -13,8 +13,8 @@ use janus_aggregator_core::{
     datastore::{
         Error, Transaction,
         models::{
-            AggregationJob, AggregationJobState, OutstandingBatch, ReportAggregationMetadata,
-            ReportAggregationMetadataState, UnaggregatedReport,
+            AggregationJob, AggregationJobDatastoreId, AggregationJobState, OutstandingBatch,
+            ReportAggregationMetadata, ReportAggregationMetadataState, UnaggregatedReport,
         },
     },
 };
@@ -332,11 +332,9 @@ where
         report_ids_to_scrub: &mut HashSet<ReportId>,
         aggregation_job_size_histogram: &Histogram<u64>,
     ) -> Result<(), Error> {
-        let aggregation_job_id = random();
         debug!(
             task_id = %task_id,
             %batch_id,
-            %aggregation_job_id,
             report_count = aggregation_job_size,
             "Creating aggregation job"
         );
@@ -345,7 +343,7 @@ where
             .map(|(ord, report)| {
                 ReportAggregationMetadata::new(
                     task_id,
-                    aggregation_job_id,
+                    AggregationJobDatastoreId::TEST,
                     *report.report_id(),
                     *report.client_timestamp(),
                     ord,
@@ -362,12 +360,12 @@ where
                 interval.merged_with(timestamp).unwrap()
             });
         let aggregation_job = AggregationJob::<SEED_SIZE, LeaderSelected, A>::new(
+            AggregationJobDatastoreId::TEST,
             task_id,
-            aggregation_job_id,
             (),
             batch_id,
             client_timestamp_interval,
-            AggregationJobState::Active,
+            AggregationJobState::leader_active(),
             AggregationJobStep::from(0),
         );
         aggregation_job_size_histogram.record(
@@ -406,7 +404,7 @@ where
             );
         }
 
-        self.aggregation_job_writer.write(tx, vdaf).await?;
+        self.aggregation_job_writer.write(vdaf.as_ref(), tx).await?;
 
         // Report scrubbing must wait until after report aggregations have been created,
         // because they have a write-after-read antidependency on the report shares.
