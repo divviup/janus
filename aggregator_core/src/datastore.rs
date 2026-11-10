@@ -58,7 +58,7 @@ use crate::VdafHasAggregationParameter;
 use crate::{
     AsyncAggregator,
     batch_mode::{AccumulableBatchMode, CollectableBatchMode},
-    datastore::models::AggregationJobDatastoreId,
+    datastore::models::{AggregationJobDatastoreId, UnwrittenAggregationJob},
     http_server::TIME_HISTOGRAM_BOUNDARIES,
     task::{self, AggregatorTask},
     taskprov::PeerAggregator,
@@ -1932,13 +1932,9 @@ WHERE aggregation_jobs.task_id = $4
     ///
     /// Use `update_aggregation_job` to update values on some existing aggregation job.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
-    pub async fn put_aggregation_job<
-        const SEED_SIZE: usize,
-        B: BatchMode,
-        A: AsyncAggregator<SEED_SIZE>,
-    >(
+    pub async fn put_aggregation_job<B: Encode + Debug, A: Encode>(
         &self,
-        aggregation_job: &AggregationJob<SEED_SIZE, B, A>,
+        aggregation_job: &UnwrittenAggregationJob<B, A>,
     ) -> Result<AggregationJobDatastoreId, Error> {
         let task_info = self
             .task_info_for(aggregation_job.task_id())
@@ -1980,7 +1976,7 @@ RETURNING id",
                 &stmt,
                 &[
                     /* task_id */ &task_info.pkey,
-                    /* aggregation_job_id */ &aggregation_job.id_bytes(),
+                    /* aggregation_job_id */ &aggregation_job.dap_id_bytes(),
                     /* aggregation_param */
                     &aggregation_job.aggregation_parameter().get_encoded()?,
                     /* batch_id */
@@ -2040,13 +2036,12 @@ WHERE aggregation_jobs.task_id = $7
                     /* state */ &aggregation_job.state().code(),
                     /* step */ &(u16::from(aggregation_job.step()) as i32),
                     /* last_request_hash */ &aggregation_job.last_request_hash(),
-                    /* aggregation_job_id */ &aggregation_job.id_bytes(),
+                    /* aggregation_job_id */ &aggregation_job.dap_id_bytes(),
                     /* updated_at */ &now,
                     /* updated_by */ &self.name,
                     /* task_id */ &task_info.pkey,
                     /* id */ &aggregation_job.datastore_id(),
-                    /* threshold */
-                    &task_info.report_expiry_threshold(now)?,
+                    /* threshold */ &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,

@@ -409,6 +409,134 @@ impl Distribution<AggregationJobDatastoreId> for StandardUniform {
     }
 }
 
+/// An aggregation job that has not yet been written and has no datastore ID assigned yet.
+#[derive(Clone, Educe)]
+#[educe(Debug, PartialEq, Eq)]
+pub struct UnwrittenAggregationJob<PartialBatchIdentifier, AggregationParam> {
+    /// The ID of the task this aggregation job belongs to.
+    task_id: TaskId,
+    /// The aggregation parameter this job is run with.
+    #[educe(Debug(ignore))]
+    aggregation_parameter: AggregationParam,
+    /// The partial identifier for the batch this aggregation job contributes to (leader-selected
+    /// tasks only; for time interval tasks, aggregation jobs may span multiple batches).
+    batch_id: PartialBatchIdentifier,
+    /// The minimal interval of time spanned by the reports included in this aggregation job.
+    client_timestamp_interval: Interval,
+    /// The overall state of this aggregation job.
+    state: AggregationJobState,
+    /// The step of VDAF verification that this aggregation job is currently on.
+    step: AggregationJobStep,
+    /// The SHA-256 hash of the most recent [`janus_messages::AggregationJobContinueReq`]
+    /// received for this aggregation job. Will only be set for helpers, and only after the
+    /// first step of the job.
+    last_request_hash: Option<[u8; 32]>,
+}
+
+impl<PartialBatchIdentifier, AggregationParam: Encode>
+    UnwrittenAggregationJob<PartialBatchIdentifier, AggregationParam>
+{
+    pub fn new(
+        task_id: TaskId,
+        aggregation_parameter: AggregationParam,
+        batch_id: PartialBatchIdentifier,
+        client_timestamp_interval: Interval,
+        state: AggregationJobState,
+        step: AggregationJobStep,
+    ) -> Self {
+        Self {
+            task_id,
+            aggregation_parameter,
+            batch_id,
+            client_timestamp_interval,
+            state,
+            step,
+            last_request_hash: None,
+        }
+    }
+
+    pub fn task_id(&self) -> &TaskId {
+        &self.task_id
+    }
+
+    /// The DAP aggregation job ID, if any, of this job.
+    pub fn dap_id(&self) -> Option<&AggregationJobId> {
+        self.state.aggregation_job_id()
+    }
+
+    /// The DAP aggregation job ID, if any, of this job, in a form implementing `ToSql` and
+    /// `FromSql`.
+    pub fn dap_id_bytes(&self) -> Option<&[u8; AggregationJobId::LEN]> {
+        self.state.aggregation_job_id_bytes()
+    }
+
+    pub fn aggregation_parameter(&self) -> &AggregationParam {
+        &self.aggregation_parameter
+    }
+
+    /// Gets the partial batch identifier associated with this aggregation job.
+    ///
+    /// This method would typically be used for code which is generic over the batch mode. Batch
+    /// mode-specific code will typically call [`Self::batch_id`].
+    pub fn partial_batch_identifier(&self) -> &PartialBatchIdentifier {
+        &self.batch_id
+    }
+
+    /// The minimal interval containing all of the timestamps of reports in this job.
+    pub fn client_timestamp_interval(&self) -> &Interval {
+        &self.client_timestamp_interval
+    }
+
+    #[cfg(feature = "test-util")]
+    pub fn with_client_timestamp_interval(self, client_timestamp_interval: Interval) -> Self {
+        Self {
+            client_timestamp_interval,
+            ..self
+        }
+    }
+
+    pub fn state(&self) -> &AggregationJobState {
+        &self.state
+    }
+
+    pub fn step(&self) -> AggregationJobStep {
+        self.step
+    }
+
+    /// Returns the SHA-256 digest of the most recent request that acted on the job, if any.
+    pub fn last_request_hash(&self) -> Option<[u8; 32]> {
+        self.last_request_hash
+    }
+
+    pub fn with_last_request_hash(self, hash: [u8; 32]) -> Self {
+        Self {
+            last_request_hash: Some(hash),
+            ..self
+        }
+    }
+
+    /// Upgrade an unwritten job with a `datastore_id`.
+    pub fn into_job<const SEED_SIZE: usize, B, A>(
+        self,
+        datastore_id: AggregationJobDatastoreId,
+    ) -> AggregationJob<SEED_SIZE, B, A>
+    where
+        B: BatchMode<PartialBatchIdentifier = PartialBatchIdentifier>,
+        A: AsyncAggregator<SEED_SIZE, AggregationParam = AggregationParam>,
+    {
+        AggregationJob {
+            datastore_id,
+            task_id: self.task_id,
+            aggregation_parameter: self.aggregation_parameter,
+            batch_id: self.batch_id,
+            client_timestamp_interval: self.client_timestamp_interval,
+            state: self.state,
+            step: self.step,
+            last_request_hash: self.last_request_hash,
+        }
+    }
+}
+
 /// AggregationJob represents an aggregation job from the DAP specification.
 #[derive(Clone, Educe)]
 #[educe(Debug, PartialEq, Eq)]
@@ -486,13 +614,13 @@ impl<const SEED_SIZE: usize, B: BatchMode, A: AsyncAggregator<SEED_SIZE>>
     }
 
     /// The DAP aggregation job ID, if any, of this job.
-    pub fn id(&self) -> Option<&AggregationJobId> {
+    pub fn dap_id(&self) -> Option<&AggregationJobId> {
         self.state.aggregation_job_id()
     }
 
     /// The DAP aggregation job ID, if any, of this job, in a form implementing `ToSql` and
     /// `FromSql`.
-    pub fn id_bytes(&self) -> Option<&[u8; AggregationJobId::LEN]> {
+    pub fn dap_id_bytes(&self) -> Option<&[u8; AggregationJobId::LEN]> {
         self.state.aggregation_job_id_bytes()
     }
 
@@ -711,6 +839,10 @@ impl AggregationJobState {
             self,
             Self::Finished { .. } | Self::Abandoned { .. } | Self::Deleted { .. }
         )
+    }
+
+    pub fn deleted(&self) -> bool {
+        matches!(self, Self::Deleted { .. })
     }
 
     pub fn abandoned(&self) -> bool {
