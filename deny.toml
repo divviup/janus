@@ -24,6 +24,8 @@ ignore = [
     # `async-std` is only in our tree as the `opentelemetry_sdk/rt-async-std` feature, which we do
     # not enable.
     "RUSTSEC-2025-0052",
+    # `pin-utils` is pulled in by `async-std`.
+    "RUSTSEC-2026-0441",
 
     # We have migrated from `rustls-pemfile` but not everything else has.
     # See <https://github.com/fussybeaver/bollard/issues/612>.
@@ -31,6 +33,9 @@ ignore = [
 
     # 'smartstring' is part of Trillium, and it's unmaintained.
     "RUSTSEC-2026-0249",
+
+    # `astral-tokio-tar` is unmaintained, and `testcontainers` has not yet been migrated off it.
+    "RUSTSEC-2026-0440",
 ]
 
 [bans]
