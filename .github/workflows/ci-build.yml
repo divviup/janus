@@ -40,7 +40,7 @@ jobs:
     - name: Get OS version
       id: os-version
       run: echo "release=$(lsb_release --release --short)" >> $GITHUB_OUTPUT
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@v7.0.1
     - run: echo "GIT_REVISION=$(git describe --always --dirty=-modified)" >> $GITHUB_ENV
     - name: Setup Go toolchain
       uses: actions/setup-go@v7.0.0
@@ -59,11 +59,11 @@ jobs:
         driver: docker-container
         use: true
     - name: Cache dependencies
-      uses: Swatinem/rust-cache@v2
+      uses: Swatinem/rust-cache@v2.9.3
       with:
         key: ${{ steps.os-version.outputs.release }}
     - name: Expose GitHub Runtime
-      uses: crazy-max/ghaction-github-runtime@v4
+      uses: crazy-max/ghaction-github-runtime@v4.0.0
     - name: Build minimal janus_messages
       run: cargo build --profile ci --package janus_messages --no-default-features
     - name: Build janus_core
@@ -93,7 +93,7 @@ jobs:
     - name: Upload container logs
       # Only get logs on test failure
       if: failure() && (steps.test.outcome == 'failure' || steps.test-docker.outcome == 'failure')
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@v7.0.2
       with:
         name: container-logs
         path: ${{ github.workspace }}/test-logs/
@@ -116,7 +116,7 @@ jobs:
       RUSTDOCFLAGS: "-D warnings"
       RUSTFLAGS: "-D warnings"
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@v7.0.1
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@master
       with:
@@ -140,7 +140,7 @@ jobs:
     env:
       DOCKER_BUILDKIT: 1
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@v7.0.1
     - run: echo "GIT_REVISION=$(git describe --always --dirty=-modified)" >> $GITHUB_ENV
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v4.4.1
@@ -167,7 +167,7 @@ jobs:
     env:
       DOCKER_BUILDKIT: 1
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@v7.0.1
     - run: echo "GIT_REVISION=$(git describe --always --dirty=-modified)" >> $GITHUB_ENV
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v4.4.1
@@ -185,7 +185,7 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@v7.0.1
     - name: cargo-deny
       uses: EmbarkStudios/cargo-deny-action@v2.1.1
       with:
