@@ -10,7 +10,7 @@ jobs:
   janus_migrations:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@v7.0.1
       with:
         fetch-depth: 0
     - name: Check that existing migrations have not changed
@@ -26,4 +26,4 @@ jobs:
           exit 1
         fi
     - name: Check validity of migrations
-      uses: "./.github/actions/validate-migrations"
+      uses: "$/.github/actions/validate-migrations"
