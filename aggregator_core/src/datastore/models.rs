@@ -499,6 +499,10 @@ impl<PartialBatchIdentifier, AggregationParam: Encode>
         &self.state
     }
 
+    pub fn with_state(self, state: AggregationJobState) -> Self {
+        Self { state, ..self }
+    }
+
     pub fn step(&self) -> AggregationJobStep {
         self.step
     }

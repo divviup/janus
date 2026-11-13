@@ -3443,14 +3443,13 @@ async fn create_report_aggregation_from_client_reports_table(
 
                 let report_aggregation_metadata = ReportAggregationMetadata::new(
                     *task.id(),
-                    aggregation_job_id,
                     report_id,
                     clock.now().to_time(task.time_precision()),
                     0,
                     state,
                 );
 
-                tx.put_leader_report_aggregation(&report_aggregation_metadata)
+                tx.put_leader_report_aggregation(aggregation_job_id, &report_aggregation_metadata)
                     .await
                     .unwrap();
 
@@ -3501,9 +3500,12 @@ async fn create_report_aggregation_from_client_reports_table(
 
         Box::pin(async move {
             // Upsert a new aggregation job with the same ID but unexpired
-            tx.put_leader_report_aggregation(&unexpired_report_aggregation_metadata)
-                .await
-                .unwrap();
+            tx.put_leader_report_aggregation(
+                aggregation_job_id,
+                &unexpired_report_aggregation_metadata,
+            )
+            .await
+            .unwrap();
 
             let row = tx
                 .query_one(
