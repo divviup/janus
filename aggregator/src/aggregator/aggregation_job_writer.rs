@@ -21,7 +21,8 @@ use janus_aggregator_core::{
 };
 use janus_core::{report_id::ReportIdChecksumExt as _, vdaf::VdafInstance};
 use janus_messages::{
-    Interval, ReportError, ReportId, ReportIdChecksum, Time, VerifyResp, VerifyStepResult,
+    AggregationJobId, Interval, ReportError, ReportId, ReportIdChecksum, Time, VerifyResp,
+    VerifyStepResult,
 };
 use opentelemetry::{
     KeyValue,
@@ -134,22 +135,22 @@ where
     /// Panics if the aggregation parameter of the aggregation job does not match that of previous
     /// aggregation jobs.
     pub async fn put_and_write(
-        &mut self,
+        &'a mut self,
         vdaf: &A,
         tx: &Transaction<'_>,
         aggregation_job: AJ,
         report_aggregations: Vec<AJ::WritableReportAggregation>,
     ) -> Result<Vec<VerifyResp>, Error> {
         self.put(aggregation_job, report_aggregations)?;
-        let state = self.write_inner(vdaf, tx).await?;
+        let agg_job_infos = self.write_inner(vdaf, tx).await?;
 
         assert_eq!(
-            state.by_aggregation_job.len(),
+            agg_job_infos.len(),
             1,
             "write state should contain exactly one aggregation job",
         );
         // Unwrap safety: we just checked the length of the HashMap
-        let (_, agg_job_info) = state.by_aggregation_job.into_iter().next().unwrap();
+        let (_, agg_job_info) = agg_job_infos.into_iter().next().unwrap();
         Ok(agg_job_info
             .report_aggregations
             .iter()
@@ -218,16 +219,19 @@ where
         skip(self, tx),
         err(level = Level::DEBUG),
     )]
-    pub async fn write(&self, vdaf: &A, tx: &Transaction<'_>) -> Result<(), Error> {
+    pub async fn write(&'a mut self, vdaf: &A, tx: &Transaction<'_>) -> Result<(), Error> {
         self.write_inner(vdaf, tx).await?;
         Ok(())
     }
 
     async fn write_inner(
-        &self,
+        &'a mut self,
         vdaf: &A,
         tx: &Transaction<'_>,
-    ) -> Result<WriteState<'_, SEED_SIZE, B, A, AJ>, Error> {
+    ) -> Result<
+        HashMap<AggregationJobDatastoreId, AggregationJobInfo<'_, SEED_SIZE, B, A, AJ>>,
+        Error,
+    > {
         // Read & update state based on the aggregation jobs to be written. We will read batch
         // aggregations, then update aggregation jobs/report aggregations/batch aggregations based
         // on the state we read.
@@ -239,11 +243,15 @@ where
 
         // Write aggregation jobs, report aggregations, and batch aggregations back to the
         // datastore.
-        let write_agg_jobs_future = try_join_all(state.by_aggregation_job.values().map(
+        let write_agg_jobs_future = try_join_all(state.writer.aggregation_jobs.values().map(
             |AggregationJobInfo {
                  aggregation_job,
                  report_aggregations,
-             }| async move { aggregation_job.write(tx, report_aggregations.iter()).await },
+             }| async move {
+                aggregation_job
+                    .write(tx, report_aggregations.iter().map(|ra| ra.as_ref()))
+                    .await
+            },
         ));
 
         // Prevent deadlocks when inserting into shards by providing a deterministic order to shard
@@ -279,7 +287,7 @@ where
             }));
         try_join!(write_agg_jobs_future, write_batch_aggs_future)?;
 
-        Ok(state)
+        Ok(state.writer.aggregation_jobs.clone())
     }
 
     fn update_metrics<F: FnOnce(&AggregationJobWriterMetrics)>(&self, f: F) {
@@ -293,6 +301,7 @@ where
 ///
 /// The contents are wrapped in `Cow` because `WriteState` may rarely need to update the contents in
 /// order to retry.
+#[derive(Clone)]
 struct AggregationJobInfo<'a, const SEED_SIZE: usize, B, A, AJ>
 where
     B: AccumulableBatchMode,
@@ -315,10 +324,8 @@ where
     A: AsyncAggregator<SEED_SIZE>,
     AJ: WritableAggregationJob<SEED_SIZE, B, A>,
 {
-    writer: &'a AggregationJobWriter<'a, SEED_SIZE, B, A, AJ>,
+    writer: &'a mut AggregationJobWriter<'a, SEED_SIZE, B, A, AJ>,
     batch_aggregation_ord: u64,
-    by_aggregation_job:
-        &'a HashMap<AggregationJobDatastoreId, AggregationJobInfo<'a, SEED_SIZE, B, A, AJ>>,
     batch_aggregations: HashMap<B::BatchIdentifier, (Operation, BatchAggregation<SEED_SIZE, B, A>)>,
 }
 
@@ -333,7 +340,7 @@ where
     pub async fn new(
         tx: &Transaction<'_>,
         vdaf: &A,
-        writer: &'a AggregationJobWriter<'a, SEED_SIZE, B, A, AJ>,
+        writer: &'a mut AggregationJobWriter<'a, SEED_SIZE, B, A, AJ>,
     ) -> Result<Self, Error> {
         let aggregation_parameter = match writer.aggregation_parameter() {
             Some(aggregation_parameter) => aggregation_parameter,
@@ -342,7 +349,6 @@ where
                 return Ok(Self {
                     writer,
                     batch_aggregation_ord: 0,
-                    by_aggregation_job: HashMap::default(),
                     batch_aggregations: HashMap::default(),
                 });
             }
@@ -352,7 +358,7 @@ where
         // the possibility of needing to retry the entire write. (Copy-on-write is used here as
         // modifying state requires cloning it to permit retry; but the common case is that most
         // pieces of state will not be modified, so using CoW avoids the cost of cloning.)
-        let by_aggregation_job = writer.aggregation_jobs;
+        //let by_aggregation_job = writer.aggregation_jobs;
 
         // Read all relevant batch aggregations from the datastore.
         let batch_aggregation_ord = rng().random_range(0..writer.batch_aggregation_shard_count);
@@ -378,7 +384,6 @@ where
         Ok(Self {
             writer,
             batch_aggregation_ord,
-            by_aggregation_job,
             batch_aggregations,
         })
     }
@@ -405,7 +410,8 @@ where
                 //
                 // Unwrap safety: index lookup.
                 let aggregation_job = &self
-                    .by_aggregation_job
+                    .writer
+                    .aggregation_jobs
                     .get(aggregation_job_id)
                     .unwrap()
                     .aggregation_job;
@@ -416,7 +422,8 @@ where
                 for idx in report_aggregation_idxs {
                     // unwrap safety: index lookup
                     let report_aggregation = self
-                        .by_aggregation_job
+                        .writer
+                        .aggregation_jobs
                         .get_mut(aggregation_job_id)
                         .unwrap()
                         .report_aggregations
@@ -438,7 +445,7 @@ where
     /// Update batch aggregations to reflect the report aggregations that will be written.
     fn update_batch_aggregations_from_report_aggregations(&mut self) -> Result<(), Error> {
         let aggregation_parameter = match self.writer.aggregation_parameter() {
-            Some(aggregation_parameter) => aggregation_parameter,
+            Some(aggregation_parameter) => aggregation_parameter.clone(),
             // None means there are no aggregation jobs to write, so we can safely short-circuit.
             None => return Ok(()),
         };
@@ -477,8 +484,11 @@ where
 
             for (aggregation_job_id, report_aggregation_idxs) in by_aggregation_job_index {
                 // unwrap safety: index lookup
-                let aggregation_job_info =
-                    self.by_aggregation_job.get_mut(aggregation_job_id).unwrap();
+                let aggregation_job_info = self
+                    .writer
+                    .aggregation_jobs
+                    .get_mut(aggregation_job_id)
+                    .unwrap();
 
                 // Update the batch aggregation based on the state of each finished report
                 // aggregation.
@@ -634,7 +644,7 @@ where
         for AggregationJobInfo {
             aggregation_job,
             report_aggregations,
-        } in self.by_aggregation_job.values_mut()
+        } in self.writer.aggregation_jobs.values_mut()
         {
             if aggregation_job.state().terminal() {
                 continue;
@@ -699,13 +709,12 @@ where
             for aggregation_job_id in by_aggregation_job_index.keys() {
                 // Update the batch aggregation based on the aggregation job & the write type.
                 // unwrap safety: index lookup
-                let aggregation_job = self
-                    .by_aggregation_job
+                self.writer
+                    .aggregation_jobs
                     .get(aggregation_job_id)
                     .unwrap()
                     .aggregation_job
-                    .as_ref();
-                WT::update_batch_aggregation_for_agg_job(batch_aggregation, aggregation_job)?;
+                    .update_batch_aggregation(batch_aggregation)?;
             }
         }
         Ok(())
@@ -760,7 +769,7 @@ pub trait WritableAggregationJob<
 {
     type WritableReportAggregation: ReportAggregationUpdate<SEED_SIZE, A>;
 
-    fn dap_id(&self) -> AggregationJobId;
+    fn dap_id(&self) -> Option<&AggregationJobId>;
 
     fn aggregation_parameter(&self) -> &A::AggregationParam;
 
@@ -768,13 +777,15 @@ pub trait WritableAggregationJob<
 
     fn state(&self) -> &AggregationJobState;
 
-    async fn write<RA: AsRef<Self::WritableReportAggregation>>(
-        &self,
+    fn with_state(self, state: AggregationJobState) -> Self;
+
+    async fn write<'a>(
+        &'a self,
         tx: &Transaction<'_>,
-        report_aggregations: impl Iterator<Item = RA> + Send + Sync,
+        report_aggregations: impl Iterator<Item = &'a Self::WritableReportAggregation> + Send + Sync,
     ) -> Result<(), Error>;
 
-    async fn update_batch_aggregation(
+    fn update_batch_aggregation(
         &self,
         batch_aggregation: &mut BatchAggregation<SEED_SIZE, B, A>,
     ) -> Result<(), Error>;
@@ -789,7 +800,7 @@ where
 {
     type WritableReportAggregation = ReportAggregationMetadata;
 
-    fn dap_id(&self) -> AggregationJobId {
+    fn dap_id(&self) -> Option<&AggregationJobId> {
         self.dap_id()
     }
 
@@ -805,24 +816,26 @@ where
         self.state()
     }
 
-    async fn write<RA: AsRef<ReportAggregationMetadata>>(
-        &self,
+    fn with_state(self, state: AggregationJobState) -> Self {
+        self.with_state(state)
+    }
+
+    async fn write<'a>(
+        &'a self,
         tx: &Transaction<'_>,
-        report_aggregations: impl Iterator<Item = RA> + Send + Sync,
+        report_aggregations: impl Iterator<Item = &'a ReportAggregationMetadata> + Send + Sync,
     ) -> Result<(), Error> {
-        // These operations must occur serially since report aggregation rows have a
-        // foreign-key constraint on the related aggregation job existing. We could
-        // speed things up for initial writes by switching to DEFERRED constraints:
+        // We must write the aggregation job first since report aggregation rows have a foreign-key
+        // constraint on the related aggregation job existing. We could  speed things up for initial
+        // writes by switching to DEFERRED constraints:
         // https://www.postgresql.org/docs/current/sql-set-constraints.html
         let job_id = tx.put_aggregation_job(self).await?;
-        try_join_all(
-            report_aggregations.map(|ra| tx.put_leader_report_aggregation(job_id, ra.as_ref())),
-        )
-        .await?;
+        try_join_all(report_aggregations.map(|ra| tx.put_leader_report_aggregation(job_id, ra)))
+            .await?;
         Ok(())
     }
 
-    async fn update_batch_aggregation(
+    fn update_batch_aggregation(
         &self,
         batch_aggregation: &mut BatchAggregation<SEED_SIZE, B, A>,
     ) -> Result<(), Error> {
@@ -858,7 +871,7 @@ where
 {
     type WritableReportAggregation = WritableReportAggregation<SEED_SIZE, A>;
 
-    fn dap_id(&self) -> AggregationJobId {
+    fn dap_id(&self) -> Option<&AggregationJobId> {
         self.dap_id()
     }
 
@@ -874,22 +887,27 @@ where
         self.state()
     }
 
-    async fn write<RA: AsRef<WritableReportAggregation<SEED_SIZE, A>>>(
-        &self,
+    fn with_state(self, state: AggregationJobState) -> Self {
+        self.with_state(state)
+    }
+
+    async fn write<'a>(
+        &'a self,
         tx: &Transaction<'_>,
-        report_aggregations: impl Iterator<Item = RA> + Send + Sync,
+        report_aggregations: impl Iterator<Item = &'a WritableReportAggregation<SEED_SIZE, A>>
+        + Send
+        + Sync,
     ) -> Result<(), Error> {
         try_join!(
             tx.update_aggregation_job(self),
             try_join_all(
-                report_aggregations
-                    .map(|ra| tx.update_report_aggregation(&ra.as_ref().report_aggregation)),
+                report_aggregations.map(|ra| tx.update_report_aggregation(&ra.report_aggregation)),
             )
         )?;
         Ok(())
     }
 
-    async fn update_batch_aggregation(
+    fn update_batch_aggregation(
         &self,
         batch_aggregation: &mut BatchAggregation<SEED_SIZE, B, A>,
     ) -> Result<(), Error> {
