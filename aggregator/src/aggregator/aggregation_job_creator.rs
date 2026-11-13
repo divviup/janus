@@ -648,8 +648,7 @@ impl AggregationJobCreator {
                                 .fold(Interval::EMPTY, |left, right| {
                                     left.merged_with(right).unwrap()
                                 });
-                            let aggregation_job = AggregationJob::<SEED_SIZE, TimeInterval, A>::new(
-                                AggregationJobDatastoreId::TEST,
+                            let aggregation_job = UnwrittenAggregationJob::new(
                                 *task.id(),
                                 (),
                                 (),
@@ -664,7 +663,6 @@ impl AggregationJobCreator {
                                 .map(|(ord, report)| {
                                     Ok(ReportAggregationMetadata::new(
                                         *task.id(),
-                                        AggregationJobDatastoreId::TEST,
                                         *report.report_id(),
                                         *report.client_timestamp(),
                                         ord.try_into()?,
@@ -760,6 +758,8 @@ impl AggregationJobCreator {
                             );
                         for agg_job_reports in report_ids_and_times.chunks(max_aggregation_job_size)
                         {
+                            use janus_aggregator_core::datastore::models::UnwrittenAggregationJob;
+
                             if agg_job_reports.len() < this.min_aggregation_job_size {
                                 continue;
                             }
@@ -777,8 +777,7 @@ impl AggregationJobCreator {
                                     left.merged_with(right).unwrap()
                                 });
 
-                            let aggregation_job = AggregationJob::<SEED_SIZE, TimeInterval, A>::new(
-                                AggregationJobDatastoreId::TEST,
+                            let aggregation_job = UnwrittenAggregationJob::new(
                                 *task.id(),
                                 aggregation_param.clone(),
                                 (),
@@ -792,7 +791,6 @@ impl AggregationJobCreator {
                                 .map(|(ord, report)| {
                                     Ok(ReportAggregationMetadata::new(
                                         *task.id(),
-                                        AggregationJobDatastoreId::TEST,
                                         *report.report_id(),
                                         *report.client_timestamp(),
                                         ord.try_into()?,
