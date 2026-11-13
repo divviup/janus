@@ -1136,7 +1136,6 @@ where
                 task_aggregation_counters.clone(),
             );
         aggregation_job_writer.put(aggregation_job, report_aggregations_to_write)?;
-        let aggregation_job_writer = Arc::new(aggregation_job_writer);
 
         let retry_after = retry_after
             .map(|ra| retry_after_to_duration(datastore.clock(), ra))
@@ -1145,7 +1144,7 @@ where
         datastore
             .run_tx("process_response_from_helper_processing", |tx| {
                 let vdaf = Arc::clone(&vdaf);
-                let aggregation_job_writer = Arc::clone(&aggregation_job_writer);
+                let mut aggregation_job_writer = aggregation_job_writer.clone();
                 let lease = Arc::clone(&lease);
 
                 Box::pin(async move {
@@ -1412,12 +1411,11 @@ where
             aggregation_job.with_step(new_step),
             report_aggregations_to_write,
         )?;
-        let aggregation_job_writer = Arc::new(aggregation_job_writer);
 
         datastore
             .run_tx("process_response_from_helper_finished", |tx| {
                 let vdaf = Arc::clone(&vdaf);
-                let aggregation_job_writer = Arc::clone(&aggregation_job_writer);
+                let mut aggregation_job_writer = aggregation_job_writer.clone();
                 let lease = Arc::clone(&lease);
 
                 Box::pin(async move {

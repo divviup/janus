@@ -35,6 +35,7 @@ use tracing::{Level, warn};
 use crate::{Operation, metrics::aggregate_step_failure_types::ACCUMULATE_FAILURE};
 
 /// Buffers pending writes to aggregation jobs and their report aggregations.
+#[derive(Clone)]
 pub struct AggregationJobWriter<const SEED_SIZE: usize, B, A, WT, RA>
 where
     B: AccumulableBatchMode,
@@ -47,6 +48,7 @@ where
     by_batch_identifier_index: HashMap<B::BatchIdentifier, HashMap<AggregationJobId, Vec<usize>>>,
     metrics: Option<AggregationJobWriterMetrics>,
     task_aggregation_counters: TaskAggregationCounter,
+    did_write: bool,
 
     _phantom_wt: PhantomData<WT>,
 }
@@ -82,6 +84,7 @@ where
             by_batch_identifier_index: HashMap::new(),
             metrics,
             task_aggregation_counters,
+            did_write: false,
 
             _phantom_wt: PhantomData,
         }
@@ -177,10 +180,14 @@ where
         err(level = Level::DEBUG),
     )]
     pub async fn write(
-        &self,
+        &mut self,
         tx: &Transaction<'_>,
         vdaf: Arc<A>,
     ) -> Result<HashMap<AggregationJobId, Vec<VerifyResp>>, Error> {
+        if self.did_write {
+            panic!("two writes to a single writer");
+        }
+        self.did_write = true;
         // Read & update state based on the aggregation jobs to be written. We will read batch
         // aggregations, then update aggregation jobs/report aggregations/batch aggregations based
         // on the state we read.
@@ -259,7 +266,7 @@ where
 /// Generic callback used in the internals of aggregation job writers. Different implementations are
 /// used when creating new aggregation jobs versus updating existing aggregation jobs.
 #[async_trait]
-trait WriteType {
+trait WriteType: Copy + Clone {
     /// Writes an aggregation job back to the datastore.
     async fn write_aggregation_job<'a, const SEED_SIZE: usize, B, A, RA>(
         tx: &Transaction<'_>,
@@ -280,6 +287,7 @@ trait WriteType {
 }
 
 /// Represents the initial write of a set of aggregation jobs.
+#[derive(Copy, Clone)]
 pub struct InitialWrite;
 
 #[async_trait]
@@ -343,6 +351,7 @@ impl WriteType for InitialWrite {
 }
 
 /// Represents a update write of a set of aggregation jobs.
+#[derive(Copy, Clone)]
 pub struct UpdateWrite;
 
 #[async_trait]
@@ -420,6 +429,7 @@ where
 }
 
 /// An aggregation job and its accompanying report aggregations.
+#[derive(Clone)]
 struct AggregationJobInfo<const SEED_SIZE: usize, B, A, RA>
 where
     B: AccumulableBatchMode,
