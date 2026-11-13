@@ -2326,6 +2326,7 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn put_leader_report_aggregation(
         &self,
+        aggregation_job_datastore_id: AggregationJobDatastoreId,
         report_aggregation_metadata: &ReportAggregationMetadata,
     ) -> Result<(), Error> {
         let task_info = self
@@ -2386,8 +2387,7 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
                         &stmt,
                         &[
                             /* task_id */ &task_info.pkey,
-                            /* aggregation_job.id */
-                            &report_aggregation_metadata.aggregation_job_datastore_id(),
+                            /* aggregation_job.id */ &aggregation_job_datastore_id,
                             /* ord */
                             &TryInto::<i64>::try_into(report_aggregation_metadata.ord())?,
                             /* client_report_id */
@@ -2443,8 +2443,7 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
                         &stmt,
                         &[
                             /* task_id */ &task_info.pkey,
-                            /* aggregation_job_id */
-                            &report_aggregation_metadata.aggregation_job_datastore_id(),
+                            /* aggregation_job_id */ &aggregation_job_datastore_id,
                             /* ord */
                             &TryInto::<i64>::try_into(report_aggregation_metadata.ord())?,
                             /* client_report_id */

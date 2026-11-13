@@ -1628,7 +1628,6 @@ pub enum ReportAggregationMetadataState {
 #[derive(Clone, Debug)]
 pub struct ReportAggregationMetadata {
     task_id: TaskId,
-    aggregation_job_datastore_id: AggregationJobDatastoreId,
     report_id: ReportId,
     time: Time,
     ord: u64,
@@ -1639,7 +1638,6 @@ impl ReportAggregationMetadata {
     /// Creates a new [`ReportAggregationMetadata`].
     pub fn new(
         task_id: TaskId,
-        aggregation_job_datastore_id: AggregationJobDatastoreId,
         report_id: ReportId,
         time: Time,
         ord: u64,
@@ -1647,7 +1645,6 @@ impl ReportAggregationMetadata {
     ) -> Self {
         Self {
             task_id,
-            aggregation_job_datastore_id,
             report_id,
             time,
             ord,
@@ -1658,22 +1655,6 @@ impl ReportAggregationMetadata {
     /// Returns the task ID associated with this report aggregation.
     pub fn task_id(&self) -> &TaskId {
         &self.task_id
-    }
-
-    /// The aggregation job datastore ID.
-    pub fn aggregation_job_datastore_id(&self) -> AggregationJobDatastoreId {
-        self.aggregation_job_datastore_id
-    }
-
-    /// Set the aggregation job datastore ID.
-    pub fn with_aggregation_job_id(
-        self,
-        aggregation_job_datastore_id: AggregationJobDatastoreId,
-    ) -> Self {
-        Self {
-            aggregation_job_datastore_id,
-            ..self
-        }
     }
 
     /// Returns the report ID associated with this report aggregation.
