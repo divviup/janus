@@ -569,12 +569,15 @@ async fn list_aggregation_jobs_generic<
 ) -> Result<(), crate::aggregator::Error> {
     let (jobs, leases) = if let Some(job_id) = aggregation_job_id {
         let job = tx
-            .get_aggregation_job::<SEED_SIZE, B, A>(task_id, &job_id)
+            .get_aggregation_job_by_dap_id::<SEED_SIZE, B, A>(task_id, job_id)
             .await?;
 
-        let lease = tx
-            .get_aggregation_job_lease::<SEED_SIZE, B, A>(task_id, &job_id)
-            .await?;
+        let lease = if let Some(job) = &job {
+            tx.get_aggregation_job_lease::<SEED_SIZE, B, A>(task_id, job.datastore_id())
+                .await?
+        } else {
+            None
+        };
 
         (Vec::from(job.as_slice()), Vec::from(lease.as_slice()))
     } else {
@@ -590,10 +593,10 @@ async fn list_aggregation_jobs_generic<
     };
 
     pretty_print_jobs_and_leases(
-        jobs.into_iter().sorted_by_key(|job| *job.id()),
+        jobs.into_iter().sorted_by_key(|job| job.datastore_id()),
         leases
             .into_iter()
-            .sorted_by_key(|lease| *lease.leased().aggregation_job_id()),
+            .sorted_by_key(|lease| lease.leased().aggregation_job_datastore_id()),
     );
 
     Ok(())

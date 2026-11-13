@@ -239,7 +239,7 @@ where
                     let task_future = tx.get_aggregator_task(lease.leased().task_id());
                     let aggregation_job_future = tx.get_aggregation_job::<SEED_SIZE, B, A>(
                         lease.leased().task_id(),
-                        lease.leased().aggregation_job_id(),
+                        lease.leased().aggregation_job_datastore_id(),
                     );
 
                     let (task, aggregation_job) = try_join!(task_future, aggregation_job_future)?;
@@ -253,7 +253,7 @@ where
                         datastore::Error::User(
                             anyhow!(
                                 "couldn't find aggregation job {} for task {}",
-                                *lease.leased().aggregation_job_id(),
+                                lease.leased().aggregation_job_datastore_id(),
                                 *lease.leased().task_id(),
                             )
                             .into(),
@@ -265,7 +265,7 @@ where
                             vdaf.as_ref(),
                             &Role::Leader,
                             lease.leased().task_id(),
-                            lease.leased().aggregation_job_id(),
+                            lease.leased().aggregation_job_datastore_id(),
                         )
                         .await?;
 
@@ -656,7 +656,7 @@ where
                 &self.http_client,
                 self.backoff.build(),
                 Method::PUT,
-                task.aggregation_job_uri(aggregation_job.id(), None)?
+                task.aggregation_job_uri(aggregation_job.id().unwrap(), None)?
                     .ok_or_else(|| {
                         Error::InvalidConfiguration("task is leader and has no aggregate share URI")
                     })?,
@@ -870,7 +870,7 @@ where
             &self.http_client,
             self.backoff.build(),
             Method::POST,
-            task.aggregation_job_uri(aggregation_job.id(), None)?
+            task.aggregation_job_uri(aggregation_job.id().unwrap(), None)?
                 .ok_or_else(|| {
                     Error::InvalidConfiguration("task is not leader and has no aggregate share URI")
                 })?,
@@ -973,7 +973,7 @@ where
             &self.http_client,
             self.backoff.build(),
             Method::GET,
-            task.aggregation_job_uri(aggregation_job.id(), Some(aggregation_job.step()))?
+            task.aggregation_job_uri(aggregation_job.id().unwrap(), Some(aggregation_job.step()))?
                 .ok_or_else(|| {
                     Error::InvalidConfiguration("task is not leader and has no aggregate share URI")
                 })?,
@@ -1150,7 +1150,7 @@ where
 
                 Box::pin(async move {
                     try_join!(
-                        aggregation_job_writer.write(tx, Arc::clone(&vdaf)),
+                        aggregation_job_writer.write(vdaf.as_ref(), tx),
                         tx.release_aggregation_job(&lease, Some(&retry_after)),
                     )?;
                     Ok(())
@@ -1422,7 +1422,7 @@ where
 
                 Box::pin(async move {
                     try_join!(
-                        aggregation_job_writer.write(tx, Arc::clone(&vdaf)),
+                        aggregation_job_writer.write(vdaf.as_ref(), tx),
                         tx.release_aggregation_job(&lease, None),
                     )?;
                     Ok(())
@@ -1544,8 +1544,12 @@ where
 
         // Compute the next aggregation step.
         let task = Arc::new(task);
-        let aggregation_job =
-            Arc::new(aggregation_job.with_state(AggregationJobState::AwaitingRequest));
+        // TODO(timg): generate job ID instead of getting it from the request path
+        // TODO(timg): more graceful state transitions?
+        let helper_aggregation_job_id = *aggregation_job.id().unwrap();
+        let aggregation_job = aggregation_job.with_state(AggregationJobState::AwaitingRequest {
+            helper_aggregation_job_id,
+        });
         let report_aggregations = Arc::new(
             compute_helper_aggregate_init(
                 datastore.clock(),
@@ -1558,7 +1562,7 @@ where
                     self.keypair_use_counter.clone(),
                 ),
                 Arc::clone(&task),
-                Arc::clone(&aggregation_job),
+                &aggregation_job,
                 report_aggregations,
             )
             .await?,
@@ -1580,7 +1584,7 @@ where
                 let task = Arc::clone(&task);
                 let metrics = metrics.clone();
                 let task_aggregation_counters = task_aggregation_counters.clone();
-                let aggregation_job = Arc::clone(&aggregation_job);
+                let aggregation_job = aggregation_job.clone();
                 let report_aggregations = Arc::clone(&report_aggregations);
                 let batch_aggregation_shard_count = self.batch_aggregation_shard_count;
 
@@ -1596,10 +1600,9 @@ where
                             Some(metrics),
                             task_aggregation_counters,
                         );
-                    aggregation_job_writer
-                        .put(aggregation_job.as_ref().clone(), report_aggregations)?;
+                    aggregation_job_writer.put(aggregation_job, report_aggregations)?;
                     try_join!(
-                        aggregation_job_writer.write(tx, vdaf),
+                        aggregation_job_writer.write(vdaf.as_ref(), tx),
                         tx.release_aggregation_job(&lease, None),
                     )?;
                     Ok(())
@@ -1645,8 +1648,13 @@ where
 
         // Compute the next aggregation step.
         let task = Arc::new(task);
-        let aggregation_job =
-            Arc::new(aggregation_job.with_state(AggregationJobState::AwaitingRequest));
+        // TODO(timg): better way to obtain aggregation job ID + more graceful state transitions
+        let helper_aggregation_job_id = *aggregation_job.id().unwrap();
+        let aggregation_job = Arc::new(aggregation_job.with_state(
+            AggregationJobState::AwaitingRequest {
+                helper_aggregation_job_id,
+            },
+        ));
         let report_aggregations = Arc::new(
             compute_helper_aggregate_continue(
                 Arc::clone(&vdaf),
@@ -1695,7 +1703,7 @@ where
                         .put(aggregation_job.as_ref().clone(), report_aggregations)?;
 
                     try_join!(
-                        aggregation_job_writer.write(tx, vdaf),
+                        aggregation_job_writer.write(vdaf.as_ref(), tx),
                         tx.release_aggregation_job(&lease, None),
                     )?;
                     Ok(())
@@ -1767,7 +1775,7 @@ where
                         tx.get_aggregator_task(lease.leased().task_id()),
                         tx.get_aggregation_job::<SEED_SIZE, B, A>(
                             lease.leased().task_id(),
-                            lease.leased().aggregation_job_id()
+                            lease.leased().aggregation_job_datastore_id()
                         ),
                     )?;
 
@@ -1776,25 +1784,29 @@ where
                             anyhow!("couldn't find task {}", lease.leased().task_id()).into(),
                         )
                     })?;
-                    let aggregation_job = aggregation_job
-                        .ok_or_else(|| {
-                            datastore::Error::User(
-                                anyhow!(
-                                    "couldn't find aggregation job {} for task {}",
-                                    lease.leased().aggregation_job_id(),
-                                    lease.leased().task_id()
-                                )
-                                .into(),
+                    let aggregation_job = aggregation_job.ok_or_else(|| {
+                        datastore::Error::User(
+                            anyhow!(
+                                "couldn't find aggregation job {} for task {}",
+                                lease.leased().aggregation_job_datastore_id(),
+                                lease.leased().task_id()
                             )
-                        })?
-                        .with_state(AggregationJobState::Abandoned);
+                            .into(),
+                        )
+                    })?;
+                    // TODO(timg): more graceful state transitions
+                    let helper_aggregation_job_id = *aggregation_job.id().unwrap();
+                    let aggregation_job =
+                        aggregation_job.with_state(AggregationJobState::Abandoned {
+                            helper_aggregation_job_id,
+                        });
 
                     let report_aggregations = tx
                         .get_report_aggregations_for_aggregation_job(
                             vdaf.as_ref(),
                             &Role::Leader,
                             lease.leased().task_id(),
-                            lease.leased().aggregation_job_id(),
+                            lease.leased().aggregation_job_datastore_id(),
                         )
                         .await?
                         .into_iter()
@@ -1802,7 +1814,7 @@ where
                         .collect();
 
                     let aggregation_job_uri =
-                        task.aggregation_job_uri(lease.leased().aggregation_job_id(), None);
+                        task.aggregation_job_uri(aggregation_job.id().unwrap(), None);
                     let aggregator_auth_token = task.aggregator_auth_token().cloned();
 
                     let mut aggregation_job_writer =
@@ -1815,7 +1827,7 @@ where
                     aggregation_job_writer.put(aggregation_job, report_aggregations)?;
 
                     try_join!(
-                        aggregation_job_writer.write(tx, vdaf),
+                        aggregation_job_writer.write(vdaf.as_ref(), tx),
                         tx.release_aggregation_job(&lease, None),
                     )?;
 
