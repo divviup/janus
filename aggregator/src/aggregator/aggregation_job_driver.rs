@@ -1,5 +1,4 @@
 use std::{
-    borrow::Cow,
     collections::HashSet,
     panic,
     sync::Arc,
@@ -63,8 +62,7 @@ use crate::{
         aggregation_job_continue::{AggregateContinueMetrics, compute_helper_aggregate_continue},
         aggregation_job_init::{AggregateInitMetrics, compute_helper_aggregate_init},
         aggregation_job_writer::{
-            AggregationJobWriter, AggregationJobWriterMetrics, UpdateWrite,
-            WritableReportAggregation,
+            AggregationJobWriter, AggregationJobWriterMetrics, WritableReportAggregation,
         },
         batch_mode::CollectableBatchMode,
         error::handle_ping_pong_error,
@@ -656,7 +654,7 @@ where
                 &self.http_client,
                 self.backoff.build(),
                 Method::PUT,
-                task.aggregation_job_uri(aggregation_job.id().unwrap(), None)?
+                task.aggregation_job_uri(aggregation_job.dap_id().unwrap(), None)?
                     .ok_or_else(|| {
                         Error::InvalidConfiguration("task is leader and has no aggregate share URI")
                     })?,
@@ -870,7 +868,7 @@ where
             &self.http_client,
             self.backoff.build(),
             Method::POST,
-            task.aggregation_job_uri(aggregation_job.id().unwrap(), None)?
+            task.aggregation_job_uri(aggregation_job.dap_id().unwrap(), None)?
                 .ok_or_else(|| {
                     Error::InvalidConfiguration("task is not leader and has no aggregate share URI")
                 })?,
@@ -973,10 +971,13 @@ where
             &self.http_client,
             self.backoff.build(),
             Method::GET,
-            task.aggregation_job_uri(aggregation_job.id().unwrap(), Some(aggregation_job.step()))?
-                .ok_or_else(|| {
-                    Error::InvalidConfiguration("task is not leader and has no aggregate share URI")
-                })?,
+            task.aggregation_job_uri(
+                aggregation_job.dap_id().unwrap(),
+                Some(aggregation_job.step()),
+            )?
+            .ok_or_else(|| {
+                Error::InvalidConfiguration("task is not leader and has no aggregate share URI")
+            })?,
             AGGREGATION_JOB_ROUTE,
             None,
             // The only way a task wouldn't have an aggregator auth token in it is in the taskprov
@@ -1122,21 +1123,13 @@ where
 
         // Write everything back to storage.
         let task_id = *task.id();
-        let mut aggregation_job_writer =
-            AggregationJobWriter::<SEED_SIZE, _, _, UpdateWrite, _>::new(
-                Arc::new(task),
-                self.batch_aggregation_shard_count,
-                Some(AggregationJobWriterMetrics {
-                    report_aggregation_success_counter: self.aggregation_success_counter.clone(),
-                    aggregate_step_failure_counter: self.aggregate_step_failure_counter.clone(),
-                    aggregated_report_share_dimension_histogram: self
-                        .aggregated_report_share_dimension_histogram
-                        .clone(),
-                }),
-                task_aggregation_counters.clone(),
-            );
-        aggregation_job_writer.put(aggregation_job, report_aggregations_to_write)?;
-        let aggregation_job_writer = Arc::new(aggregation_job_writer);
+        let metrics = AggregationJobWriterMetrics {
+            report_aggregation_success_counter: self.aggregation_success_counter.clone(),
+            aggregate_step_failure_counter: self.aggregate_step_failure_counter.clone(),
+            aggregated_report_share_dimension_histogram: self
+                .aggregated_report_share_dimension_histogram
+                .clone(),
+        };
 
         let retry_after = retry_after
             .map(|ra| retry_after_to_duration(datastore.clock(), ra))
@@ -1144,13 +1137,29 @@ where
             .unwrap_or(self.default_async_poll_interval);
         datastore
             .run_tx("process_response_from_helper_processing", |tx| {
+                let task = task.clone();
                 let vdaf = Arc::clone(&vdaf);
-                let aggregation_job_writer = Arc::clone(&aggregation_job_writer);
+                let metrics = metrics.clone();
+                let task_aggregation_counters = task_aggregation_counters.clone();
+                let batch_aggregation_shard_count = self.batch_aggregation_shard_count;
+                let aggregation_job = aggregation_job.clone();
+                let report_aggregations_to_write = report_aggregations_to_write.clone();
                 let lease = Arc::clone(&lease);
 
                 Box::pin(async move {
+                    let mut aggregation_job_writer = AggregationJobWriter::new(
+                        Arc::new(task),
+                        batch_aggregation_shard_count,
+                        Some(metrics),
+                        task_aggregation_counters,
+                    );
                     try_join!(
-                        aggregation_job_writer.write(vdaf.as_ref(), tx),
+                        aggregation_job_writer.put_and_write(
+                            vdaf.as_ref(),
+                            tx,
+                            aggregation_job,
+                            report_aggregations_to_write
+                        ),
                         tx.release_aggregation_job(&lease, Some(&retry_after)),
                     )?;
                     Ok(())
@@ -1394,35 +1403,41 @@ where
         // Write everything back to storage.
         let aggregation_job = Arc::unwrap_or_clone(aggregation_job);
         let task_id = *task.id();
-        let mut aggregation_job_writer =
-            AggregationJobWriter::<SEED_SIZE, _, _, UpdateWrite, _>::new(
-                Arc::new(task),
-                self.batch_aggregation_shard_count,
-                Some(AggregationJobWriterMetrics {
-                    report_aggregation_success_counter: self.aggregation_success_counter.clone(),
-                    aggregate_step_failure_counter: self.aggregate_step_failure_counter.clone(),
-                    aggregated_report_share_dimension_histogram: self
-                        .aggregated_report_share_dimension_histogram
-                        .clone(),
-                }),
-                task_aggregation_counters.clone(),
-            );
+        let metrics = AggregationJobWriterMetrics {
+            report_aggregation_success_counter: self.aggregation_success_counter.clone(),
+            aggregate_step_failure_counter: self.aggregate_step_failure_counter.clone(),
+            aggregated_report_share_dimension_histogram: self
+                .aggregated_report_share_dimension_histogram
+                .clone(),
+        };
         let new_step = aggregation_job.step().increment();
-        aggregation_job_writer.put(
-            aggregation_job.with_step(new_step),
-            report_aggregations_to_write,
-        )?;
-        let aggregation_job_writer = Arc::new(aggregation_job_writer);
+        let aggregation_job = aggregation_job.with_step(new_step);
 
         datastore
             .run_tx("process_response_from_helper_finished", |tx| {
+                let task = task.clone();
                 let vdaf = Arc::clone(&vdaf);
-                let aggregation_job_writer = Arc::clone(&aggregation_job_writer);
+                let metrics = metrics.clone();
+                let task_aggregation_counters = task_aggregation_counters.clone();
+                let aggregation_job = aggregation_job.clone();
+                let report_aggregations_to_write = report_aggregations_to_write.clone();
+                let batch_aggregation_shard_count = self.batch_aggregation_shard_count;
                 let lease = Arc::clone(&lease);
 
                 Box::pin(async move {
+                    let mut aggregation_job_writer = AggregationJobWriter::new(
+                        Arc::new(task),
+                        batch_aggregation_shard_count,
+                        Some(metrics),
+                        task_aggregation_counters,
+                    );
                     try_join!(
-                        aggregation_job_writer.write(vdaf.as_ref(), tx),
+                        aggregation_job_writer.put_and_write(
+                            vdaf.as_ref(),
+                            tx,
+                            aggregation_job,
+                            report_aggregations_to_write
+                        ),
                         tx.release_aggregation_job(&lease, None),
                     )?;
                     Ok(())
@@ -1546,27 +1561,25 @@ where
         let task = Arc::new(task);
         // TODO(timg): generate job ID instead of getting it from the request path
         // TODO(timg): more graceful state transitions?
-        let helper_aggregation_job_id = *aggregation_job.id().unwrap();
+        let helper_aggregation_job_id = *aggregation_job.dap_id().unwrap();
         let aggregation_job = aggregation_job.with_state(AggregationJobState::AwaitingRequest {
             helper_aggregation_job_id,
         });
-        let report_aggregations = Arc::new(
-            compute_helper_aggregate_init(
-                datastore.clock(),
-                hpke_keypairs,
-                Arc::clone(&vdaf),
-                AggregateInitMetrics::new(
-                    self.aggregate_step_failure_counter.clone(),
-                    self.early_report_clock_skew_histogram.clone(),
-                    self.past_report_clock_skew_histogram.clone(),
-                    self.keypair_use_counter.clone(),
-                ),
-                Arc::clone(&task),
-                &aggregation_job,
-                report_aggregations,
-            )
-            .await?,
-        );
+        let report_aggregations = compute_helper_aggregate_init(
+            datastore.clock(),
+            hpke_keypairs,
+            Arc::clone(&vdaf),
+            AggregateInitMetrics::new(
+                self.aggregate_step_failure_counter.clone(),
+                self.early_report_clock_skew_histogram.clone(),
+                self.past_report_clock_skew_histogram.clone(),
+                self.keypair_use_counter.clone(),
+            ),
+            Arc::clone(&task),
+            &aggregation_job,
+            report_aggregations,
+        )
+        .await?;
 
         // Write results back to datastore.
         let metrics = AggregationJobWriterMetrics {
@@ -1585,24 +1598,24 @@ where
                 let metrics = metrics.clone();
                 let task_aggregation_counters = task_aggregation_counters.clone();
                 let aggregation_job = aggregation_job.clone();
-                let report_aggregations = Arc::clone(&report_aggregations);
+                let report_aggregations = report_aggregations.clone();
                 let batch_aggregation_shard_count = self.batch_aggregation_shard_count;
 
                 Box::pin(async move {
                     // Write aggregation job, report aggregations, and batch aggregations.
-                    let report_aggregations =
-                        report_aggregations.iter().map(Cow::Borrowed).collect();
-
-                    let mut aggregation_job_writer =
-                        AggregationJobWriter::<SEED_SIZE, _, _, UpdateWrite, _>::new(
-                            task,
-                            batch_aggregation_shard_count,
-                            Some(metrics),
-                            task_aggregation_counters,
-                        );
-                    aggregation_job_writer.put(aggregation_job, report_aggregations)?;
+                    let mut aggregation_job_writer = AggregationJobWriter::new(
+                        task,
+                        batch_aggregation_shard_count,
+                        Some(metrics),
+                        task_aggregation_counters,
+                    );
                     try_join!(
-                        aggregation_job_writer.write(vdaf.as_ref(), tx),
+                        aggregation_job_writer.put_and_write(
+                            vdaf.as_ref(),
+                            tx,
+                            aggregation_job,
+                            report_aggregations
+                        ),
                         tx.release_aggregation_job(&lease, None),
                     )?;
                     Ok(())
@@ -1649,25 +1662,23 @@ where
         // Compute the next aggregation step.
         let task = Arc::new(task);
         // TODO(timg): better way to obtain aggregation job ID + more graceful state transitions
-        let helper_aggregation_job_id = *aggregation_job.id().unwrap();
+        let helper_aggregation_job_id = *aggregation_job.dap_id().unwrap();
         let aggregation_job = Arc::new(aggregation_job.with_state(
             AggregationJobState::AwaitingRequest {
                 helper_aggregation_job_id,
             },
         ));
-        let report_aggregations = Arc::new(
-            compute_helper_aggregate_continue(
-                Arc::clone(&vdaf),
-                AggregateContinueMetrics::new(
-                    self.aggregate_step_failure_counter.clone(),
-                    &task_aggregation_counters,
-                ),
-                Arc::clone(&task),
-                Arc::clone(&aggregation_job),
-                report_aggregations,
-            )
-            .await,
-        );
+        let report_aggregations = compute_helper_aggregate_continue(
+            Arc::clone(&vdaf),
+            AggregateContinueMetrics::new(
+                self.aggregate_step_failure_counter.clone(),
+                &task_aggregation_counters,
+            ),
+            Arc::clone(&task),
+            Arc::clone(&aggregation_job),
+            report_aggregations,
+        )
+        .await;
 
         // Write results back to datastore.
         let metrics = AggregationJobWriterMetrics {
@@ -1685,20 +1696,17 @@ where
                 let task = Arc::clone(&task);
                 let metrics = metrics.clone();
                 let aggregation_job = Arc::clone(&aggregation_job);
-                let report_aggregations = Arc::clone(&report_aggregations);
+                let report_aggregations = report_aggregations.clone();
                 let task_aggregation_counters = task_aggregation_counters.clone();
                 let batch_aggregation_shard_count = self.batch_aggregation_shard_count;
 
                 Box::pin(async move {
-                    let report_aggregations =
-                        report_aggregations.iter().map(Cow::Borrowed).collect();
-                    let mut aggregation_job_writer =
-                        AggregationJobWriter::<SEED_SIZE, _, _, UpdateWrite, _>::new(
-                            task,
-                            batch_aggregation_shard_count,
-                            Some(metrics),
-                            task_aggregation_counters,
-                        );
+                    let mut aggregation_job_writer = AggregationJobWriter::new(
+                        task,
+                        batch_aggregation_shard_count,
+                        Some(metrics),
+                        task_aggregation_counters,
+                    );
                     aggregation_job_writer
                         .put(aggregation_job.as_ref().clone(), report_aggregations)?;
 
@@ -1795,7 +1803,7 @@ where
                         )
                     })?;
                     // TODO(timg): more graceful state transitions
-                    let helper_aggregation_job_id = *aggregation_job.id().unwrap();
+                    let helper_aggregation_job_id = *aggregation_job.dap_id().unwrap();
                     let aggregation_job =
                         aggregation_job.with_state(AggregationJobState::Abandoned {
                             helper_aggregation_job_id,
@@ -1814,20 +1822,23 @@ where
                         .collect();
 
                     let aggregation_job_uri =
-                        task.aggregation_job_uri(aggregation_job.id().unwrap(), None);
+                        task.aggregation_job_uri(aggregation_job.dap_id().unwrap(), None);
                     let aggregator_auth_token = task.aggregator_auth_token().cloned();
 
-                    let mut aggregation_job_writer =
-                        AggregationJobWriter::<SEED_SIZE, _, _, UpdateWrite, _>::new(
-                            Arc::new(task),
-                            batch_aggregation_shard_count,
-                            None,
-                            TaskAggregationCounter::default(),
-                        );
-                    aggregation_job_writer.put(aggregation_job, report_aggregations)?;
+                    let mut aggregation_job_writer = AggregationJobWriter::new(
+                        Arc::new(task),
+                        batch_aggregation_shard_count,
+                        None,
+                        TaskAggregationCounter::default(),
+                    );
 
                     try_join!(
-                        aggregation_job_writer.write(vdaf.as_ref(), tx),
+                        aggregation_job_writer.put_and_write(
+                            vdaf.as_ref(),
+                            tx,
+                            aggregation_job,
+                            report_aggregations
+                        ),
                         tx.release_aggregation_job(&lease, None),
                     )?;
 

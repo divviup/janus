@@ -13,8 +13,8 @@ use janus_aggregator_core::{
     datastore::{
         Error, Transaction,
         models::{
-            AggregationJob, AggregationJobDatastoreId, AggregationJobState, OutstandingBatch,
-            ReportAggregationMetadata, ReportAggregationMetadataState, UnaggregatedReport,
+            AggregationJobState, OutstandingBatch, ReportAggregationMetadata,
+            ReportAggregationMetadataState, UnaggregatedReport, UnwrittenAggregationJob,
         },
     },
 };
@@ -29,7 +29,7 @@ use rand::random;
 use tokio::try_join;
 use tracing::debug;
 
-use crate::aggregator::aggregation_job_writer::{AggregationJobWriter, InitialWrite};
+use crate::aggregator::aggregation_job_writer::AggregationJobWriter;
 
 /// This data structure loads existing outstanding batches, incrementally assigns new reports to
 /// outstanding batches and aggregation jobs, and provides unused reports at the end.
@@ -42,11 +42,11 @@ where
 {
     properties: Properties,
     aggregation_job_writer: &'a mut AggregationJobWriter<
+        'a,
         SEED_SIZE,
         LeaderSelected,
         A,
-        InitialWrite,
-        ReportAggregationMetadata,
+        UnwrittenAggregationJob<BatchId, A::AggregationParam>,
     >,
     buckets: HashMap<Option<Time>, Bucket>,
     new_batches: Vec<(BatchId, Option<Time>)>,
@@ -78,11 +78,11 @@ where
         task_min_batch_size: usize,
         task_batch_time_window_size: Option<Duration>,
         aggregation_job_writer: &'a mut AggregationJobWriter<
+            'a,
             SEED_SIZE,
             LeaderSelected,
             A,
-            InitialWrite,
-            ReportAggregationMetadata,
+            UnwrittenAggregationJob<BatchId, ()>,
         >,
         aggregation_job_size_histogram: Histogram<u64>,
     ) -> Self {
@@ -177,11 +177,11 @@ where
     fn process_batches(
         properties: &Properties,
         aggregation_job_writer: &mut AggregationJobWriter<
+            '_,
             SEED_SIZE,
             LeaderSelected,
             A,
-            InitialWrite,
-            ReportAggregationMetadata,
+            UnwrittenAggregationJob<BatchId, ()>,
         >,
         report_ids_to_scrub: &mut HashSet<ReportId>,
         new_batches: &mut Vec<(BatchId, Option<Time>)>,
@@ -323,11 +323,11 @@ where
         aggregation_job_size: usize,
         unaggregated_reports: &mut VecDeque<UnaggregatedReport>,
         aggregation_job_writer: &mut AggregationJobWriter<
+            '_,
             SEED_SIZE,
             LeaderSelected,
             A,
-            InitialWrite,
-            ReportAggregationMetadata,
+            UnwrittenAggregationJob<BatchId, ()>,
         >,
         report_ids_to_scrub: &mut HashSet<ReportId>,
         aggregation_job_size_histogram: &Histogram<u64>,
@@ -343,7 +343,6 @@ where
             .map(|(ord, report)| {
                 ReportAggregationMetadata::new(
                     task_id,
-                    AggregationJobDatastoreId::TEST,
                     *report.report_id(),
                     *report.client_timestamp(),
                     ord,
@@ -359,8 +358,7 @@ where
             .fold(Interval::EMPTY, |interval, timestamp| {
                 interval.merged_with(timestamp).unwrap()
             });
-        let aggregation_job = AggregationJob::<SEED_SIZE, LeaderSelected, A>::new(
-            AggregationJobDatastoreId::TEST,
+        let aggregation_job = UnwrittenAggregationJob::new(
             task_id,
             (),
             batch_id,

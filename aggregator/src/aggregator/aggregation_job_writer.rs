@@ -1,7 +1,7 @@
 //! In-memory accumulation of aggregation job (& report aggregation) writes, along with related
 //! batch aggregation writes.
 
-use std::{borrow::Cow, collections::HashMap, marker::PhantomData, sync::Arc};
+use std::{borrow::Cow, collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
 use futures::future::try_join_all;
@@ -35,6 +35,7 @@ use tracing::{Level, warn};
 use crate::{Operation, metrics::aggregate_step_failure_types::ACCUMULATE_FAILURE};
 
 /// Buffers pending writes to aggregation jobs and their report aggregations.
+#[derive(Clone)]
 pub struct AggregationJobWriter<'a, const SEED_SIZE: usize, B, A, AJ>
 where
     B: AccumulableBatchMode,
@@ -135,7 +136,7 @@ where
     /// Panics if the aggregation parameter of the aggregation job does not match that of previous
     /// aggregation jobs.
     pub async fn put_and_write(
-        &'a mut self,
+        mut self,
         vdaf: &A,
         tx: &Transaction<'_>,
         aggregation_job: AJ,
@@ -219,17 +220,17 @@ where
         skip(self, tx),
         err(level = Level::DEBUG),
     )]
-    pub async fn write(&'a mut self, vdaf: &A, tx: &Transaction<'_>) -> Result<(), Error> {
+    pub async fn write(mut self, vdaf: &A, tx: &Transaction<'_>) -> Result<(), Error> {
         self.write_inner(vdaf, tx).await?;
         Ok(())
     }
 
-    async fn write_inner(
-        &'a mut self,
+    async fn write_inner<'a>(
+        mut self,
         vdaf: &A,
         tx: &Transaction<'_>,
     ) -> Result<
-        HashMap<AggregationJobDatastoreId, AggregationJobInfo<'_, SEED_SIZE, B, A, AJ>>,
+        HashMap<AggregationJobDatastoreId, AggregationJobInfo<'a, SEED_SIZE, B, A, AJ>>,
         Error,
     > {
         // Read & update state based on the aggregation jobs to be written. We will read batch

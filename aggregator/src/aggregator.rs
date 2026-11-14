@@ -88,8 +88,8 @@ use crate::{
         aggregate_share::{AggregateShareComputer, BatchAggregationsIterator},
         aggregation_job_init::compute_helper_aggregate_init,
         aggregation_job_writer::{
-            AggregationJobWriter, AggregationJobWriterMetrics, InitialWrite,
-            ReportAggregationUpdate as _, UpdateWrite, WritableReportAggregation,
+            AggregationJobWriter, AggregationJobWriterMetrics, ReportAggregationUpdate as _,
+            WritableReportAggregation,
         },
         batch_mode::{CollectableBatchMode, UploadableBatchMode},
         error::{
@@ -2414,42 +2414,37 @@ impl VdafOps {
                     }
 
                     // Write report shares, and ensure this isn't a repeated report aggregation.
-                    let report_aggregations = try_join_all(report_aggregations.iter().map(|ra| {
-                        let task = Arc::clone(&task);
+                    let report_aggregations =
+                        try_join_all(report_aggregations.into_iter().map(|ra| {
+                            let task = Arc::clone(&task);
 
-                        async move {
-                            let mut report_aggregation = Cow::Borrowed(ra);
-                            match tx
-                                .put_scrubbed_report(
-                                    task.id(),
-                                    ra.report_aggregation().report_id(),
-                                    ra.report_aggregation().time(),
-                                )
-                                .await
-                            {
-                                Ok(()) => (),
-                                Err(datastore::Error::MutationTargetAlreadyExists) => {
-                                    report_aggregation = Cow::Owned(
-                                        report_aggregation
-                                            .into_owned()
-                                            .with_failure(ReportError::ReportReplayed),
+                            async move {
+                                let ra = match tx
+                                    .put_scrubbed_report(
+                                        task.id(),
+                                        ra.report_aggregation().report_id(),
+                                        ra.report_aggregation().time(),
                                     )
-                                }
-                                Err(err) => return Err(err),
-                            };
-                            Ok(report_aggregation)
-                        }
-                    }))
-                    .await?;
+                                    .await
+                                {
+                                    Ok(()) => ra,
+                                    Err(datastore::Error::MutationTargetAlreadyExists) => {
+                                        ra.with_failure(ReportError::ReportReplayed)
+                                    }
+                                    Err(err) => return Err(err),
+                                };
+                                Ok(ra)
+                            }
+                        }))
+                        .await?;
 
                     // Write aggregation job, report aggregations, and batch aggregations.
-                    let mut aggregation_job_writer =
-                        AggregationJobWriter::<SEED_SIZE, _, _, InitialWrite, _>::new(
-                            task,
-                            batch_aggregation_shard_count,
-                            Some(aggregation_job_writer_metrics),
-                            task_aggregation_counters,
-                        );
+                    let mut aggregation_job_writer = AggregationJobWriter::new(
+                        task,
+                        batch_aggregation_shard_count,
+                        Some(aggregation_job_writer_metrics),
+                        task_aggregation_counters,
+                    );
                     Ok(aggregation_job_writer
                         .put_and_write(vdaf.as_ref(), tx, aggregation_job, report_aggregations)
                         .await?)
@@ -2847,13 +2842,12 @@ impl VdafOps {
 
         // Write accumulated aggregation values back to the datastore; this will mark any reports
         // that can't be aggregated because the batch is collected with error BatchCollected.
-        let mut aggregation_job_writer =
-            AggregationJobWriter::<SEED_SIZE, _, _, UpdateWrite, _>::new(
-                task,
-                batch_aggregation_shard_count,
-                Some(metrics.for_aggregation_job_writer()),
-                task_aggregation_counters,
-            );
+        let mut aggregation_job_writer = AggregationJobWriter::new(
+            task,
+            batch_aggregation_shard_count,
+            Some(metrics.for_aggregation_job_writer()),
+            task_aggregation_counters,
+        );
         Ok(aggregation_job_writer
             .put_and_write(vdaf.as_ref(), tx, aggregation_job, report_aggregations)
             .await?)

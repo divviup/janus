@@ -16,6 +16,7 @@ use janus_aggregator_core::{
         models::{
             AggregationJob, AggregationJobDatastoreId, AggregationJobState,
             ReportAggregationMetadata, ReportAggregationMetadataState, UnaggregatedReport,
+            UnwrittenAggregationJob,
         },
         task_counters::TaskAggregationCounter,
     },
@@ -52,10 +53,7 @@ use tokio_util::task::TaskTracker;
 use tracing::{debug, error, info};
 
 use crate::{
-    aggregator::{
-        aggregation_job_writer::{AggregationJobWriter, InitialWrite},
-        batch_creator::BatchCreator,
-    },
+    aggregator::{aggregation_job_writer::AggregationJobWriter, batch_creator::BatchCreator},
     binary_utils::Stopper,
     metrics::AGGREGATION_JOB_SIZE_HISTOGRAM_BOUNDARIES,
 };
@@ -555,7 +553,7 @@ impl AggregationJobCreator {
                     // allowed size range as possible for each batch before considering using
                     // reports from the next batch.
                     let mut aggregation_job_writer =
-                        AggregationJobWriter::<SEED_SIZE, _, _, InitialWrite, _>::new(
+                        AggregationJobWriter::<_, TimeInterval, _, _>::new(
                             Arc::clone(&task),
                             batch_aggregation_shard_count,
                             None,
@@ -750,7 +748,7 @@ impl AggregationJobCreator {
                     // Generate aggregation jobs and report aggregations.
                     for (aggregation_param, report_ids_and_times) in result_map {
                         let mut aggregation_job_writer =
-                            AggregationJobWriter::<SEED_SIZE, _, _, InitialWrite, _>::new(
+                            AggregationJobWriter::<_, TimeInterval, _, _>::new(
                                 Arc::clone(&task),
                                 batch_aggregation_shard_count,
                                 None,
@@ -758,8 +756,6 @@ impl AggregationJobCreator {
                             );
                         for agg_job_reports in report_ids_and_times.chunks(max_aggregation_job_size)
                         {
-                            use janus_aggregator_core::datastore::models::UnwrittenAggregationJob;
-
                             if agg_job_reports.len() < this.min_aggregation_job_size {
                                 continue;
                             }
