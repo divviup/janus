@@ -99,9 +99,9 @@ impl From<AggregatorMetrics> for AggregateInitMetrics {
 pub async fn compute_helper_aggregate_init<const SEED_SIZE: usize, B, A>(
     clock: &dyn Clock,
     hpke_keypairs: Arc<HpkeKeypairCache>,
-    vdaf: Arc<A>,
+    vdaf: &A,
     metrics: AggregateInitMetrics,
-    task: Arc<AggregatorTask>,
+    task: &AggregatorTask,
     aggregation_job: &AggregationJob<SEED_SIZE, B, A>,
     report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
 ) -> Result<Vec<WritableReportAggregation<SEED_SIZE, A>>, Error>
@@ -125,15 +125,19 @@ where
     let producer_task = tokio::task::spawn_blocking({
         let parent_span = Span::current();
         let hpke_keypairs = Arc::clone(&hpke_keypairs);
-        let vdaf = Arc::clone(&vdaf);
-        let task = Arc::clone(&task);
+        let vdaf = vdaf.clone();
+        let task_id = *task.id();
+        let time_precision = *task.time_precision();
+        let deactivate_at = task.deactivate_at();
+        let task_start = task.task_start();
+        let task_end = task.task_end();
         let metrics = metrics.clone();
         let aggregation_parameter = aggregation_job.aggregation_parameter().clone();
 
         move || {
             let span =
                 info_span!(parent: &parent_span, "compute_helper_aggregate_init threadpool task");
-            let ctx = vdaf_application_context(task.id());
+            let ctx = vdaf_application_context(&task_id);
 
             report_aggregations
                 .into_par_iter()
@@ -169,7 +173,7 @@ where
 
                     let plaintext = hpke_keypair.and_then(|hpke_keypair| {
                         let input_share_aad = InputShareAad::new(
-                            *task.id(),
+                            task_id,
                             task_configuration.clone(),
                             verify_init.report_share().metadata().clone(),
                             verify_init.report_share().public_share().to_vec(),
@@ -177,7 +181,7 @@ where
                         .get_encoded()
                         .map_err(|err| {
                             debug!(
-                                task_id = %task.id(),
+                                task_id = %task_id,
                                 report_id = ?verify_init.report_share().metadata().id(),
                                 ?err,
                                 "Couldn't encode input share AAD"
@@ -212,7 +216,7 @@ where
                         })
                         .map_err(|error| {
                             debug!(
-                                task_id = %task.id(),
+                                task_id = %task_id,
                                 report_id = ?verify_init.report_share().metadata().id(),
                                 ?error,
                                 "Couldn't decrypt helper's report share"
@@ -228,7 +232,7 @@ where
                         let plaintext_input_share = PlaintextInputShare::get_decoded(&plaintext)
                             .map_err(|error| {
                                 debug!(
-                                    task_id = %task.id(),
+                                    task_id = %task_id,
                                     report_id = ?verify_init.report_share().metadata().id(),
                                     ?error, "Couldn't decode helper's plaintext input share",
                                 );
@@ -246,7 +250,7 @@ where
                             verify_init.report_share().metadata().public_extensions(),
                         ) {
                             debug!(
-                                task_id = %task.id(),
+                                task_id = %task_id,
                                 report_id = ?verify_init.report_share().metadata().id(),
                                 "Received report share with unsorted public extensions",
                             );
@@ -266,7 +270,7 @@ where
                         {
                             if !extension.extension_type().is_supported() {
                                 debug!(
-                                    task_id = %task.id(),
+                                    task_id = %task_id,
                                     report_id = ?verify_init.report_share().metadata().id(),
                                     unrecognized_extension_type = ?extension.extension_type(),
                                     "Received report share with unrecognized extension type",
@@ -281,7 +285,7 @@ where
                                 .is_some()
                             {
                                 debug!(
-                                    task_id = %task.id(),
+                                    task_id = %task_id,
                                     report_id = ?verify_init.report_share().metadata().id(),
                                     "Received report share with duplicate extensions",
                                 );
@@ -299,7 +303,7 @@ where
                                 .unwrap_or(false);
                             if !valid_taskbind_extension_present {
                                 debug!(
-                                    task_id = %task.id(),
+                                    task_id = %task_id,
                                     report_id = ?verify_init.report_share().metadata().id(),
                                     "Taskprov task received report with missing or malformed \
                                     taskbind extension",
@@ -316,7 +320,7 @@ where
                         } else if extensions.contains_key(&ExtensionType::Taskbind) {
                             // taskprov not enabled, but the taskbind extension is present.
                             debug!(
-                                task_id = %task.id(),
+                                task_id = %task_id,
                                 report_id = ?verify_init.report_share().metadata().id(),
                                 "Non-taskprov task received report with unexpected taskbind \
                                 extension",
@@ -338,7 +342,7 @@ where
                         )
                         .map_err(|error| {
                             debug!(
-                                task_id = %task.id(),
+                                task_id = %task_id,
                                 report_id = ?verify_init.report_share().metadata().id(),
                                 ?error, "Couldn't decode helper's input share",
                             );
@@ -355,7 +359,7 @@ where
                     )
                     .map_err(|error| {
                         debug!(
-                            task_id = %task.id(),
+                            task_id = %task_id,
                             report_id = ?verify_init.report_share().metadata().id(),
                             ?error, "Couldn't decode public share",
                         );
@@ -372,7 +376,7 @@ where
                         .report_share()
                         .metadata()
                         .time()
-                        .as_date_time(*task.time_precision())
+                        .as_date_time(time_precision)
                     {
                         let clock_skew = report_time_dt.signed_duration_since(now);
                         let skew_seconds = clock_skew.num_seconds();
@@ -396,7 +400,7 @@ where
                             .report_share()
                             .metadata()
                             .time()
-                            .is_after(&report_deadline.to_time(task.time_precision()))
+                            .is_after(&report_deadline.to_time(&time_precision))
                         {
                             return Err(ReportError::ReportTooEarly);
                         }
@@ -405,7 +409,7 @@ where
 
                     // Reject reports before the task has started. (§4.6.2.4 step 3 [dap-16])
                     let shares = shares.and_then(|shares| {
-                        if let Some(task_start) = task.task_start() {
+                        if let Some(task_start) = task_start {
                             if verify_init
                                 .report_share()
                                 .metadata()
@@ -421,7 +425,7 @@ where
                     // Reject reports after the task has expired, which is inclusive
                     // of the task_end time. (§4.6.2.4 step 4 [dap-16])
                     let shares = shares.and_then(|shares| {
-                        if let Some(task_end) = task.task_end() {
+                        if let Some(task_end) = task_end {
                             if verify_init.report_share().metadata().time().ge(&task_end) {
                                 return Err(ReportError::TaskExpired);
                             }
@@ -433,7 +437,7 @@ where
                     // (not part of the task's TaskConfiguration/AAD) and is compared against
                     // the aggregator's current clock, not the report timestamp.
                     let shares = shares.and_then(|shares| {
-                        if let Some(deactivate_at) = task.deactivate_at() {
+                        if let Some(deactivate_at) = deactivate_at {
                             if now >= deactivate_at {
                                 return Err(ReportError::TaskExpired);
                             }
@@ -460,7 +464,7 @@ where
                             .and_then(|continuation| continuation.evaluate(&ctx, &vdaf))
                             .map_err(|error| {
                                 handle_ping_pong_error(
-                                    task.id(),
+                                    &task_id,
                                     Role::Helper,
                                     verify_init.report_share().metadata().id(),
                                     error,

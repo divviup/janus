@@ -418,9 +418,7 @@ async fn taskprov_aggregate_init() {
             && aggregation_jobs[0]
                 .partial_batch_identifier()
                 .eq(&batch_id_1)
-            && aggregation_jobs[0]
-                .state()
-                .eq(&AggregationJobState::AwaitingRequest)
+            && aggregation_jobs[0].state().awaiting_request()
     );
     assert!(
         aggregation_jobs[1].task_id().eq(&test.task_id)
@@ -428,9 +426,7 @@ async fn taskprov_aggregate_init() {
             && aggregation_jobs[1]
                 .partial_batch_identifier()
                 .eq(&batch_id_2)
-            && aggregation_jobs[1]
-                .state()
-                .eq(&AggregationJobState::AwaitingRequest)
+            && aggregation_jobs[1].state().awaiting_request()
     );
     let got_task = got_task.unwrap();
     assert_eq!(
@@ -593,9 +589,7 @@ async fn taskprov_aggregate_init_missing_extension() {
         aggregation_jobs[0].task_id().eq(&test.task_id)
             && aggregation_jobs[0].id().eq(&aggregation_job_id)
             && aggregation_jobs[0].partial_batch_identifier().eq(&batch_id)
-            && aggregation_jobs[0]
-                .state()
-                .eq(&AggregationJobState::Finished)
+            && aggregation_jobs[0].state().finished()
     );
     assert_eq!(
         test.task
@@ -690,9 +684,7 @@ async fn taskprov_aggregate_init_malformed_extension() {
         aggregation_jobs[0].task_id().eq(&test.task_id)
             && aggregation_jobs[0].id().eq(&aggregation_job_id)
             && aggregation_jobs[0].partial_batch_identifier().eq(&batch_id)
-            && aggregation_jobs[0]
-                .state()
-                .eq(&AggregationJobState::Finished)
+            && aggregation_jobs[0].state().finished()
     );
     assert_eq!(
         test.task

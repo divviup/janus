@@ -767,7 +767,7 @@ async fn aggregate_init_sync() {
             if aggregation_job.task_id().eq(task.id())
                 && aggregation_job.id().eq(&aggregation_job_id)
                 && aggregation_job.partial_batch_identifier().eq(&())
-                && aggregation_job.state().eq(&AggregationJobState::Finished)
+                && aggregation_job.state().finished()
             {
                 saw_new_aggregation_job = true;
             }
@@ -908,7 +908,7 @@ async fn aggregate_init_async() {
         assert_eq!(aggregation_jobs[0].task_id(), task.id());
         assert_eq!(aggregation_jobs[0].id(), &aggregation_job_id);
         assert_eq!(aggregation_jobs[0].partial_batch_identifier(), &());
-        assert_eq!(aggregation_jobs[0].state(), &AggregationJobState::Active);
+        assert!(aggregation_jobs[0].state().active());
 
         assert_eq!(report_aggregations.len(), 2);
 

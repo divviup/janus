@@ -4,7 +4,6 @@ use std::{
     cmp::{Ordering, min},
     collections::{BinaryHeap, HashMap, HashSet, VecDeque, binary_heap::PeekMut, hash_map},
     ops::RangeInclusive,
-    sync::Arc,
 };
 
 use futures::future::try_join_all;
@@ -36,13 +35,12 @@ use crate::aggregator::aggregation_job_writer::AggregationJobWriter;
 ///
 /// If time bucketing is enabled, reports will be separated by timestamp into different sets of
 /// outstanding reports.
-pub struct BatchCreator<'a, const SEED_SIZE: usize, A>
+pub struct BatchCreator<const SEED_SIZE: usize, A>
 where
     A: AsyncAggregator<SEED_SIZE>,
 {
     properties: Properties,
-    aggregation_job_writer: &'a mut AggregationJobWriter<
-        'a,
+    aggregation_job_writer: AggregationJobWriter<
         SEED_SIZE,
         LeaderSelected,
         A,
@@ -66,7 +64,7 @@ struct Properties {
     aggregation_job_size_histogram: Histogram<u64>,
 }
 
-impl<'a, const SEED_SIZE: usize, A> BatchCreator<'a, SEED_SIZE, A>
+impl<const SEED_SIZE: usize, A> BatchCreator<SEED_SIZE, A>
 where
     A: AsyncAggregator<SEED_SIZE, AggregationParam = ()>,
     A::VerifyState: Encode,
@@ -77,8 +75,7 @@ where
         task_id: TaskId,
         task_min_batch_size: usize,
         task_batch_time_window_size: Option<Duration>,
-        aggregation_job_writer: &'a mut AggregationJobWriter<
-            'a,
+        aggregation_job_writer: AggregationJobWriter<
             SEED_SIZE,
             LeaderSelected,
             A,
@@ -154,7 +151,7 @@ where
 
         Self::process_batches(
             &self.properties,
-            self.aggregation_job_writer,
+            &mut self.aggregation_job_writer,
             &mut self.report_ids_to_scrub,
             &mut self.new_batches,
             &time_bucket_start_opt,
@@ -177,7 +174,6 @@ where
     fn process_batches(
         properties: &Properties,
         aggregation_job_writer: &mut AggregationJobWriter<
-            '_,
             SEED_SIZE,
             LeaderSelected,
             A,
@@ -323,7 +319,6 @@ where
         aggregation_job_size: usize,
         unaggregated_reports: &mut VecDeque<UnaggregatedReport>,
         aggregation_job_writer: &mut AggregationJobWriter<
-            '_,
             SEED_SIZE,
             LeaderSelected,
             A,
@@ -377,7 +372,7 @@ where
 
     /// Finish creating aggregation jobs with the remaining reports where possible. Marks remaining
     /// unused reports as unaggregated.
-    pub async fn finish(mut self, tx: &Transaction<'_>, vdaf: Arc<A>) -> Result<(), Error> {
+    pub async fn finish(mut self, tx: &Transaction<'_>, vdaf: &A) -> Result<usize, Error> {
         let mut unaggregated_report_ids = Vec::new();
 
         // Create additional aggregation jobs with the remaining reports where possible. These will
@@ -387,7 +382,7 @@ where
         for (time_bucket_start, mut bucket) in self.buckets.into_iter() {
             Self::process_batches(
                 &self.properties,
-                self.aggregation_job_writer,
+                &mut self.aggregation_job_writer,
                 &mut self.report_ids_to_scrub,
                 &mut self.new_batches,
                 &time_bucket_start,
@@ -402,7 +397,7 @@ where
             );
         }
 
-        self.aggregation_job_writer.write(vdaf.as_ref(), tx).await?;
+        let written_jobs = self.aggregation_job_writer.write(vdaf, tx).await?;
 
         // Report scrubbing must wait until after report aggregations have been created,
         // because they have a write-after-read antidependency on the report shares.
@@ -431,7 +426,7 @@ where
                         .mark_report_unaggregated(&self.properties.task_id, report_id))
             ),
         )?;
-        Ok(())
+        Ok(written_jobs)
     }
 }
 

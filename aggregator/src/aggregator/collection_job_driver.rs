@@ -369,20 +369,13 @@ impl CollectionJobDriver {
         };
 
         let aggregate_share_request =
-            async |method: Method,
-                   uri: Option<Url>,
-                   route: &'static str,
-                   body: Option<RequestBody>| {
+            async |method: Method, uri: Url, route: &'static str, body: Option<RequestBody>| {
                 let http_response = send_request_to_helper(
                     &self.http_client,
                     self.backoff
                         .with_max_delay(lease.remaining_lease_duration(&clock.now(), 0)),
                     method,
-                    uri.ok_or_else(|| {
-                        Error::InvalidConfiguration(
-                            "task is not leader and has no aggregate share URI",
-                        )
-                    })?,
+                    uri,
                     route,
                     body,
                     // The only way a task wouldn't have an aggregator auth token in it is in the

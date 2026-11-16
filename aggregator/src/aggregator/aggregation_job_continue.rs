@@ -1,6 +1,6 @@
 //! Implements portions of aggregation job continuation for the Helper.
 
-use std::{panic, sync::Arc};
+use std::panic;
 
 use assert_matches::assert_matches;
 use janus_aggregator_core::{
@@ -58,10 +58,10 @@ impl AggregateContinueMetrics {
 ///
 /// Panics if a provided report aggregation is in a state other than `HelperContinueProcessing`.
 pub async fn compute_helper_aggregate_continue<const SEED_SIZE: usize, B, A>(
-    vdaf: Arc<A>,
+    vdaf: &A,
     metrics: AggregateContinueMetrics,
-    task: Arc<AggregatorTask>,
-    aggregation_job: Arc<AggregationJob<SEED_SIZE, B, A>>,
+    task: &AggregatorTask,
+    aggregation_job: &AggregationJob<SEED_SIZE, B, A>,
     report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
 ) -> Vec<WritableReportAggregation<SEED_SIZE, A>>
 where
@@ -78,13 +78,13 @@ where
     let producer_task = tokio::task::spawn_blocking({
         let parent_span = Span::current();
         let metrics = metrics.clone();
-        let task = Arc::clone(&task);
-        let vdaf = Arc::clone(&vdaf);
-        let aggregation_job = Arc::clone(&aggregation_job);
+        let task_id = *task.id();
+        let vdaf = vdaf.clone();
+        let aggregation_parameter = aggregation_job.aggregation_parameter().clone();
 
         move || {
             let span = info_span!(parent: &parent_span, "step_aggregation_job threadpool task");
-            let ctx = vdaf_application_context(task.id());
+            let ctx = vdaf_application_context(&task_id);
 
             report_aggregations
                 .into_par_iter()
@@ -107,12 +107,12 @@ where
                                 // Continue with the incoming message.
                                 vdaf.helper_continued(
                                     &ctx,
-                                    aggregation_job.aggregation_parameter(),
+                                    &aggregation_parameter,
                                     verify_state.clone(),
                                     verify_continue.message(),
                                 )
                                 .and_then(|continuation| {
-                                    Ok(match continuation.evaluate(&ctx, vdaf.as_ref())? {
+                                    Ok(match continuation.evaluate(&ctx, &vdaf)? {
                                         // Helper did not finish. Store the new state, respond to
                                         // the leader with the message, and await the next message
                                         // from the Leader to advance verification.
@@ -151,7 +151,7 @@ where
                             })
                             .map_err(|error| {
                                 handle_ping_pong_error(
-                                    task.id(),
+                                    &task_id,
                                     Role::Leader,
                                     verify_continue.report_id(),
                                     error,
@@ -908,7 +908,7 @@ mod tests {
                         .unwrap()
                         .unwrap();
 
-                    assert_eq!(*aggregation_job.state(), AggregationJobState::Deleted);
+                    assert!(aggregation_job.state().deleted());
 
                     Ok(())
                 })

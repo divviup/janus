@@ -182,8 +182,12 @@ pub struct AggregatorMetrics {
 }
 
 impl AggregatorMetrics {
-    fn for_aggregation_job_writer(&self) -> AggregationJobWriterMetrics {
+    fn for_aggregation_job_writer(
+        &self,
+        vdaf_instance: VdafInstance,
+    ) -> AggregationJobWriterMetrics {
         AggregationJobWriterMetrics {
+            vdaf_instance,
             report_aggregation_success_counter: self.report_aggregation_success_counter.clone(),
             aggregate_step_failure_counter: self.aggregate_step_failure_counter.clone(),
             aggregated_report_share_dimension_histogram: self
@@ -1144,7 +1148,7 @@ impl TaskAggregator {
                 datastore,
                 hpke_keypairs,
                 metrics,
-                Arc::clone(&self.task),
+                self.task.as_ref(),
                 batch_aggregation_shard_count,
                 task_counter_shard_count,
                 aggregation_job_id,
@@ -1168,7 +1172,7 @@ impl TaskAggregator {
             .handle_aggregate_continue(
                 datastore,
                 metrics,
-                Arc::clone(&self.task),
+                self.task.as_ref(),
                 batch_aggregation_shard_count,
                 task_counter_shard_count,
                 aggregation_job_id,
@@ -1546,7 +1550,7 @@ impl VdafOps {
         datastore: Arc<Datastore>,
         hpke_keypairs: Arc<HpkeKeypairCache>,
         metrics: &AggregatorMetrics,
-        task: Arc<AggregatorTask>,
+        task: &AggregatorTask,
         batch_aggregation_shard_count: u64,
         task_counter_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
@@ -1563,7 +1567,7 @@ impl VdafOps {
                     >(
                         datastore,
                         hpke_keypairs,
-                        Arc::clone(vdaf),
+                        vdaf.as_ref(),
                         metrics,
                         task,
                         batch_aggregation_shard_count,
@@ -1584,7 +1588,7 @@ impl VdafOps {
                     >(
                         datastore,
                         hpke_keypairs,
-                        Arc::clone(vdaf),
+                        vdaf.as_ref(),
                         metrics,
                         task,
                         batch_aggregation_shard_count,
@@ -1608,7 +1612,7 @@ impl VdafOps {
         &self,
         datastore: Arc<Datastore>,
         metrics: &AggregatorMetrics,
-        task: Arc<AggregatorTask>,
+        task: &AggregatorTask,
         batch_aggregation_shard_count: u64,
         task_counter_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
@@ -1624,7 +1628,7 @@ impl VdafOps {
                         VdafType,
                     >(
                         datastore,
-                        Arc::clone(vdaf),
+                        vdaf.as_ref(),
                         metrics,
                         task,
                         batch_aggregation_shard_count,
@@ -1644,7 +1648,7 @@ impl VdafOps {
                         VdafType,
                     >(
                         datastore,
-                        Arc::clone(vdaf),
+                        vdaf.as_ref(),
                         metrics,
                         task,
                         batch_aggregation_shard_count,
@@ -2099,9 +2103,9 @@ impl VdafOps {
     async fn handle_aggregate_init_generic<const SEED_SIZE: usize, B, A>(
         datastore: Arc<Datastore>,
         hpke_keypairs: Arc<HpkeKeypairCache>,
-        vdaf: Arc<A>,
+        vdaf: &A,
         metrics: &AggregatorMetrics,
-        task: Arc<AggregatorTask>,
+        task: &AggregatorTask,
         batch_aggregation_shard_count: u64,
         task_counter_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
@@ -2141,9 +2145,9 @@ impl VdafOps {
     async fn handle_aggregate_init_inner<const SEED_SIZE: usize, B, A>(
         datastore: Arc<Datastore>,
         hpke_keypairs: Arc<HpkeKeypairCache>,
-        vdaf: Arc<A>,
+        vdaf: &A,
         metrics: &AggregatorMetrics,
-        task: Arc<AggregatorTask>,
+        task: &AggregatorTask,
         batch_aggregation_shard_count: u64,
         task_counter_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
@@ -2275,9 +2279,9 @@ impl VdafOps {
     async fn handle_aggregate_init_generic_sync<const SEED_SIZE: usize, B, A>(
         datastore: Arc<Datastore>,
         hpke_keypairs: Arc<HpkeKeypairCache>,
-        vdaf: Arc<A>,
+        vdaf: &A,
         metrics: &AggregatorMetrics,
-        task: Arc<AggregatorTask>,
+        task: &AggregatorTask,
         batch_aggregation_shard_count: u64,
         task_counter_shard_count: u64,
         request_hash: [u8; 32],
@@ -2292,9 +2296,9 @@ impl VdafOps {
         let report_aggregations = compute_helper_aggregate_init(
             datastore.clock(),
             hpke_keypairs,
-            Arc::clone(&vdaf),
+            vdaf,
             metrics.clone().into(),
-            Arc::clone(&task),
+            task,
             &aggregation_job,
             report_aggregations,
         )
@@ -2320,9 +2324,9 @@ impl VdafOps {
     // All report aggregations must be in the HelperInitProcessing state.
     async fn handle_aggregate_init_generic_async<const SEED_SIZE: usize, B, A>(
         datastore: Arc<Datastore>,
-        vdaf: Arc<A>,
+        vdaf: &A,
         metrics: &AggregatorMetrics,
-        task: Arc<AggregatorTask>,
+        task: &AggregatorTask,
         batch_aggregation_shard_count: u64,
         task_counter_shard_count: u64,
         request_hash: [u8; 32],
@@ -2356,9 +2360,9 @@ impl VdafOps {
 
     async fn handle_aggregate_init_generic_write<const SEED_SIZE: usize, B, A>(
         datastore: Arc<Datastore>,
-        vdaf: Arc<A>,
+        vdaf: &A,
         metrics: &AggregatorMetrics,
-        task: Arc<AggregatorTask>,
+        task: &AggregatorTask,
         batch_aggregation_shard_count: u64,
         task_counter_shard_count: u64,
         request_hash: [u8; 32],
@@ -2373,8 +2377,9 @@ impl VdafOps {
         let verify_resps = datastore
             .run_tx("aggregate_init_aggregator_write", |tx| {
                 let vdaf = vdaf.clone();
-                let task = Arc::clone(&task);
-                let aggregation_job_writer_metrics = metrics.for_aggregation_job_writer();
+                let task_id = *task.id();
+                let aggregation_job_writer_metrics =
+                    metrics.for_aggregation_job_writer(task.vdaf().clone());
                 let aggregation_job = aggregation_job.clone();
                 let report_aggregations = report_aggregations.clone();
                 let task_aggregation_counters = task_aggregation_counters.clone();
@@ -2384,7 +2389,7 @@ impl VdafOps {
                     // the same response as last time.
                     if let Some(existing_aggregation_job) = tx
                         .get_aggregation_job_by_last_request_hash::<SEED_SIZE, B, A>(
-                            task.id(),
+                            &task_id,
                             request_hash,
                         )
                         .await?
@@ -2392,7 +2397,7 @@ impl VdafOps {
                         if existing_aggregation_job.state().deleted() {
                             return Err(datastore::Error::User(
                                 Error::DeletedAggregationJob(
-                                    *task.id(),
+                                    task_id,
                                     todo!("wire up real agg job id here"),
                                 )
                                 .into(),
@@ -2402,9 +2407,9 @@ impl VdafOps {
                         // This is a repeated request. Send the verification responses we computed last time.
                         return Ok(tx
                             .get_report_aggregations_for_aggregation_job(
-                                vdaf.as_ref(),
+                                &vdaf,
                                 &Role::Helper,
-                                task.id(),
+                                &task_id,
                                 existing_aggregation_job.datastore_id(),
                             )
                             .await?
@@ -2415,39 +2420,37 @@ impl VdafOps {
 
                     // Write report shares, and ensure this isn't a repeated report aggregation.
                     let report_aggregations =
-                        try_join_all(report_aggregations.into_iter().map(|ra| {
-                            let task = Arc::clone(&task);
-
-                            async move {
-                                let ra = match tx
-                                    .put_scrubbed_report(
-                                        task.id(),
-                                        ra.report_aggregation().report_id(),
-                                        ra.report_aggregation().time(),
-                                    )
-                                    .await
-                                {
-                                    Ok(()) => ra,
-                                    Err(datastore::Error::MutationTargetAlreadyExists) => {
-                                        ra.with_failure(ReportError::ReportReplayed)
-                                    }
-                                    Err(err) => return Err(err),
-                                };
-                                Ok(ra)
-                            }
+                        try_join_all(report_aggregations.into_iter().map(|ra| async move {
+                            let ra = match tx
+                                .put_scrubbed_report(
+                                    &task_id,
+                                    ra.report_aggregation().report_id(),
+                                    ra.report_aggregation().time(),
+                                )
+                                .await
+                            {
+                                Ok(()) => ra,
+                                Err(datastore::Error::MutationTargetAlreadyExists) => {
+                                    ra.with_failure(ReportError::ReportReplayed)
+                                }
+                                Err(err) => return Err(err),
+                            };
+                            Ok(ra)
                         }))
                         .await?;
 
                     // Write aggregation job, report aggregations, and batch aggregations.
-                    let mut aggregation_job_writer = AggregationJobWriter::new(
-                        task,
+                    Ok(AggregationJobWriter::put_and_write(
+                        task_id,
                         batch_aggregation_shard_count,
+                        &vdaf,
+                        tx,
+                        aggregation_job,
+                        report_aggregations,
                         Some(aggregation_job_writer_metrics),
                         task_aggregation_counters,
-                    );
-                    Ok(aggregation_job_writer
-                        .put_and_write(vdaf.as_ref(), tx, aggregation_job, report_aggregations)
-                        .await?)
+                    )
+                    .await?)
                 })
             })
             .await?;
@@ -2468,9 +2471,9 @@ impl VdafOps {
         A: AsyncAggregator<SEED_SIZE>,
     >(
         datastore: Arc<Datastore>,
-        vdaf: Arc<A>,
+        vdaf: &A,
         metrics: &AggregatorMetrics,
-        task: Arc<AggregatorTask>,
+        task: &AggregatorTask,
         batch_aggregation_shard_count: u64,
         task_counter_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
@@ -2485,14 +2488,13 @@ impl VdafOps {
         }
         let task_aggregation_counters = TaskAggregationCounter::default();
 
-        let req = Arc::new(req);
         let response = datastore
             .run_tx("aggregate_continue", |tx| {
-                let vdaf = Arc::clone(&vdaf);
+                let vdaf = vdaf.clone();
                 let metrics = metrics.clone();
-                let task = Arc::clone(&task);
+                let task = task.clone();
                 let aggregation_job_id = *aggregation_job_id;
-                let req = Arc::clone(&req);
+                let req = req.clone();
                 let task_aggregation_counters = task_aggregation_counters.clone();
 
                 Box::pin(async move {
@@ -2511,7 +2513,7 @@ impl VdafOps {
                         })?;
                     let report_aggregations = tx
                         .get_report_aggregations_for_aggregation_job(
-                            vdaf.as_ref(),
+                            &vdaf,
                             &Role::Helper,
                             task.id(),
                             aggregation_job.datastore_id(),
@@ -2519,7 +2521,7 @@ impl VdafOps {
                         .await?;
 
                     // Deleted aggregation jobs cannot be stepped
-                    if matches!(aggregation_job.state(), AggregationJobState::Deleted { .. }) {
+                    if aggregation_job.state().deleted() {
                         return Err(datastore::Error::User(
                             Error::DeletedAggregationJob(*task.id(), aggregation_job_id).into(),
                         ));
@@ -2689,8 +2691,8 @@ impl VdafOps {
                         Some(AggregationMode::Synchronous) => {
                             Self::handle_aggregate_continue_generic_sync(
                                 tx,
-                                task,
-                                vdaf,
+                                &task,
+                                &vdaf,
                                 batch_aggregation_shard_count,
                                 &metrics,
                                 task_aggregation_counters,
@@ -2704,8 +2706,8 @@ impl VdafOps {
                         Some(AggregationMode::Asynchronous) => {
                             Self::handle_aggregate_continue_generic_async(
                                 tx,
-                                task,
-                                vdaf,
+                                &task,
+                                &vdaf,
                                 batch_aggregation_shard_count,
                                 &metrics,
                                 task_aggregation_counters,
@@ -2740,8 +2742,8 @@ impl VdafOps {
         A: AsyncAggregator<SEED_SIZE>,
     >(
         tx: &Transaction<'_>,
-        task: Arc<AggregatorTask>,
-        vdaf: Arc<A>,
+        task: &AggregatorTask,
+        vdaf: &A,
         batch_aggregation_shard_count: u64,
         metrics: &AggregatorMetrics,
         task_aggregation_counters: TaskAggregationCounter,
@@ -2754,13 +2756,13 @@ impl VdafOps {
         let aggregation_job = Arc::new(aggregation_job);
         report_aggregations_to_write.extend(
             compute_helper_aggregate_continue(
-                Arc::clone(&vdaf),
+                vdaf,
                 AggregateContinueMetrics::new(
                     metrics.aggregate_step_failure_counter.clone(),
                     &task_aggregation_counters,
                 ),
-                Arc::clone(&task),
-                Arc::clone(&aggregation_job),
+                task,
+                &aggregation_job,
                 report_aggregations,
             )
             .await,
@@ -2790,8 +2792,8 @@ impl VdafOps {
         A: AsyncAggregator<SEED_SIZE>,
     >(
         tx: &Transaction<'_>,
-        task: Arc<AggregatorTask>,
-        vdaf: Arc<A>,
+        task: &AggregatorTask,
+        vdaf: &A,
         batch_aggregation_shard_count: u64,
         metrics: &AggregatorMetrics,
         task_aggregation_counters: TaskAggregationCounter,
@@ -2829,8 +2831,8 @@ impl VdafOps {
         A: AsyncAggregator<SEED_SIZE>,
     >(
         tx: &Transaction<'_>,
-        task: Arc<AggregatorTask>,
-        vdaf: Arc<A>,
+        task: &AggregatorTask,
+        vdaf: &A,
         batch_aggregation_shard_count: u64,
         metrics: &AggregatorMetrics,
         task_aggregation_counters: TaskAggregationCounter,
@@ -2842,15 +2844,17 @@ impl VdafOps {
 
         // Write accumulated aggregation values back to the datastore; this will mark any reports
         // that can't be aggregated because the batch is collected with error BatchCollected.
-        let mut aggregation_job_writer = AggregationJobWriter::new(
-            task,
+        Ok(AggregationJobWriter::put_and_write(
+            *task.id(),
             batch_aggregation_shard_count,
-            Some(metrics.for_aggregation_job_writer()),
+            vdaf,
+            tx,
+            aggregation_job,
+            report_aggregations,
+            Some(metrics.for_aggregation_job_writer(task.vdaf().clone())),
             task_aggregation_counters,
-        );
-        Ok(aggregation_job_writer
-            .put_and_write(vdaf.as_ref(), tx, aggregation_job, report_aggregations)
-            .await?)
+        )
+        .await?)
     }
 
     /// Handle requests to the helper to get an aggregation job.

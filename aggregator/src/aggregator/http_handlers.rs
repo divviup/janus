@@ -379,6 +379,7 @@ impl IntoResponse for EmptyBody {
     }
 }
 
+pub(crate) static AGGREGATION_JOB_CREATION_ROUTE: &str = "/tasks/{task_id}/aggregation_jobs";
 pub(crate) static AGGREGATION_JOB_ROUTE: &str =
     "/tasks/{task_id}/aggregation_jobs/{aggregation_job_id}";
 pub(crate) static AGGREGATE_SHARE_CREATION_ROUTE: &str = "/tasks/{task_id}/aggregate_shares";
