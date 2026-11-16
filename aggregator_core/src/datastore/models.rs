@@ -845,12 +845,24 @@ impl AggregationJobState {
         )
     }
 
+    pub fn active(&self) -> bool {
+        matches!(self, Self::Active { .. })
+    }
+
+    pub fn awaiting_request(&self) -> bool {
+        matches!(self, Self::AwaitingRequest { .. })
+    }
+
     pub fn deleted(&self) -> bool {
         matches!(self, Self::Deleted { .. })
     }
 
     pub fn abandoned(&self) -> bool {
         matches!(self, Self::Abandoned { .. })
+    }
+
+    pub fn finished(&self) -> bool {
+        matches!(self, Self::Finished { .. })
     }
 }
 
@@ -1359,6 +1371,22 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> ReportAggregationSta
             ReportAggregationState::Finished => "Finished",
             ReportAggregationState::Failed { .. } => "Failed",
         }
+    }
+
+    pub fn leader_init(&self) -> bool {
+        matches!(self, Self::LeaderInit { .. })
+    }
+
+    pub fn leader_continue(&self) -> bool {
+        matches!(self, Self::LeaderContinue { .. })
+    }
+
+    pub fn helper_init_processing(&self) -> bool {
+        matches!(self, Self::HelperInitProcessing { .. })
+    }
+
+    pub fn helper_continue_processing(&self) -> bool {
+        matches!(self, Self::HelperContinueProcessing { .. })
     }
 
     /// Returns the encoded values for the various messages which might be included in a
