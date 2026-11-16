@@ -1347,8 +1347,9 @@ where
                             // This can happen while handling a response to AggregationJobInitReq or
                             // AggregationJobContinueReq.
                             (_, VerifyStepResult::Reject(err)) => {
-                                // TODO(#236): is it correct to just record the transition error
-                                // that the helper reports?
+                                // TODO(#236): We record the error but not that it was the helper
+                                // that encountered it, so after the fact we can't tell which
+                                // aggregator rejected the report.
                                 info!(
                                     report_id = %stepped_aggregation.report_aggregation.report_id(),
                                     helper_error = ?err,
