@@ -11,7 +11,6 @@ workflows:
         - 'docker/bake-action@v7.5.0'
         - 'docker/setup-buildx-action@v4.4.1'
         - 'dtolnay/rust-toolchain@master'
-        - 'dtolnay/rust-toolchain@nightly'
         - 'embarkstudios/cargo-deny-action@v2.1.1'
         - 'swatinem/rust-cache@v2.9.3'
         - 'taiki-e/install-action@cargo-sort'
@@ -22,10 +21,9 @@ workflows:
         - 'actions/cache@v6.1.0'
         - 'actions/checkout@v7.0.1'
         - 'dtolnay/rust-toolchain@master'
-        - 'dtolnay/rust-toolchain@stable'
     '.github/workflows/publish-crates.yml':
         - 'actions/checkout@v7.0.1'
-        - 'dtolnay/rust-toolchain@stable'
+        - 'dtolnay/rust-toolchain@master'
         - 'rust-lang/crates-io-auth-action@v1.0.6'
     '.github/workflows/push-docker-images-release.yml':
         - 'actions/checkout@v7.0.1'
@@ -36,10 +34,10 @@ workflows:
     '.github/workflows/unused-dependencies.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/github-script@v9.0.0'
-        - 'dtolnay/rust-toolchain@nightly'
+        - 'dtolnay/rust-toolchain@master'
         - 'taiki-e/install-action@cargo-udeps'
     '.github/workflows/yank-crates.yml':
-        - 'dtolnay/rust-toolchain@stable'
+        - 'dtolnay/rust-toolchain@master'
         - 'rust-lang/crates-io-auth-action@v1.0.6'
 dependencies:
     'actions/cache@v6.1.0':
@@ -89,17 +87,7 @@ dependencies:
         repo_id: 288485773
     'dtolnay/rust-toolchain@master':
         ref: 'master'
-        commit: 'sha1-683b588c487a69d01f6c6ddf40f036ff682cc2c8'
-        owner_id: 1940490
-        repo_id: 260749683
-    'dtolnay/rust-toolchain@nightly':
-        ref: 'nightly'
-        commit: 'sha1-2c76c034f9e32a5d6e2c104dc4df23a22476db04'
-        owner_id: 1940490
-        repo_id: 260749683
-    'dtolnay/rust-toolchain@stable':
-        ref: 'stable'
-        commit: 'sha1-b725eda525362e7cf34af9a7243cac1e3f01a7ec'
+        commit: 'sha1-df2a88e9fe4098bad09cb42c3dec7187f15861fc'
         owner_id: 1940490
         repo_id: 260749683
     'embarkstudios/cargo-deny-action@v2.1.1':

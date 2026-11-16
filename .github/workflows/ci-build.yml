@@ -137,8 +137,9 @@ jobs:
       background: true
       uses: taiki-e/install-action@cargo-sort
     - name: Install Nightly rustfmt
-      uses: dtolnay/rust-toolchain@nightly
+      uses: dtolnay/rust-toolchain@master
       with:
+        toolchain: nightly
         components: rustfmt
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@master
