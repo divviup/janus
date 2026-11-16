@@ -37,6 +37,8 @@ pub enum Error {
     Base64Decode(#[from] base64::DecodeError),
     #[error(transparent)]
     Message(#[from] janus_messages::Error),
+    #[error("wrong role {0}")]
+    WrongRole(Role),
 }
 
 /// Identifiers for batch modes used by a task, along with batch mode-specific configuration.
@@ -568,59 +570,48 @@ impl AggregatorTask {
         format!("tasks/{}", self.id())
     }
 
-    /// Returns the URI at which the helper resource for the specified aggregation job ID can be
-    /// accessed.
+    /// Returns the URI for aggregation job creation in the helper.
+    pub fn aggregation_job_creation_uri(&self) -> Result<Url, Error> {
+        if *self.aggregator_parameters.role() == Role::Leader {
+            Ok(url_for_join(self.peer_aggregator_endpoint())?
+                .join(&format!("{}/aggregation_jobs", self.tasks_path()))?)
+        } else {
+            Err(Error::WrongRole(*self.aggregator_parameters.role()))
+        }
+    }
+
+    /// Returns the URI for an aggregation job in the helper.
     pub fn aggregation_job_uri(
         &self,
         aggregation_job_id: &AggregationJobId,
         step: Option<AggregationJobStep>,
-    ) -> Result<Option<Url>, Error> {
-        if matches!(
-            self.aggregator_parameters,
-            AggregatorTaskParameters::Leader { .. }
-        ) {
-            let mut uri = url_for_join(self.peer_aggregator_endpoint())?.join(&format!(
-                "{}/aggregation_jobs/{aggregation_job_id}",
-                self.tasks_path()
-            ))?;
+    ) -> Result<Url, Error> {
+        let mut uri = self.aggregation_job_creation_uri()?;
 
-            if let Some(step) = step {
-                uri.query_pairs_mut()
-                    .append_pair("step", &u16::from(step).to_string());
-            }
-
-            Ok(Some(uri))
-        } else {
-            Ok(None)
+        if let Some(step) = step {
+            uri.query_pairs_mut()
+                .append_pair("step", &u16::from(step).to_string());
         }
+
+        Ok(uri.join(&format!("{aggregation_job_id}"))?)
     }
 
     /// Returns the URI for aggregate share creation in the helper.
-    pub fn aggregate_share_creation_uri(&self) -> Result<Option<Url>, Error> {
-        if matches!(
-            self.aggregator_parameters,
-            AggregatorTaskParameters::Leader { .. }
-        ) {
-            Ok(Some(url_for_join(self.peer_aggregator_endpoint())?.join(
-                &format!("{}/aggregate_shares", self.tasks_path()),
-            )?))
+    pub fn aggregate_share_creation_uri(&self) -> Result<Url, Error> {
+        if *self.aggregator_parameters.role() == Role::Leader {
+            Ok(url_for_join(self.peer_aggregator_endpoint())?
+                .join(&format!("{}/aggregate_shares", self.tasks_path()))?)
         } else {
-            Ok(None)
+            Err(Error::WrongRole(*self.aggregator_parameters.role()))
         }
     }
 
     /// Returns the URI for an aggregate share in the helper.
-    pub fn aggregate_share_uri(
-        &self,
-        aggregate_share_id: &AggregateShareId,
-    ) -> Result<Option<Url>, Error> {
-        Ok(match self.aggregate_share_creation_uri()? {
-            Some(uri) => Some(
-                uri.ensure_trailing_slash()
-                    .join(&format!("{aggregate_share_id}"))?,
-            ),
-            None => None,
-        })
+    pub fn aggregate_share_uri(&self, aggregate_share_id: &AggregateShareId) -> Result<Url, Error> {
+        Ok(self
+            .aggregate_share_creation_uri()?
+            .ensure_trailing_slash()
+            .join(&format!("{aggregate_share_id}"))?)
     }
 
     /// Returns the aggregator [`AuthenticationToken`] for this task, used by the leader to
