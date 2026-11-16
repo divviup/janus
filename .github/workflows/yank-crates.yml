@@ -23,6 +23,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: stable
     - name: "Yank"
       run: cargo yank --version ${{ inputs.version }} ${{ matrix.crate }}

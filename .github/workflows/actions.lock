@@ -20,10 +20,9 @@ workflows:
         - 'actions/cache@v6.1.0'
         - 'actions/checkout@v7.0.1'
         - 'dtolnay/rust-toolchain@master'
-        - 'dtolnay/rust-toolchain@stable'
     '.github/workflows/publish-crates.yml':
         - 'actions/checkout@v7.0.1'
-        - 'dtolnay/rust-toolchain@stable'
+        - 'dtolnay/rust-toolchain@master'
         - 'rust-lang/crates-io-auth-action@v1.0.6'
     '.github/workflows/push-docker-images-release.yml':
         - 'actions/checkout@v7.0.1'
@@ -34,10 +33,10 @@ workflows:
     '.github/workflows/unused-dependencies.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/github-script@v9.0.0'
-        - 'dtolnay/rust-toolchain@nightly'
-        - 'taiki-e/install-action@cargo-udeps'
+        - 'dtolnay/rust-toolchain@master'
+        - 'taiki-e/install-action@v2.90.5'
     '.github/workflows/yank-crates.yml':
-        - 'dtolnay/rust-toolchain@stable'
+        - 'dtolnay/rust-toolchain@master'
 dependencies:
     'actions/cache@v6.1.0':
         ref: 'v6.1.0'
@@ -89,16 +88,6 @@ dependencies:
         commit: 'sha1-683b588c487a69d01f6c6ddf40f036ff682cc2c8'
         owner_id: 1940490
         repo_id: 260749683
-    'dtolnay/rust-toolchain@nightly':
-        ref: 'nightly'
-        commit: 'sha1-2c76c034f9e32a5d6e2c104dc4df23a22476db04'
-        owner_id: 1940490
-        repo_id: 260749683
-    'dtolnay/rust-toolchain@stable':
-        ref: 'stable'
-        commit: 'sha1-b725eda525362e7cf34af9a7243cac1e3f01a7ec'
-        owner_id: 1940490
-        repo_id: 260749683
     'embarkstudios/cargo-deny-action@v2.1.1':
         ref: 'v2.1.1'
         commit: 'sha1-3c6349835b2b7b196a839186cb8b78e02f7b5f25'
@@ -119,8 +108,8 @@ dependencies:
         commit: 'sha1-d1527c8f67ef9af357290475d4af4b0fab8f12e0'
         owner_id: 580492
         repo_id: 298565987
-    'taiki-e/install-action@cargo-udeps':
-        ref: 'cargo-udeps'
-        commit: 'sha1-28bfb437c78d9b7ea8650351357e3eb8c0be2672'
+    'taiki-e/install-action@v2.90.5':
+        ref: 'v2.90.5'
+        commit: 'sha1-ab49d3c64680143e184118bed66a46419fc15519'
         owner_id: 43724913
         repo_id: 442947557
