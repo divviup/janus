@@ -19,7 +19,9 @@ jobs:
         with:
           toolchain: nightly
       - name: Install cargo-udeps
-        uses: taiki-e/install-action@cargo-udeps
+        uses: taiki-e/install-action@v2.90.5
+        with:
+          tool: cargo-udeps
       - name: Run cargo-udeps, all features
         shell: bash   # Set this explicitly for -o pipefail behavior
         run: cargo +nightly udeps --all-features | tee log_all_features.txt
