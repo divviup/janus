@@ -714,9 +714,9 @@ impl<V: vdaf::Collector> Collector<V> {
                     return Err(Error::Http(Box::new(status.into())));
                 }
 
-                let (_, collection_job_id) = response
+                let collection_job_id = response
                     .headers()
-                    .ids_from_collection_job_location()?
+                    .collection_job_id_from_location(self.task_id)?
                     .ok_or_else(|| Error::MissingLocationHeader)?;
                 collection_job_id
             }
