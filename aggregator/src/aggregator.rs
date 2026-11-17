@@ -419,6 +419,7 @@ impl Aggregator {
             .await
     }
 
+    // TODO(timg): rename these methods to discuss aggregation jobs
     async fn handle_aggregate_init(
         &self,
         task_id: &TaskId,
@@ -427,6 +428,8 @@ impl Aggregator {
         auth_token: Option<AuthenticationToken>,
         taskprov_task_config: Option<&TaskConfiguration>,
     ) -> Result<Option<AggregationJobResp>, Error> {
+        // TODO(timg): somewhere in here, helper needs to choose aggregation job ID and respond with
+        // it
         let task_aggregator = match self.task_aggregators.get(task_id).await? {
             Some(task_aggregator) => {
                 if task_aggregator.task.role() != &Role::Helper {
@@ -2913,7 +2916,11 @@ impl VdafOps {
 
                     // Return a value based on the report aggregations.
                     Ok(match aggregation_job.state() {
-                        AggregationJobState::Active { .. } => None,
+                        // TODO(timg): wait we shouldn't allow LeaderInit here because this handler
+                        // is helper only
+                        AggregationJobState::LeaderInit | AggregationJobState::Active { .. } => {
+                            None
+                        }
 
                         AggregationJobState::AwaitingRequest { .. }
                         | AggregationJobState::Finished { .. } => Some(AggregationJobResp {
@@ -2929,7 +2936,7 @@ impl VdafOps {
                             return Err(datastore::Error::User(
                                 Error::AbandonedAggregationJob(
                                     *task.id(),
-                                    *helper_aggregation_job_id,
+                                    helper_aggregation_job_id.copied(),
                                 )
                                 .into(),
                             ));

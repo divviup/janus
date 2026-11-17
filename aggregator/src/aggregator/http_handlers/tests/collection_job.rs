@@ -11,7 +11,7 @@ use rand::random;
 use serde_json::json;
 
 use crate::aggregator::{
-    collection_job_tests::{CollectionJobTestCase, ids_from_collection_job_response},
+    collection_job_tests::{CollectionJobTestCase, collection_job_id_from_response},
     http_handlers::test_util::{decode_response_body, take_problem_details},
 };
 
@@ -313,7 +313,7 @@ async fn collection_job_get_request_unauthenticated_collection_jobs() {
     let response = test_case.post_collection_job(&request).await;
 
     assert_eq!(response.status(), StatusCode::OK);
-    let (_, collection_job_id) = ids_from_collection_job_response(&response);
+    let collection_job_id = collection_job_id_from_response(*test_case.task.id(), &response);
 
     // Incorrect authentication token.
     let response = test_case
@@ -355,7 +355,7 @@ async fn collection_job_success_time_interval() {
     // the completed collection job without needing a further GET.
     let mut response = test_case.post_collection_job(&request).await;
     assert_eq!(response.status(), StatusCode::OK);
-    let (_, new_collection_job_id) = ids_from_collection_job_response(&response);
+    let new_collection_job_id = collection_job_id_from_response(*test_case.task.id(), &response);
     assert_eq!(collection_job_id, new_collection_job_id);
     assert_eq!(
         response.headers().get("content-type").unwrap(),

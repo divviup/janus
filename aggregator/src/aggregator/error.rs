@@ -76,7 +76,7 @@ pub enum Error {
     UnrecognizedAggregationJob(TaskId, AggregationJobId),
     /// An attempt was made to act on a known but abandoned aggregation job.
     #[error("task {0}: abandoned aggregation job: {1}")]
-    AbandonedAggregationJob(TaskId, AggregationJobId),
+    AbandonedAggregationJob(TaskId, Option<AggregationJobId>),
     /// An attempt was made to act on a known but deleted aggregation job.
     #[error("task {0}: deleted aggregation job: {1}")]
     DeletedAggregationJob(TaskId, AggregationJobId),

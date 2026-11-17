@@ -390,7 +390,7 @@ impl CollectionJobDriver {
 
                 let aggregate_share_id = if let Some((task_id, aggregate_share_id)) = http_response
                     .headers()
-                    .ids_from_aggregate_share_location()
+                    .aggregate_share_id_from_location()
                     .map_err(|e| Error::InvalidHelperResponse {
                         resource_type: "aggregate share",
                         description: e.into(),

@@ -321,8 +321,7 @@ impl CollectionJobTestCase {
 
         let mut response = self.post_collection_job(&request).await;
         assert_eq!(response.status(), StatusCode::OK);
-        let (task_id, collection_job_id) = ids_from_collection_job_response(&response);
-        assert_eq!(&task_id, self.task.id());
+        let collection_job_id = collection_job_id_from_response(*self.task.id(), &response);
 
         let got_collection_job = self
             .test
@@ -512,9 +511,8 @@ impl CollectionJobTestCase {
         for request in requests.clone() {
             let mut response = self.post_collection_job(&request).await;
             assert_eq!(response.status(), StatusCode::OK);
-            let (task_id, collection_job_id) = ids_from_collection_job_response(&response);
+            let collection_job_id = collection_job_id_from_response(*self.task.id(), &response);
             collection_job_ids.push(collection_job_id);
-            assert_eq!(self.task.id(), &task_id);
             assert!(take_response_body(&mut response).await.is_empty());
 
             let mut response = self.get_collection_job(&collection_job_id).await;
@@ -764,15 +762,14 @@ impl CollectionJobTestCaseBuilder {
     }
 }
 
-/// Parse task ID and collection job ID out of response location header.
-///
-/// Panics if header is missing from response or value is malformed.
-pub(super) fn ids_from_collection_job_response(
+/// Parse collection job ID out of response location header.
+pub(super) fn collection_job_id_from_response(
+    task_id: TaskId,
     response: &http::Response<Body>,
-) -> (TaskId, CollectionJobId) {
+) -> CollectionJobId {
     response
         .headers()
-        .ids_from_collection_job_location()
+        .collection_job_id_from_location(task_id)
         .unwrap()
         .unwrap()
 }
@@ -820,7 +817,7 @@ async fn collection_job_success_leader_selected() {
     // the completed collection job without needing a further GET.
     let mut response = test_case.post_collection_job(&request).await;
     assert_eq!(response.status(), StatusCode::OK);
-    let (_, collection_job_id_again) = ids_from_collection_job_response(&response);
+    let collection_job_id_again = collection_job_id_from_response(*test_case.task.id(), &response);
     assert_eq!(collection_job_id, collection_job_id_again);
     assert_eq!(
         response.headers().get("content-type").unwrap(),
@@ -866,7 +863,8 @@ async fn collection_job_post_idempotence_time_interval() {
             ))
             .await;
         assert_eq!(response.status(), StatusCode::OK);
-        let (_, created_collection_job_id) = ids_from_collection_job_response(&response);
+        let created_collection_job_id =
+            collection_job_id_from_response(*test_case.task.id(), &response);
         if let Some(collection_job_id) = collection_job_id {
             assert_eq!(created_collection_job_id, collection_job_id);
         } else {
@@ -889,7 +887,7 @@ async fn collection_job_post_idempotence_time_interval() {
         ))
         .await;
     assert_eq!(response.status(), StatusCode::OK);
-    let (_, next_collection_job_id) = ids_from_collection_job_response(&response);
+    let next_collection_job_id = collection_job_id_from_response(*test_case.task.id(), &response);
     assert_ne!(collection_job_id.unwrap(), next_collection_job_id);
 
     // There should only be two collection jobs despite three successful POSTs
@@ -972,7 +970,8 @@ async fn collection_job_post_idempotence_leader_selected() {
             ))
             .await;
         assert_eq!(response.status(), StatusCode::OK);
-        let (_, created_collection_job_id) = ids_from_collection_job_response(&response);
+        let created_collection_job_id =
+            collection_job_id_from_response(*test_case.task.id(), &response);
         if let Some(collection_job_id) = collection_job_id {
             assert_eq!(created_collection_job_id, collection_job_id);
         } else {
@@ -1021,7 +1020,7 @@ async fn collection_job_post_idempotence_leader_selected() {
         ))
         .await;
     assert_eq!(response.status(), StatusCode::OK);
-    let (_, next_collection_job_id) = ids_from_collection_job_response(&response);
+    let next_collection_job_id = collection_job_id_from_response(*test_case.task.id(), &response);
     assert_ne!(next_collection_job_id, collection_job_id.unwrap());
 
     // There should only be two collection jobs despite three successful POSTs
@@ -1102,7 +1101,7 @@ async fn collection_job_post_idempotence_leader_selected_no_extra_reports() {
     // Create and then fetch the first collection job.
     let response = test_case.post_collection_job(&request_1).await;
     assert_eq!(response.status(), StatusCode::OK);
-    let (_, collection_job_id_1) = ids_from_collection_job_response(&response);
+    let collection_job_id_1 = collection_job_id_from_response(*test_case.task.id(), &response);
     let response = test_case.get_collection_job(&collection_job_id_1).await;
     assert_eq!(response.status(), StatusCode::OK);
 
@@ -1114,18 +1113,20 @@ async fn collection_job_post_idempotence_leader_selected_no_extra_reports() {
     // Create and then fetch the second collection job. There are now no outstanding batches left.
     let response = test_case.post_collection_job(&request_2).await;
     assert_eq!(response.status(), StatusCode::OK);
-    let (_, collection_job_id_2) = ids_from_collection_job_response(&response);
+    let collection_job_id_2 = collection_job_id_from_response(*test_case.task.id(), &response);
     let response = test_case.get_collection_job(&collection_job_id_2).await;
     assert_eq!(response.status(), StatusCode::OK);
 
     // Re-send the collection job creation requests to confirm they are still idempotent.
     let response = test_case.post_collection_job(&request_1).await;
     assert_eq!(response.status(), StatusCode::OK);
-    let (_, collection_job_id_1_again) = ids_from_collection_job_response(&response);
+    let collection_job_id_1_again =
+        collection_job_id_from_response(*test_case.task.id(), &response);
     assert_eq!(collection_job_id_1, collection_job_id_1_again);
     let response = test_case.post_collection_job(&request_2).await;
     assert_eq!(response.status(), StatusCode::OK);
-    let (_, collection_job_id_2_again) = ids_from_collection_job_response(&response);
+    let collection_job_id_2_again =
+        collection_job_id_from_response(*test_case.task.id(), &response);
     assert_eq!(collection_job_id_2, collection_job_id_2_again);
 }
 

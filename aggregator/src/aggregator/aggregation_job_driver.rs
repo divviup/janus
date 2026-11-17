@@ -32,9 +32,9 @@ use janus_core::{
     vdaf_dispatch,
 };
 use janus_messages::{
-    AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp, MediaType,
-    ReportError, ReportMetadata, ReportShare, Role, VerifyContinue, VerifyInit, VerifyResp,
-    VerifyStepResult,
+    AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq, AggregationJobResp,
+    MediaType, ReportError, ReportMetadata, ReportShare, Role, VerifyContinue, VerifyInit,
+    VerifyResp, VerifyStepResult,
     batch_mode::{LeaderSelected, TimeInterval},
     extensions_are_strictly_increasing,
 };
@@ -184,7 +184,7 @@ where
         &self,
         datastore: Arc<Datastore>,
         hpke_keypairs: Arc<HpkeKeypairCache>,
-        lease: Arc<Lease<AcquiredAggregationJob>>,
+        lease: Lease<AcquiredAggregationJob>,
     ) -> Result<(), Error> {
         match lease.leased().batch_mode() {
             task::BatchMode::TimeInterval => {
@@ -227,12 +227,12 @@ where
         datastore: Arc<Datastore>,
         hpke_keypairs: Arc<HpkeKeypairCache>,
         vdaf: A,
-        lease: Arc<Lease<AcquiredAggregationJob>>,
+        lease: Lease<AcquiredAggregationJob>,
     ) -> Result<(), Error> {
         // Read all information about the aggregation job.
         let (task, aggregation_job, report_aggregations) = datastore
             .run_tx("step_aggregation_job_generic", |tx| {
-                let (lease, vdaf) = (Arc::clone(&lease), vdaf.clone());
+                let (lease, vdaf) = (lease, vdaf).clone();
                 Box::pin(async move {
                     let task_future = tx.get_aggregator_task(lease.leased().task_id());
                     let aggregation_job_future = tx.get_aggregation_job::<SEED_SIZE, B, A>(
@@ -312,7 +312,7 @@ where
         &self,
         datastore: Arc<Datastore>,
         vdaf: A,
-        lease: Arc<Lease<AcquiredAggregationJob>>,
+        lease: Lease<AcquiredAggregationJob>,
         task: AggregatorTask,
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
@@ -343,9 +343,16 @@ where
                 }
             }
         }
-        match (saw_init, saw_continue, saw_poll, saw_finished) {
+
+        match (
+            saw_init,
+            saw_continue,
+            saw_poll,
+            saw_finished,
+            aggregation_job.dap_id(),
+        ) {
             // Only saw report aggregations in state "init" (or failed).
-            (true, false, false, false) => {
+            (true, false, false, false, None) => {
                 self.step_aggregation_job_leader_init(
                     datastore,
                     vdaf,
@@ -358,12 +365,13 @@ where
             }
 
             // Only saw report aggregations in state "continue" (or failed).
-            (false, true, false, false) => {
+            (false, true, false, false, Some(dap_id)) => {
                 self.step_aggregation_job_leader_continue(
                     datastore,
                     vdaf,
                     lease,
                     task,
+                    *dap_id,
                     aggregation_job,
                     report_aggregations,
                 )
@@ -371,12 +379,13 @@ where
             }
 
             // Only saw report aggregations in state "poll" (or failed).
-            (false, false, true, false) => {
+            (false, false, true, false, Some(dap_id)) => {
                 self.step_aggregation_job_leader_poll(
                     datastore,
                     vdaf,
                     lease,
                     task,
+                    *dap_id,
                     aggregation_job,
                     report_aggregations,
                 )
@@ -387,7 +396,8 @@ where
                 format!(
                     "unexpected combination of report aggregation states (saw_init = {saw_init}, \
                     saw_continue = {saw_continue}, saw_poll = {saw_poll},
-                    saw_finished = {saw_finished})",
+                    saw_finished = {saw_finished}, aggregation_job.dap_id = {:?})",
+                    aggregation_job.dap_id(),
                 )
                 .into(),
             )),
@@ -403,7 +413,7 @@ where
         &self,
         datastore: Arc<Datastore>,
         vdaf: A,
-        lease: Arc<Lease<AcquiredAggregationJob>>,
+        lease: Lease<AcquiredAggregationJob>,
         task: AggregatorTask,
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
@@ -667,6 +677,7 @@ where
                 .map(parse_retry_after)
                 .transpose()?;
             let body = http_response.body();
+            // TODO(timg) parse aggregation job ID here
             let resp = if !body.is_empty() {
                 check_content_type::<AggregationJobResp>(http_response.headers())
                     .map_err(|e| Error::BadContentType(e.into()))?;
@@ -713,8 +724,9 @@ where
         &self,
         datastore: Arc<Datastore>,
         vdaf: A,
-        lease: Arc<Lease<AcquiredAggregationJob>>,
+        lease: Lease<AcquiredAggregationJob>,
         task: AggregatorTask,
+        aggregation_job_dap_id: AggregationJobId,
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
     ) -> Result<(), Error> {
@@ -853,8 +865,7 @@ where
             &self.http_client,
             self.backoff.build(),
             Method::POST,
-            // TODO(timg): would prefer not to unwrap dap ID here
-            task.aggregation_job_uri(aggregation_job.dap_id().unwrap(), None)?,
+            task.aggregation_job_uri(&aggregation_job_dap_id, None)?,
             AGGREGATION_JOB_ROUTE,
             Some(RequestBody {
                 content_type: AggregationJobContinueReq::MEDIA_TYPE,
@@ -874,6 +885,7 @@ where
             .map(parse_retry_after)
             .transpose()?;
         let body = http_response.body();
+        // TODO(timg): need to check for a location header here so leader can figure out the job ID
         let resp = if !body.is_empty() {
             check_content_type::<AggregationJobResp>(http_response.headers())
                 .map_err(|e| Error::BadContentType(e.into()))?;
@@ -904,8 +916,9 @@ where
         &self,
         datastore: Arc<Datastore>,
         vdaf: A,
-        lease: Arc<Lease<AcquiredAggregationJob>>,
+        lease: Lease<AcquiredAggregationJob>,
         task: AggregatorTask,
+        aggregation_job_dap_id: AggregationJobId,
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
     ) -> Result<(), Error> {
@@ -954,11 +967,7 @@ where
             &self.http_client,
             self.backoff.build(),
             Method::GET,
-            task.aggregation_job_uri(
-                // TODO(timg): would prefer not to unwrap here
-                aggregation_job.dap_id().unwrap(),
-                Some(aggregation_job.step()),
-            )?,
+            task.aggregation_job_uri(&aggregation_job_dap_id, Some(aggregation_job.step()))?,
             AGGREGATION_JOB_ROUTE,
             None,
             // The only way a task wouldn't have an aggregator auth token in it is in the taskprov
@@ -975,6 +984,7 @@ where
             .map(parse_retry_after)
             .transpose()?;
         let body = http_response.body();
+        // TODO(timg): need to check for a location header here so leader can figure out the job ID
         let resp = if !body.is_empty() {
             check_content_type::<AggregationJobResp>(http_response.headers())
                 .map_err(|e| Error::BadContentType(e.into()))?;
@@ -1006,7 +1016,7 @@ where
         &self,
         datastore: Arc<Datastore>,
         vdaf: A,
-        lease: Arc<Lease<AcquiredAggregationJob>>,
+        lease: Lease<AcquiredAggregationJob>,
         task: AggregatorTask,
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         stepped_aggregations: Vec<SteppedAggregation<SEED_SIZE, A>>,
@@ -1053,7 +1063,7 @@ where
         &self,
         datastore: Arc<Datastore>,
         vdaf: A,
-        lease: Arc<Lease<AcquiredAggregationJob>>,
+        lease: Lease<AcquiredAggregationJob>,
         task: AggregatorTask,
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         stepped_aggregations: Vec<SteppedAggregation<SEED_SIZE, A>>,
@@ -1124,7 +1134,7 @@ where
                 let batch_aggregation_shard_count = self.batch_aggregation_shard_count;
                 let aggregation_job = aggregation_job.clone();
                 let report_aggregations_to_write = report_aggregations_to_write.clone();
-                let lease = Arc::clone(&lease);
+                let lease = lease.clone();
 
                 Box::pin(async move {
                     try_join!(
@@ -1163,7 +1173,7 @@ where
         &self,
         datastore: Arc<Datastore>,
         vdaf: A,
-        lease: Arc<Lease<AcquiredAggregationJob>>,
+        lease: Lease<AcquiredAggregationJob>,
         task: AggregatorTask,
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         stepped_aggregations: Vec<SteppedAggregation<SEED_SIZE, A>>,
@@ -1400,7 +1410,7 @@ where
                 let aggregation_job = aggregation_job.clone();
                 let report_aggregations_to_write = report_aggregations_to_write.clone();
                 let batch_aggregation_shard_count = self.batch_aggregation_shard_count;
-                let lease = Arc::clone(&lease);
+                let lease = lease.clone();
 
                 Box::pin(async move {
                     try_join!(
@@ -1440,7 +1450,7 @@ where
         datastore: Arc<Datastore>,
         hpke_keypairs: Arc<HpkeKeypairCache>,
         vdaf: A,
-        lease: Arc<Lease<AcquiredAggregationJob>>,
+        lease: Lease<AcquiredAggregationJob>,
         task: AggregatorTask,
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
@@ -1469,28 +1479,35 @@ where
             }
         }
 
-        match (saw_init, saw_continue, saw_finished) {
-            // Only saw report aggregations in state "init processing" (or failed).
-            (true, false, false) => {
+        match (
+            saw_init,
+            saw_continue,
+            saw_finished,
+            aggregation_job.dap_id(),
+        ) {
+            // Only saw report aggregations in states HelperInitProcessing or Failed.
+            (true, false, false, Some(dap_id)) => {
                 self.step_aggregation_job_helper_init(
                     datastore,
                     hpke_keypairs,
                     vdaf,
                     lease,
                     task,
+                    *dap_id,
                     aggregation_job,
                     report_aggregations,
                 )
                 .await
             }
 
-            // Only saw report aggregations in state "continue processing" (or failed).
-            (false, true, false) => {
+            // Only saw report aggregations in state HelperContinueProcessing or Failed.
+            (false, true, false, Some(dap_id)) => {
                 self.step_aggregation_job_helper_continue(
                     datastore,
                     vdaf,
                     lease,
                     task,
+                    *dap_id,
                     aggregation_job,
                     report_aggregations,
                 )
@@ -1500,7 +1517,9 @@ where
             _ => Err(Error::Internal(
                 format!(
                     "unexpected combination of report aggregation states (saw_init = {saw_init}, \
-                saw_continue = {saw_continue}, saw_finished = {saw_finished})",
+                    saw_continue = {saw_continue}, saw_finished = {saw_finished}, \
+                    aggregation_job.dap_id = {:?})",
+                    aggregation_job.dap_id(),
                 )
                 .into(),
             )),
@@ -1516,8 +1535,9 @@ where
         datastore: Arc<Datastore>,
         hpke_keypairs: Arc<HpkeKeypairCache>,
         vdaf: A,
-        lease: Arc<Lease<AcquiredAggregationJob>>,
+        lease: Lease<AcquiredAggregationJob>,
         task: AggregatorTask,
+        helper_aggregation_job_id: AggregationJobId,
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
     ) -> Result<(), Error> {
@@ -1530,10 +1550,6 @@ where
         let task_aggregation_counters = TaskAggregationCounter::default();
 
         // Compute the next aggregation step.
-        // TODO(timg): would rather not unwrap dap ID here. we know the job is in some state by
-        // virtue of code path.
-        // TODO(timg): more graceful state transitions?
-        let helper_aggregation_job_id = *aggregation_job.dap_id().unwrap();
         let aggregation_job = aggregation_job.with_state(AggregationJobState::AwaitingRequest {
             helper_aggregation_job_id,
         });
@@ -1566,7 +1582,7 @@ where
         datastore
             .run_tx("aggregate_init_driver_write", |tx| {
                 let vdaf = vdaf.clone();
-                let lease = Arc::clone(&lease);
+                let lease = lease.clone();
                 let task_id = *task.id();
                 let metrics = metrics.clone();
                 let task_aggregation_counters = task_aggregation_counters.clone();
@@ -1575,7 +1591,6 @@ where
                 let batch_aggregation_shard_count = self.batch_aggregation_shard_count;
 
                 Box::pin(async move {
-                    // Write aggregation job, report aggregations, and batch aggregations.
                     try_join!(
                         AggregationJobWriter::put_and_write(
                             task_id,
@@ -1588,8 +1603,7 @@ where
                             task_aggregation_counters,
                         ),
                         tx.release_aggregation_job(&lease, None),
-                    )?;
-                    Ok(())
+                    )
                 })
             })
             .await?;
@@ -1612,8 +1626,9 @@ where
         &self,
         datastore: Arc<Datastore>,
         vdaf: A,
-        lease: Arc<Lease<AcquiredAggregationJob>>,
+        lease: Lease<AcquiredAggregationJob>,
         task: AggregatorTask,
+        helper_aggregation_job_id: AggregationJobId,
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
     ) -> Result<(), Error> {
@@ -1626,8 +1641,6 @@ where
         let task_aggregation_counters = TaskAggregationCounter::default();
 
         // Compute the next aggregation step.
-        // TODO(timg): better way to obtain aggregation job ID + more graceful state transitions
-        let helper_aggregation_job_id = *aggregation_job.dap_id().unwrap();
         let aggregation_job = aggregation_job.with_state(AggregationJobState::AwaitingRequest {
             helper_aggregation_job_id,
         });
@@ -1656,7 +1669,7 @@ where
         datastore
             .run_tx("aggregate_continue_driver_write", |tx| {
                 let vdaf = vdaf.clone();
-                let lease = Arc::clone(&lease);
+                let lease = lease.clone();
                 let task_id = *task.id();
                 let metrics = metrics.clone();
                 let aggregation_job = aggregation_job.clone();
@@ -1696,8 +1709,9 @@ where
     async fn abandon_aggregation_job(
         &self,
         datastore: Arc<Datastore>,
-        lease: Arc<Lease<AcquiredAggregationJob>>,
+        lease: Lease<AcquiredAggregationJob>,
     ) -> Result<(), Error> {
+        self.job_cancel_counter.add(1, &[]);
         match lease.leased().batch_mode() {
             task::BatchMode::TimeInterval => {
                 vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
@@ -1730,13 +1744,12 @@ where
         &self,
         vdaf: A,
         datastore: Arc<Datastore>,
-        lease: Arc<Lease<AcquiredAggregationJob>>,
+        lease: Lease<AcquiredAggregationJob>,
     ) -> Result<(), Error> {
         let batch_aggregation_shard_count = self.batch_aggregation_shard_count;
         let (aggregation_job_uri, aggregator_auth_token) = datastore
             .run_tx("cancel_aggregation_job_generic", |tx| {
-                let vdaf = vdaf.clone();
-                let lease = Arc::clone(&lease);
+                let (vdaf, lease) = (vdaf, lease).clone();
 
                 Box::pin(async move {
                     // On abandoning an aggregation job, we update the aggregation job's state field
@@ -1765,8 +1778,7 @@ where
                             .into(),
                         )
                     })?;
-                    // TODO(timg): more graceful state transitions
-                    let helper_aggregation_job_id = *aggregation_job.dap_id().unwrap();
+                    let helper_aggregation_job_id = aggregation_job.dap_id().copied();
                     let aggregation_job =
                         aggregation_job.with_state(AggregationJobState::Abandoned {
                             helper_aggregation_job_id,
@@ -1871,7 +1883,7 @@ where
             let this = Arc::clone(&self);
             let datastore = Arc::clone(&datastore);
             let hpke_keypairs = Arc::clone(&hpke_keypairs);
-            let lease = Arc::new(lease);
+            let lease = lease.clone();
 
             Box::pin(async move {
                 let attempts = lease.lease_attempts();
@@ -1881,7 +1893,6 @@ where
                         max_attempts = %maximum_attempts_before_failure,
                         "Abandoning job due to too many failed attempts"
                     );
-                    this.job_cancel_counter.add(1, &[]);
                     return this.abandon_aggregation_job(datastore, lease).await;
                 }
 
@@ -1913,11 +1924,7 @@ where
                 };
 
                 match this
-                    .step_aggregation_job(
-                        Arc::clone(&datastore),
-                        Arc::clone(&hpke_keypairs),
-                        Arc::clone(&lease),
-                    )
+                    .step_aggregation_job(Arc::clone(&datastore), Arc::clone(&hpke_keypairs), lease)
                     .await
                 {
                     Ok(_) => Ok(()),
@@ -1939,7 +1946,6 @@ where
                                 ?error,
                                 "Abandoning job due to fatal error"
                             );
-                            this.job_cancel_counter.add(1, &[]);
                             if let Err(error) = this.abandon_aggregation_job(datastore, lease).await
                             {
                                 error!(error = ?error, "Failed to abandon job");

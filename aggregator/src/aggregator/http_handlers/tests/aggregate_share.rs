@@ -405,15 +405,13 @@ async fn aggregate_share_request_to_leader() {
     );
 }
 
-/// Parse task ID and collection job ID out of response location header.
-///
-/// Panics if header is missing from response or value is malformed.
-pub(super) fn ids_from_aggregate_share_response(
+pub(super) fn aggregate_share_id_from_response(
+    task_id: TaskId,
     response: &http::Response<Body>,
-) -> (TaskId, AggregateShareId) {
+) -> AggregateShareId {
     response
         .headers()
-        .ids_from_aggregate_share_location()
+        .aggregate_share_id_from_location(task_id)
         .unwrap()
         .unwrap()
 }
@@ -1025,14 +1023,12 @@ async fn aggregate_share_request_idempotence() {
     // First request with aggregate_share_id_1 should succeed
     let response = test_case.post_aggregate_share_request(&request).await;
     assert_eq!(response.status(), StatusCode::OK);
-    let (task_id, aggregate_share_id_1) = ids_from_aggregate_share_response(&response);
-    assert_eq!(&task_id, test_case.task.id());
+    let aggregate_share_id_1 = aggregate_share_id_from_response(*test_case.task.id(), &response);
 
     // Second request with same parameters should succeed because POST is idempotent
     let response = test_case.post_aggregate_share_request(&request).await;
     assert_eq!(response.status(), StatusCode::OK);
-    let (task_id, aggregate_share_id_2) = ids_from_aggregate_share_response(&response);
-    assert_eq!(&task_id, test_case.task.id());
+    let aggregate_share_id_2 = aggregate_share_id_from_response(*test_case.task.id(), &response);
     assert_eq!(aggregate_share_id_1, aggregate_share_id_2);
 }
 
@@ -1063,7 +1059,7 @@ async fn aggregate_share_request_get_poll_after_post() {
     // works.
     let response = test_case.post_aggregate_share_request(&request).await;
     assert_eq!(response.status(), StatusCode::OK);
-    let (_, aggregate_share_id) = ids_from_aggregate_share_response(&response);
+    let aggregate_share_id = aggregate_share_id_from_response(*test_case.task.id(), &response);
 
     // Try to GET the first ID again. It should be OK.
     let response = test_case.get_aggregate_share(&aggregate_share_id).await;
@@ -1115,7 +1111,7 @@ async fn aggregate_share_request_get_poll_after_post_leader_selected() {
     // POST binds the forwarded CollectionJobReq; poll (GET) reuses the stored copy.
     let response = test_case.post_aggregate_share_request(&request).await;
     assert_eq!(response.status(), StatusCode::OK);
-    let (_, aggregate_share_id) = ids_from_aggregate_share_response(&response);
+    let aggregate_share_id = aggregate_share_id_from_response(*test_case.task.id(), &response);
 
     let mut response = test_case.get_aggregate_share(&aggregate_share_id).await;
     assert_eq!(response.status(), StatusCode::OK);
@@ -1159,7 +1155,7 @@ async fn aggregate_share_request_narrower_selector_than_query() {
 
     let response = test_case.post_aggregate_share_request(&request).await;
     assert_eq!(response.status(), StatusCode::OK);
-    let (_, aggregate_share_id) = ids_from_aggregate_share_response(&response);
+    let aggregate_share_id = aggregate_share_id_from_response(*test_case.task.id(), &response);
 
     let mut response = test_case.get_aggregate_share(&aggregate_share_id).await;
     assert_eq!(response.status(), StatusCode::OK);
@@ -1316,13 +1312,13 @@ async fn aggregate_share_request_same_id_different_batch() {
         .post_aggregate_share_request(&request_for_batch(first_interval))
         .await;
     assert_eq!(response.status(), StatusCode::OK);
-    let (_, aggregate_share_id_1) = ids_from_aggregate_share_response(&response);
+    let aggregate_share_id_1 = aggregate_share_id_from_response(*test_case.task.id(), &response);
 
     let response = test_case
         .post_aggregate_share_request(&request_for_batch(second_interval))
         .await;
     assert_eq!(response.status(), StatusCode::OK);
-    let (_, aggregate_share_id_2) = ids_from_aggregate_share_response(&response);
+    let aggregate_share_id_2 = aggregate_share_id_from_response(*test_case.task.id(), &response);
 
     assert_ne!(aggregate_share_id_1, aggregate_share_id_2);
 }
@@ -1548,7 +1544,7 @@ async fn recreate_deleted_aggregate_share_time_interval() {
     let mut response = test_case.post_aggregate_share_request(&request).await;
     assert_eq!(response.status(), StatusCode::OK);
     decode_response_body::<AggregateShareMessage>(&mut response).await;
-    let (_, aggregate_share_id) = ids_from_aggregate_share_response(&response);
+    let aggregate_share_id = aggregate_share_id_from_response(*test_case.task.id(), &response);
 
     let mut response = test_case.delete_aggregate_share(&aggregate_share_id).await;
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
@@ -1616,7 +1612,7 @@ async fn recreate_deleted_aggregate_share_leader_selected() {
 
     let mut response = test_case.post_aggregate_share_request(&request).await;
     assert_eq!(response.status(), StatusCode::OK);
-    let (_, aggregate_share_id) = ids_from_aggregate_share_response(&response);
+    let aggregate_share_id = aggregate_share_id_from_response(*test_case.task.id(), &response);
     decode_response_body::<AggregateShareMessage>(&mut response).await;
 
     let mut response = test_case.delete_aggregate_share(&aggregate_share_id).await;
@@ -1765,7 +1761,7 @@ async fn recreate_expired_aggregate_share_time_interval() {
 
     let mut response = test_case.post_aggregate_share_request(&request).await;
     assert_eq!(response.status(), StatusCode::OK);
-    let (_, aggregate_share_id) = ids_from_aggregate_share_response(&response);
+    let aggregate_share_id = aggregate_share_id_from_response(*test_case.task.id(), &response);
     decode_response_body::<AggregateShareMessage>(&mut response).await;
 
     let mut response = test_case.get_aggregate_share(&aggregate_share_id).await;
@@ -1859,7 +1855,7 @@ async fn recreate_expired_aggregate_share_leader_selected() {
 
     let mut response = test_case.post_aggregate_share_request(&request).await;
     assert_eq!(response.status(), StatusCode::OK);
-    let (_, aggregate_share_id) = ids_from_aggregate_share_response(&response);
+    let aggregate_share_id = aggregate_share_id_from_response(*test_case.task.id(), &response);
     decode_response_body::<AggregateShareMessage>(&mut response).await;
 
     let mut response = test_case.get_aggregate_share(&aggregate_share_id).await;
