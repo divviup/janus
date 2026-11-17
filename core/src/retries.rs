@@ -6,7 +6,7 @@ use backon::{Backoff, BackoffBuilder, ExponentialBackoff, ExponentialBuilder, Re
 use bytes::Bytes;
 use futures::Future;
 use http::{HeaderMap, HeaderValue};
-use janus_messages::{AggregateShareId, CollectionJobId, TaskId};
+use janus_messages::{AggregateShareId, AggregationJobId, CollectionJobId, TaskId};
 use reqwest::StatusCode;
 use tracing::{debug, warn};
 
@@ -149,45 +149,63 @@ pub enum HeaderMapExtError {
     /// Error from `janus_messages` crate.
     #[error("{0}: {1}")]
     Messages(&'static str, janus_messages::Error),
+    /// Unexpected Task ID in the HTTP location header.
+    #[error("unexpected task ID {0} in HTTP location header")]
+    UnexpectedTaskId(TaskId),
 }
 
 /// Extension trait for [`HeaderMap`].
 pub trait HeaderMapExt {
-    /// Parse task and collection job ID from HTTP "Location" header.
+    /// Parse aggregation job ID from HTTP "Location" header and check the task ID.
     ///
     /// Returns `Ok(None)` if the header is absent, or an error if the header is present but
     /// malformed.
-    fn ids_from_collection_job_location(
+    fn aggregation_job_id_from_location(
         &self,
-    ) -> Result<Option<(TaskId, CollectionJobId)>, HeaderMapExtError> {
-        self.ids_from_job_location("collection_jobs")
+        task_id: TaskId,
+    ) -> Result<Option<AggregationJobId>, HeaderMapExtError> {
+        self.ids_from_job_location(task_id, "aggreation_jobs")
     }
 
-    /// Parse task and aggregate share ID from HTTP "Location" header.
+    /// Parse collection job ID from HTTP "Location" header and check the task ID.
     ///
     /// Returns `Ok(None)` if the header is absent, or an error if the header is present but
     /// malformed.
-    fn ids_from_aggregate_share_location(
+    fn collection_job_id_from_location(
         &self,
-    ) -> Result<Option<(TaskId, AggregateShareId)>, HeaderMapExtError> {
-        self.ids_from_job_location("aggregate_shares")
+        task_id: TaskId,
+    ) -> Result<Option<CollectionJobId>, HeaderMapExtError> {
+        self.ids_from_job_location(task_id, "collection_jobs")
     }
 
-    /// Parse task and job ID from HTTP "Location" header.
+    /// Parse aggregate share ID from HTTP "Location" header and check the task ID.
+    ///
+    /// Returns `Ok(None)` if the header is absent, or an error if the header is present but
+    /// malformed.
+    fn aggregate_share_id_from_location(
+        &self,
+        task_id: TaskId,
+    ) -> Result<Option<AggregateShareId>, HeaderMapExtError> {
+        self.ids_from_job_location(task_id, "aggregate_shares")
+    }
+
+    /// Parse job ID from HTTP "Location" header and check the task ID.
     ///
     /// Returns `Ok(None)` if the header is absent, or an error if the header is present but
     /// malformed.
     fn ids_from_job_location<JobId: FromStr<Err = janus_messages::Error>>(
         &self,
+        task_id: TaskId,
         middle_path_component: &'static str,
-    ) -> Result<Option<(TaskId, JobId)>, HeaderMapExtError>;
+    ) -> Result<Option<JobId>, HeaderMapExtError>;
 }
 
 impl HeaderMapExt for HeaderMap {
     fn ids_from_job_location<JobId: FromStr<Err = janus_messages::Error>>(
         &self,
+        task_id: TaskId,
         middle_path_component: &'static str,
-    ) -> Result<Option<(TaskId, JobId)>, HeaderMapExtError> {
+    ) -> Result<Option<JobId>, HeaderMapExtError> {
         let mut location_headers = self.get_all(http::header::LOCATION).iter();
         let location_header = match location_headers.next() {
             Some(l) => l,
@@ -226,8 +244,11 @@ impl HeaderMapExt for HeaderMap {
             ));
         }
 
-        let task_id = TaskId::from_str(next_component()?)
+        let parsed_task_id = TaskId::from_str(next_component()?)
             .map_err(|e| HeaderMapExtError::Messages("malformed task ID", e))?;
+        if parsed_task_id != task_id {
+            return Err(HeaderMapExtError::UnexpectedTaskId(parsed_task_id));
+        }
 
         if !next_component()?.eq("tasks") {
             return Err(HeaderMapExtError::MalformedLocationHeader(
@@ -236,7 +257,7 @@ impl HeaderMapExt for HeaderMap {
             ));
         }
 
-        Ok(Some((task_id, job_id)))
+        Ok(Some(job_id))
     }
 }
 
@@ -450,8 +471,9 @@ pub mod test_util {
 
 #[cfg(test)]
 mod tests {
-    use std::{assert_matches, str::FromStr, time::Duration};
+    use std::{str::FromStr, time::Duration};
 
+    use assert_matches::assert_matches;
     use backon::BackoffBuilder;
     use http::{HeaderMap, HeaderName, HeaderValue};
     use http_api_problem::PROBLEM_JSON_MEDIA_TYPE;
@@ -819,10 +841,10 @@ mod tests {
         // Valid location header
         assert_eq!(
             header_map(&[(http::header::LOCATION, COLLECTION_JOB_PATH)])
-                .ids_from_collection_job_location()
+                .collection_job_id_from_location(task_id)
                 .unwrap()
                 .unwrap(),
-            (task_id, collection_job_id),
+            collection_job_id,
         );
 
         // Valid location header with prefix
@@ -831,10 +853,20 @@ mod tests {
                 http::header::LOCATION,
                 "/some/path/prefix/tasks/ii_NZYRUHjMI9YCQMmD2ZJNUpLiVz1KHEg-ANpWWnG4/collection_jobs/_Ruk_njErWlidLK2YtFxPA",
             )])
-            .ids_from_collection_job_location()
+            .collection_job_id_from_location(task_id)
             .unwrap()
             .unwrap(),
-            (task_id, collection_job_id),
+            collection_job_id,
+        );
+
+        // Valid location header but mismatched task ID
+        assert_matches!(
+            header_map(&[(http::header::LOCATION, COLLECTION_JOB_PATH)])
+                .collection_job_id_from_location(TaskId::from_str("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap())
+                .unwrap_err(),
+            HeaderMapExtError::UnexpectedTaskId(error_task_id) => {
+                assert_eq!(task_id, error_task_id);
+            }
         );
 
         // Two valid location headers
@@ -843,15 +875,15 @@ mod tests {
                 (http::header::LOCATION, COLLECTION_JOB_PATH),
                 (http::header::LOCATION, COLLECTION_JOB_PATH),
             ])
-            .ids_from_collection_job_location()
+            .collection_job_id_from_location(task_id)
             .unwrap_err(),
-            HeaderMapExtError::MultipleLocationHeaders,
+            HeaderMapExtError::MultipleLocationHeaders
         );
 
         // No location header
         assert!(
             header_map(&[(http::header::RETRY_AFTER, COLLECTION_JOB_PATH)])
-                .ids_from_collection_job_location()
+                .collection_job_id_from_location(task_id)
                 .unwrap()
                 .is_none(),
         );
@@ -863,7 +895,7 @@ mod tests {
             "/_Ruk_njErWlidLK2YtFxPA",
         ] {
             header_map(&[(http::header::LOCATION, missing_component)])
-                .ids_from_collection_job_location()
+                .collection_job_id_from_location(task_id)
                 .expect_err(missing_component);
         }
 
@@ -873,7 +905,7 @@ mod tests {
                 http::header::LOCATION,
                 "/tasks/ii_NZYRUHjMI9YCQMmD2ZJNUpLiVz1KHEg-ANpWWnG4/collection_jobs/TooShort"
             )])
-            .ids_from_collection_job_location()
+            .collection_job_id_from_location(task_id)
             .unwrap_err(),
             HeaderMapExtError::Messages(..)
         );
@@ -884,7 +916,7 @@ mod tests {
                 http::header::LOCATION,
                 "/tasks/ii_NZYRUHjMI9YCQMmD2ZJNUpLiVz1KHEg-ANpWWnG4/malformed/_Ruk_njErWlidLK2YtFxPA"
             )])
-            .ids_from_collection_job_location()
+            .collection_job_id_from_location(task_id)
             .unwrap_err(),
             HeaderMapExtError::MalformedLocationHeader(..)
         );
@@ -895,7 +927,7 @@ mod tests {
                 http::header::LOCATION,
                 "/tasks/TooShort/collection_jobs/_Ruk_njErWlidLK2YtFxPA"
             )])
-            .ids_from_collection_job_location()
+            .collection_job_id_from_location(task_id)
             .unwrap_err(),
             HeaderMapExtError::Messages(..)
         );
@@ -906,7 +938,7 @@ mod tests {
                 http::header::LOCATION,
                 "/malformed/ii_NZYRUHjMI9YCQMmD2ZJNUpLiVz1KHEg-ANpWWnG4/collection_jobs/_Ruk_njErWlidLK2YtFxPA"
             )])
-            .ids_from_collection_job_location()
+            .collection_job_id_from_location(task_id)
             .unwrap_err(),
             HeaderMapExtError::MalformedLocationHeader(..)
         );
