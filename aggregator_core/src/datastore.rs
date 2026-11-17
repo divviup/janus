@@ -1820,7 +1820,7 @@ WHERE task_id = $1 AND UPPER(client_timestamp_interval) >= $2",
 WITH incomplete_jobs AS (
     SELECT aggregation_jobs.id FROM aggregation_jobs
     JOIN tasks ON tasks.id = aggregation_jobs.task_id
-    WHERE aggregation_jobs.state = 'ACTIVE'
+    WHERE aggregation_jobs.state IN ('LEADER_INIT', 'ACTIVE')
     AND aggregation_jobs.lease_expiry <= $2
     AND UPPER(aggregation_jobs.client_timestamp_interval) >=
         COALESCE(($3 - tasks.report_expiry_age) / tasks.time_precision, 0)

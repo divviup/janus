@@ -713,15 +713,25 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>>
 /// operational states for managing the lifecycle of aggregation jobs within Janus.
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum AggregationJobState {
-    /// Job has been scheduled and is ready for the aggregation job driver to drive.
+    /// Job has been scheduled and is ready for the aggregation job driver to initialize.
     ///
     /// Corresponds to the leader initialization phase in DAP (§4.5.3.1 [dap-20]). The aggregation
     /// job ID is not yet known by leaders in this state because the helper has not assigned it, but
     /// will always be set for the helper.
     ///
     /// This state can only be entered by the leader.
+    LeaderInit,
+    /// Job has been scheduled and is ready for the aggregation job driver to drive.
+    ///
+    /// Jobs in this state still need at least one round of preparation. The aggregation job ID has
+    /// been assigned by the helper and is known to this party.
+    ///
+    /// Corresponds to the leader continuation, helper initialization or helper continuation phases
+    /// in DAP (resp. §4.5.4.1, §4.5.3.2, §4.5.4.2 [dap-20]). The aggregation
+    ///
+    /// Both leaders and helpers can enter this state.
     Active {
-        helper_aggregation_job_id: Option<AggregationJobId>,
+        helper_aggregation_job_id: AggregationJobId,
     },
     /// Helper has completed processing one request and is waiting for the Leader's next request.
     ///
@@ -741,18 +751,25 @@ pub enum AggregationJobState {
     Finished {
         helper_aggregation_job_id: AggregationJobId,
     },
-    /// Job processing encountered an unrecoverable error and was explicitly abandoned. This is an
-    /// implementation-specific terminal state used for operational issues beyond DAP's
+    /// Job processing encountered an unrecoverable error and was explicitly abandoned.
+    ///
+    /// This is an implementation-specific terminal state used for operational issues beyond DAP's
     /// protocol-level error handling (e.g., excessive lease contention, resource exhaustion).
     /// Unlike Finished, this indicates the job did not complete the DAP aggregation lifecycle
     /// normally.
-    Abandoned {
-        helper_aggregation_job_id: AggregationJobId,
-    },
-    /// Job has been marked for deletion, either by garbage collection or by using the HTTP DELETE
-    /// endpoint, and should not be processed further. This is a terminal state used during cleanup.
     ///
-    /// Both leaders and helpers can enter this state.
+    /// The aggregation job ID is not known if the job was abandoned early enough in its lifecycle,
+    /// that is, if the leader abandoned it before the helper could choose a job ID.
+    ///
+    /// Leaders and helpers processing aggregation jobs asynchronusly can enter this state.
+    Abandoned {
+        helper_aggregation_job_id: Option<AggregationJobId>,
+    },
+    /// Job has been marked for deletion, by using the HTTP DELETE endpoint.
+    ///
+    /// The job should not be processed further. This is a terminal state used during cleanup.
+    ///
+    /// Only helpers can enter this state.
     Deleted {
         helper_aggregation_job_id: AggregationJobId,
     },
@@ -763,45 +780,43 @@ impl AggregationJobState {
         code: AggregationJobStateCode,
         helper_aggregation_job_id: Option<AggregationJobId>,
     ) -> Result<Self, Error> {
-        if code == AggregationJobStateCode::Active {
-            Ok(AggregationJobState::Active {
-                helper_aggregation_job_id,
-            })
-        } else if let Some(helper_aggregation_job_id) = helper_aggregation_job_id {
-            Ok(match code {
-                AggregationJobStateCode::AwaitingRequest => AggregationJobState::AwaitingRequest {
+        match (code, helper_aggregation_job_id) {
+            (AggregationJobStateCode::LeaderInit, None) => Ok(Self::LeaderInit),
+            (AggregationJobStateCode::Active, Some(helper_aggregation_job_id)) => {
+                Ok(Self::Active {
                     helper_aggregation_job_id,
-                },
-                AggregationJobStateCode::Finished => AggregationJobState::Finished {
+                })
+            }
+            (AggregationJobStateCode::AwaitingRequest, Some(helper_aggregation_job_id)) => {
+                Ok(Self::AwaitingRequest {
                     helper_aggregation_job_id,
-                },
-                AggregationJobStateCode::Abandoned => AggregationJobState::Abandoned {
+                })
+            }
+            (AggregationJobStateCode::Finished, Some(helper_aggregation_job_id)) => {
+                Ok(Self::Finished {
                     helper_aggregation_job_id,
-                },
-                AggregationJobStateCode::Deleted => AggregationJobState::Deleted {
+                })
+            }
+            (AggregationJobStateCode::Abandoned, helper_aggregation_job_id) => {
+                Ok(Self::Abandoned {
                     helper_aggregation_job_id,
-                },
-                code => panic!("unexpected state {code:?}"),
-            })
-        } else {
-            Err(Error::DbState(format!(
-                "state is {code:?} but helper_aggregation_job_id is NULL"
-            )))
-        }
-    }
-
-    /// Active job state for the leader.
-    ///
-    /// The helper aggregation job ID, which cannot yet be known, is `None`.
-    pub fn leader_active() -> Self {
-        Self::Active {
-            helper_aggregation_job_id: None,
+                })
+            }
+            (AggregationJobStateCode::Deleted, Some(helper_aggregation_job_id)) => {
+                Ok(Self::Deleted {
+                    helper_aggregation_job_id,
+                })
+            }
+            _ => Err(Error::DbState(format!(
+                "state is {code:?} but helper_aggregation_job_id is {helper_aggregation_job_id:?}"
+            ))),
         }
     }
 
     /// The [`AggregationJobStateCode`] corresponding to this state.
     pub(super) fn code(&self) -> AggregationJobStateCode {
         match self {
+            Self::LeaderInit => AggregationJobStateCode::LeaderInit,
             Self::Active { .. } => AggregationJobStateCode::Active,
             Self::AwaitingRequest { .. } => AggregationJobStateCode::AwaitingRequest,
             Self::Finished { .. } => AggregationJobStateCode::Finished,
@@ -813,19 +828,20 @@ impl AggregationJobState {
     /// The DAP aggregation job ID, if any, of this job.
     pub(super) fn aggregation_job_id(&self) -> Option<&AggregationJobId> {
         match self {
-            AggregationJobState::Active {
+            Self::LeaderInit => None,
+            Self::Abandoned {
                 helper_aggregation_job_id,
             } => helper_aggregation_job_id.as_ref(),
-            AggregationJobState::AwaitingRequest {
+            Self::Active {
                 helper_aggregation_job_id,
             }
-            | AggregationJobState::Finished {
+            | Self::AwaitingRequest {
                 helper_aggregation_job_id,
             }
-            | AggregationJobState::Abandoned {
+            | Self::Finished {
                 helper_aggregation_job_id,
             }
-            | AggregationJobState::Deleted {
+            | Self::Deleted {
                 helper_aggregation_job_id,
             } => Some(helper_aggregation_job_id),
         }
@@ -872,6 +888,8 @@ impl AggregationJobState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, FromSql, ToSql)]
 #[postgres(name = "aggregation_job_state")]
 pub(super) enum AggregationJobStateCode {
+    #[postgres(name = "LEADER_INIT")]
+    LeaderInit,
     #[postgres(name = "ACTIVE")]
     Active,
     #[postgres(name = "AWAITING_REQUEST")]

@@ -262,8 +262,9 @@ CREATE INDEX client_reports_task_and_timestamp_index ON client_reports(task_id, 
 
 -- Specifies the possible state of an aggregation job.
 CREATE TYPE AGGREGATION_JOB_STATE AS ENUM(
+    -- Leader is ready to initialize the job.
+    'LEADER_INIT',
     -- At least one included report is in a non-terminal state, processing can continue at will.
-    -- Aggregation job ID is not known by the leader.
     'ACTIVE',
     -- at least one included report is in a non-terminal state, awaiting a request from the Leader
     -- to continue processing
