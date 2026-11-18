@@ -26,7 +26,7 @@ use janus_aggregator_core::{
 };
 use janus_core::{
     http::check_content_type,
-    retries::{is_retryable_http_client_error, is_retryable_http_status},
+    retries::{HeaderMapExt, is_retryable_http_client_error, is_retryable_http_status},
     time::{Clock, DateTimeExt},
     vdaf::vdaf_application_context,
     vdaf_dispatch,
@@ -232,7 +232,7 @@ where
         // Read all information about the aggregation job.
         let (task, aggregation_job, report_aggregations) = datastore
             .run_tx("step_aggregation_job_generic", |tx| {
-                let (lease, vdaf) = (lease, vdaf).clone();
+                let (lease, vdaf) = (lease.clone(), vdaf.clone());
                 Box::pin(async move {
                     let task_future = tx.get_aggregator_task(lease.leased().task_id());
                     let aggregation_job_future = tx.get_aggregation_job::<SEED_SIZE, B, A>(
@@ -415,7 +415,7 @@ where
         vdaf: A,
         lease: Lease<AcquiredAggregationJob>,
         task: AggregatorTask,
-        aggregation_job: AggregationJob<SEED_SIZE, B, A>,
+        mut aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
     ) -> Result<(), Error> {
         // Only process non-failed report aggregations.
@@ -433,7 +433,6 @@ where
         // on receiving an error.
         let (ra_sender, mut ra_receiver) = mpsc::unbounded_channel();
         let (pi_and_sa_sender, mut pi_and_sa_receiver) = mpsc::unbounded_channel();
-        let aggregation_job = Arc::new(aggregation_job);
         let verify_key = task
             .vdaf_verify_key()
             .context("VDAF verification key has wrong length")
@@ -442,7 +441,7 @@ where
             let parent_span = Span::current();
             let vdaf = vdaf.clone();
             let task_id = *task.id();
-            let aggregation_job = Arc::clone(&aggregation_job);
+            let aggregation_job = aggregation_job.clone();
             let aggregate_step_failure_counter = self.aggregate_step_failure_counter.clone();
 
             move || {
@@ -655,7 +654,7 @@ where
             let http_response = send_request_to_helper(
                 &self.http_client,
                 self.backoff.build(),
-                Method::PUT,
+                Method::POST,
                 task.aggregation_job_creation_uri()?,
                 AGGREGATION_JOB_CREATION_ROUTE,
                 Some(RequestBody {
@@ -676,8 +675,23 @@ where
                 .get(RETRY_AFTER)
                 .map(parse_retry_after)
                 .transpose()?;
+            let helper_aggregation_job_id = http_response
+                .headers()
+                .aggregation_job_id_from_location(*task.id())
+                .map_err(|e| Error::InvalidHelperResponse {
+                    resource_type: "aggregation job",
+                    description: e.into(),
+                })?
+                .ok_or_else(|| Error::InvalidHelperResponse {
+                    resource_type: "aggregation job",
+                    description: "missing location header in aggregation job POST response".into(),
+                })?;
+
+            aggregation_job = aggregation_job.with_state(AggregationJobState::Active {
+                helper_aggregation_job_id,
+            });
+
             let body = http_response.body();
-            // TODO(timg) parse aggregation job ID here
             let resp = if !body.is_empty() {
                 check_content_type::<AggregationJobResp>(http_response.headers())
                     .map_err(|e| Error::BadContentType(e.into()))?;
@@ -700,8 +714,6 @@ where
             )
         };
 
-        let aggregation_job: AggregationJob<SEED_SIZE, B, A> =
-            Arc::unwrap_or_clone(aggregation_job);
         self.step_aggregation_job_leader_process_response(
             datastore,
             vdaf,
@@ -1206,12 +1218,11 @@ where
         // returned from the function passed to `try_for_each`; `try_for_each` will terminate early
         // on receiving an error.
         let (ra_sender, mut ra_receiver) = mpsc::unbounded_channel();
-        let aggregation_job = Arc::new(aggregation_job);
         let producer_task = tokio::task::spawn_blocking({
             let parent_span = Span::current();
             let vdaf = vdaf.clone();
             let task_id = *task.id();
-            let aggregation_job = Arc::clone(&aggregation_job);
+            let aggregation_job = aggregation_job.clone();
             let aggregate_step_failure_counter = self.aggregate_step_failure_counter.clone();
             let task_aggregation_counters = task_aggregation_counters.clone();
 
@@ -1389,7 +1400,6 @@ where
         );
 
         // Write everything back to storage.
-        let aggregation_job = Arc::unwrap_or_clone(aggregation_job);
         let metrics = AggregationJobWriterMetrics {
             vdaf_instance: task.vdaf().clone(),
             report_aggregation_success_counter: self.aggregation_success_counter.clone(),
@@ -1749,7 +1759,7 @@ where
         let batch_aggregation_shard_count = self.batch_aggregation_shard_count;
         let (aggregation_job_uri, aggregator_auth_token) = datastore
             .run_tx("cancel_aggregation_job_generic", |tx| {
-                let (vdaf, lease) = (vdaf, lease).clone();
+                let (vdaf, lease) = (vdaf.clone(), lease.clone());
 
                 Box::pin(async move {
                     // On abandoning an aggregation job, we update the aggregation job's state field
@@ -1924,7 +1934,11 @@ where
                 };
 
                 match this
-                    .step_aggregation_job(Arc::clone(&datastore), Arc::clone(&hpke_keypairs), lease)
+                    .step_aggregation_job(
+                        Arc::clone(&datastore),
+                        Arc::clone(&hpke_keypairs),
+                        lease.clone(),
+                    )
                     .await
                 {
                     Ok(_) => Ok(()),

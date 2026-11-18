@@ -358,7 +358,7 @@ where
             (),
             batch_id,
             client_timestamp_interval,
-            AggregationJobState::leader_active(),
+            AggregationJobState::LeaderInit,
             AggregationJobStep::from(0),
         );
         aggregation_job_size_histogram.record(

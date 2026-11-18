@@ -119,7 +119,7 @@ impl Error {
                     StatusCode::GONE,
                 )
                 .with_task_id(task_id)
-                .with_aggregation_job_id(aggregation_job_id)
+                .with_aggregation_job_id(aggregation_job_id.as_ref())
                 .into_response()
             }
             Error::DeletedAggregationJob(task_id, aggregation_job_id) => {
@@ -129,7 +129,7 @@ impl Error {
                     StatusCode::GONE,
                 )
                 .with_task_id(task_id)
-                .with_aggregation_job_id(aggregation_job_id)
+                .with_aggregation_job_id(Some(aggregation_job_id))
                 .into_response()
             }
             Error::DeletedCollectionJob(task_id, collection_job_id) => {
@@ -588,13 +588,17 @@ impl<'a> AggregatorHandlerBuilder<'a> {
 
         // Build aggregation job routes, optionally with LIFO queue middleware for
         // back-pressure and load-shedding on helpers.
-        let aggregation_job_routes = axum::Router::new().route(
-            AGGREGATION_JOB_ROUTE,
-            put(aggregation_jobs_put)
-                .post(aggregation_jobs_post)
-                .get(aggregation_jobs_get)
-                .delete(aggregation_jobs_delete),
-        );
+        let aggregation_job_routes = axum::Router::new()
+            .route(
+                AGGREGATION_JOB_CREATION_ROUTE,
+                post(aggregation_jobs_post_new),
+            )
+            .route(
+                AGGREGATION_JOB_ROUTE,
+                post(aggregation_jobs_post)
+                    .get(aggregation_jobs_get)
+                    .delete(aggregation_jobs_delete),
+            );
         let aggregation_job_routes = if let Some(queue) = helper_queue {
             aggregation_job_routes.layer(middleware::from_fn_with_state(
                 queue,
@@ -777,27 +781,25 @@ async fn upload_post(
     Ok(response)
 }
 
-/// Axum handler for the "/tasks/.../aggregation_jobs/..." PUT endpoint.
-async fn aggregation_jobs_put(
+/// Axum handler for the "/tasks/.../aggregation_jobs" POST endpoint.
+///
+/// This is used to create new aggregation jobs.
+async fn aggregation_jobs_post_new(
     headers: HeaderMap,
-    path: AggregationJobPath,
+    Path(task_id): Path<String>,
     AxumState(aggregator): AxumState<Arc<Aggregator>>,
     body: Bytes,
 ) -> Result<Response, Error> {
     validate_content_type_headers::<AggregationJobInitializeReq>(&headers)?;
 
-    let task_id = path.task_id;
-    let aggregation_job_id = path.aggregation_job_id;
+    let task_id = task_id
+        .parse()
+        .map_err(|_| Error::BadRequest("invalid TaskId".into()))?;
+
     let auth_token = parse_auth_token_from_headers(&task_id, &headers)?;
     let taskprov_task_config = parse_taskprov_header_from_headers(&aggregator, &task_id, &headers)?;
     let response = aggregator
-        .handle_aggregate_init(
-            &task_id,
-            &aggregation_job_id,
-            &body,
-            auth_token,
-            taskprov_task_config.as_ref(),
-        )
+        .handle_aggregate_init(&task_id, &body, auth_token, taskprov_task_config.as_ref())
         .await?;
 
     match response {
@@ -811,6 +813,8 @@ async fn aggregation_jobs_put(
 }
 
 /// Axum handler for the "/tasks/.../aggregation_jobs/..." POST endpoint.
+///
+/// This is used to step aggregation jobs.
 async fn aggregation_jobs_post(
     headers: HeaderMap,
     path: AggregationJobPath,

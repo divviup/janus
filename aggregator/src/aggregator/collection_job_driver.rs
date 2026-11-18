@@ -388,25 +388,13 @@ impl CollectionJobDriver {
                 )
                 .await?;
 
-                let aggregate_share_id = if let Some((task_id, aggregate_share_id)) = http_response
+                let aggregate_share_id = http_response
                     .headers()
-                    .aggregate_share_id_from_location()
+                    .aggregate_share_id_from_location(*task.id())
                     .map_err(|e| Error::InvalidHelperResponse {
                         resource_type: "aggregate share",
                         description: e.into(),
-                    })? {
-                    if task_id != *task.id() {
-                        return Err(Error::InvalidHelperResponse {
-                            resource_type: "aggregate share",
-                            description: format!("unexpected task ID {task_id} in helper response")
-                                .into(),
-                        });
-                    }
-
-                    Some(aggregate_share_id)
-                } else {
-                    None
-                };
+                    })?;
 
                 Ok((aggregate_share_id, http_response))
             };
@@ -1018,7 +1006,7 @@ mod tests {
             models::{
                 AcquiredCollectionJob, AggregationJob, AggregationJobState, BatchAggregation,
                 BatchAggregationState, CollectionJob, CollectionJobState, LeaderStoredReport,
-                Lease, ReportAggregation, ReportAggregationState,
+                Lease, ReportAggregation, ReportAggregationState, UnwrittenAggregationJob,
             },
             test_util::ephemeral_datastore,
         },
@@ -1108,19 +1096,21 @@ mod tests {
                         .await
                         .unwrap();
 
-                    let aggregation_job_id = random();
+                    let helper_aggregation_job_id = random();
                     let report_timestamp = clock.now().to_time(task.time_precision());
-                    tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
-                        *task.id(),
-                        aggregation_job_id,
-                        aggregation_param,
-                        (),
-                        Interval::minimal(report_timestamp).unwrap(),
-                        AggregationJobState::Finished,
-                        AggregationJobStep::from(1),
-                    ))
-                    .await
-                    .unwrap();
+                    let aggregation_job_id = tx
+                        .put_aggregation_job(&UnwrittenAggregationJob::new(
+                            *task.id(),
+                            aggregation_param,
+                            (),
+                            Interval::minimal(report_timestamp).unwrap(),
+                            AggregationJobState::Finished {
+                                helper_aggregation_job_id,
+                            },
+                            AggregationJobStep::from(1),
+                        ))
+                        .await
+                        .unwrap();
 
                     let report = LeaderStoredReport::new_dummy(*task.id(), report_timestamp);
 
@@ -1264,18 +1254,20 @@ mod tests {
                     .await
                     .unwrap();
 
-                    let aggregation_job_id = random();
-                    tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
-                        *task.id(),
-                        aggregation_job_id,
-                        aggregation_param,
-                        (),
-                        Interval::minimal(report_timestamp).unwrap(),
-                        AggregationJobState::Finished,
-                        AggregationJobStep::from(1),
-                    ))
-                    .await
-                    .unwrap();
+                    let helper_aggregation_job_id = random();
+                    let aggregation_job_id = tx
+                        .put_aggregation_job(&UnwrittenAggregationJob::new(
+                            *task.id(),
+                            aggregation_param,
+                            (),
+                            Interval::minimal(report_timestamp).unwrap(),
+                            AggregationJobState::Finished {
+                                helper_aggregation_job_id,
+                            },
+                            AggregationJobStep::from(1),
+                        ))
+                        .await
+                        .unwrap();
 
                     tx.put_client_report(&report).await.unwrap();
 

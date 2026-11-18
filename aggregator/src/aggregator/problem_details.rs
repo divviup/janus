@@ -103,9 +103,9 @@ impl<'a> ProblemDocument<'a> {
         }
     }
 
-    pub fn with_aggregation_job_id(self, aggregation_job_id: &AggregationJobId) -> Self {
+    pub fn with_aggregation_job_id(self, aggregation_job_id: Option<&AggregationJobId>) -> Self {
         Self {
-            aggregation_job_id: Some(aggregation_job_id.to_string()),
+            aggregation_job_id: aggregation_job_id.map(AggregationJobId::to_string),
             ..self
         }
     }
