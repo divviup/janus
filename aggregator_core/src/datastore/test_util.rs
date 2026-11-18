@@ -375,6 +375,7 @@ impl EphemeralDatastoreBuilder {
             .build();
 
         let connection_string = db.connection_string("postgres");
+        println!("db connection string: {connection_string}");
         let (client, conn) = (|| connect(&connection_string, NoTls))
             .retry(backoff)
             .await
