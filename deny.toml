@@ -21,6 +21,10 @@ ignore = [
 
     # `astral-tokio-tar` is unmaintained, and `testcontainers` has not yet been migrated off it.
     "RUSTSEC-2026-0440",
+
+    # `chrono` is unmaintained, and we use it extensively. It is also used by retry-after.
+    "RUSTSEC-2026-0542",
+    "RUSTSEC-2026-0543",
 ]
 
 [bans]
