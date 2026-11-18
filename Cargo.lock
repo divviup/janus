@@ -1495,9 +1495,9 @@ dependencies = [
 
 [[package]]
 name = "educe"
-version = "0.8.1"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1ebdb1f8f8d2815bbe7b369a7da10343c82026a4503b68bd1279ba557611e96d"
+checksum = "a00371d2607edea062396ef1ce6ade65c8e915ac7a1277daa198208420f682c6"
 dependencies = [
  "enum-ordinalize",
  "proc-macro2",
@@ -2705,7 +2705,7 @@ dependencies = [
  "console-subscriber",
  "deadpool",
  "deadpool-postgres",
- "educe 0.8.1",
+ "educe 0.8.2",
  "fixed",
  "futures",
  "hex",
@@ -2785,7 +2785,7 @@ dependencies = [
  "async-trait",
  "aws-lc-rs",
  "base64 0.23.1",
- "educe 0.8.1",
+ "educe 0.8.2",
  "futures",
  "janus_aggregator_core",
  "janus_core",
@@ -2823,7 +2823,7 @@ dependencies = [
  "clap",
  "deadpool",
  "deadpool-postgres",
- "educe 0.8.1",
+ "educe 0.8.2",
  "futures",
  "hex",
  "http",
@@ -2869,7 +2869,7 @@ dependencies = [
  "assert_matches",
  "backoff",
  "bhttp",
- "educe 0.8.1",
+ "educe 0.8.2",
  "hex-literal",
  "http",
  "itertools 0.15.0",
@@ -2896,7 +2896,7 @@ dependencies = [
  "backoff",
  "base64 0.23.1",
  "chrono",
- "educe 0.8.1",
+ "educe 0.8.2",
  "fixed",
  "hpke-dispatch",
  "janus_collector",
@@ -2927,7 +2927,7 @@ dependencies = [
  "bytes",
  "chrono",
  "clap",
- "educe 0.8.1",
+ "educe 0.8.2",
  "fixed",
  "futures",
  "hex",
@@ -2975,7 +2975,7 @@ dependencies = [
  "chrono",
  "clap",
  "divviup-client",
- "educe 0.8.1",
+ "educe 0.8.2",
  "futures",
  "hex",
  "http",
@@ -3018,7 +3018,7 @@ dependencies = [
  "backoff",
  "base64 0.23.1",
  "clap",
- "educe 0.8.1",
+ "educe 0.8.2",
  "fixed",
  "futures",
  "hex",
@@ -3073,7 +3073,7 @@ dependencies = [
  "anyhow",
  "assert_matches",
  "base64 0.23.1",
- "educe 0.8.1",
+ "educe 0.8.2",
  "hex",
  "num_enum",
  "pretty_assertions",
