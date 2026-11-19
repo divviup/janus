@@ -7,7 +7,8 @@ use anyhow::{Context, anyhow};
 use http::{HeaderName, StatusCode, header::RETRY_AFTER};
 use http_api_problem::{HttpApiProblem, PROBLEM_JSON_MEDIA_TYPE};
 use janus_messages::{
-    AggregateShareId, CollectionJobId, MediaType, TaskId, problem_type::DapProblemType,
+    AggregateShareId, AggregationJobId, AggregationJobStep, CollectionJobId, MediaType, TaskId,
+    problem_type::DapProblemType,
 };
 use mime::Mime;
 use reqwest::{Response, header::CONTENT_TYPE};
@@ -222,23 +223,114 @@ impl ReqwestAuthenticationToken for reqwest::RequestBuilder {
     }
 }
 
-/// Construct an HTTP Location header for the collection job.
-pub fn collection_job_location(task_id: &TaskId, job_id: &CollectionJobId) -> (HeaderName, String) {
+/// Construct an HTTP Location header for the aggregation job.
+pub fn aggregation_job_location(
+    task_id: TaskId,
+    aggregation_job_id: AggregationJobId,
+    step: AggregationJobStep,
+) -> (HeaderName, String) {
     (
         http::header::LOCATION,
-        format!("/tasks/{task_id}/collection_jobs/{job_id}"),
+        format!("/tasks/{task_id}/aggregation_jobs/{aggregation_job_id}?step={step}"),
+    )
+}
+
+/// Construct an HTTP Location header for the collection job.
+pub fn collection_job_location(
+    task_id: TaskId,
+    collection_job_id: CollectionJobId,
+) -> (HeaderName, String) {
+    (
+        http::header::LOCATION,
+        format!("/tasks/{task_id}/collection_jobs/{collection_job_id}"),
     )
 }
 
 /// Construct an HTTP Location header for the aggregate share.
 pub fn aggregate_share_location(
-    task_id: &TaskId,
-    share_id: &AggregateShareId,
+    task_id: TaskId,
+    share_id: AggregateShareId,
 ) -> (HeaderName, String) {
     (
         http::header::LOCATION,
         format!("/tasks/{task_id}/aggregate_shares/{share_id}"),
     )
+}
+
+#[cfg(feature = "test-util")]
+pub mod test_util {
+    use janus_messages::{
+        AggregateShareId, AggregationJobId, AggregationJobStep, CollectionJobId, TaskId,
+    };
+
+    use crate::{
+        auth_tokens::AuthenticationToken,
+        http::{aggregate_share_location, aggregation_job_location, collection_job_location},
+    };
+
+    /// Extension trait on [`mockito::Mock`].
+    pub trait MockExt {
+        /// Matches on requests which include a header and value matching
+        /// [`AuthenticationToken::request_authentication`].
+        fn match_authentication_token(self, auth_token: &AuthenticationToken) -> Self;
+
+        /// Adds a `Location` header matching the task and job ID to responses.
+        fn with_aggregation_job_location(
+            self,
+            task_id: TaskId,
+            aggregation_job_id: AggregationJobId,
+            step: AggregationJobStep,
+        ) -> Self;
+
+        /// Adds a `Location` header matching the task and job ID to responses.
+        fn with_collection_job_location(
+            self,
+            task_id: TaskId,
+            collection_job_id: CollectionJobId,
+        ) -> Self;
+
+        /// Adds a `Location` header matching the task and share ID to responses.
+        fn with_aggregate_share_location(
+            self,
+            task_id: TaskId,
+            aggregate_share_id: AggregateShareId,
+        ) -> Self;
+    }
+
+    impl MockExt for mockito::Mock {
+        fn match_authentication_token(self, auth_token: &AuthenticationToken) -> Self {
+            let (header, value) = auth_token.request_authentication().unwrap();
+            self.match_header(header.as_str(), value.to_str().unwrap())
+        }
+
+        fn with_aggregation_job_location(
+            self,
+            task_id: TaskId,
+            aggregation_job_id: AggregationJobId,
+            step: AggregationJobStep,
+        ) -> Self {
+            let (header, value) = aggregation_job_location(task_id, aggregation_job_id, step);
+            self.with_header(header, value.as_str())
+        }
+
+        fn with_collection_job_location(
+            self,
+            task_id: TaskId,
+            collection_job_id: CollectionJobId,
+        ) -> Self {
+            let (header, value) = collection_job_location(task_id, collection_job_id);
+            self.with_header(header, value.as_str())
+        }
+
+        fn with_aggregate_share_location(
+            self,
+            task_id: TaskId,
+            aggregate_share_id: AggregateShareId,
+        ) -> Self {
+            let (header, value) = aggregate_share_location(task_id, aggregate_share_id);
+            self.with_header(header, value.as_str())
+        }
+    }
 }
 
 #[cfg(test)]

@@ -2,7 +2,8 @@
 
 use aws_lc_rs::digest::{Context, SHA256, digest};
 use janus_messages::{
-    AggregateShareId, AggregateShareReq, CollectionJobId, CollectionJobReq, batch_mode::BatchMode,
+    AggregateShareId, AggregateShareReq, AggregationJobId, AggregationJobInitializeReq,
+    CollectionJobId, CollectionJobReq, batch_mode::BatchMode,
 };
 use prio::codec::Encode;
 
@@ -22,6 +23,14 @@ pub trait DeriveId {
     type Identifier;
 
     fn derive_id(&self) -> Result<Self::Identifier, DeriveIdError>;
+}
+
+impl DeriveId for AggregationJobInitializeReq {
+    type Identifier = AggregationJobId;
+
+    fn derive_id(&self) -> Result<Self::Identifier, DeriveIdError> {
+        derive_id(self, AggregationJobId::LEN)
+    }
 }
 
 impl<B: BatchMode> DeriveId for AggregateShareReq<B> {

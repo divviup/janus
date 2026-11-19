@@ -441,9 +441,7 @@ impl AsRef<[u8]> for AuthenticationTokenHash {
 
 #[cfg(feature = "test-util")]
 pub mod test_util {
-    use janus_messages::{AggregateShareId, TaskId};
-
-    use crate::{auth_tokens::AuthenticationToken, http::aggregate_share_location};
+    use crate::auth_tokens::AuthenticationToken;
 
     /// Extension trait to fluently add an auth token to an HTTP request.
     pub trait WithAuthenticationToken {
@@ -466,43 +464,12 @@ pub mod test_util {
             self.header(header, value)
         }
     }
-
-    /// Extension trait to fluently match on authentication tokens with a [`mockito::Mock`].
-    pub trait MatchAuthenticationToken {
-        /// Matches on requests which include a header and value matching
-        /// [`AuthenticationToken::request_authentication`].
-        fn match_authentication_token(self, auth_token: &AuthenticationToken) -> Self;
-
-        /// Adds a `LOCATION` header matching the task and share ID to responses.
-        fn with_aggregate_share_location(
-            self,
-            task_id: &TaskId,
-            aggregate_share_id: &AggregateShareId,
-        ) -> Self;
-    }
-
-    impl MatchAuthenticationToken for mockito::Mock {
-        fn match_authentication_token(self, auth_token: &AuthenticationToken) -> Self {
-            let (header, value) = auth_token.request_authentication().unwrap();
-            self.match_header(header.as_str(), value.to_str().unwrap())
-        }
-
-        fn with_aggregate_share_location(
-            self,
-            task_id: &TaskId,
-            aggregate_share_id: &AggregateShareId,
-        ) -> Self {
-            let (header, value) = aggregate_share_location(task_id, aggregate_share_id);
-            self.with_header(header, value.as_str())
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr as _;
-
     use rand::random;
+    use std::str::FromStr as _;
 
     use crate::auth_tokens::{AuthenticationToken, AuthenticationTokenHash};
 
