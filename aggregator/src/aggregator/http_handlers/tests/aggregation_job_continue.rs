@@ -8,7 +8,8 @@ use janus_aggregator_core::{
     datastore::{
         models::{
             AggregationJob, AggregationJobState, BatchAggregation, BatchAggregationState,
-            ReportAggregation, ReportAggregationState, merge_batch_aggregations_by_batch,
+            ReportAggregation, ReportAggregationState, UnwrittenAggregationJob,
+            merge_batch_aggregations_by_batch,
         },
         task_counters::TaskAggregationCounter,
     },
@@ -34,7 +35,7 @@ use rand::random;
 use crate::aggregator::{
     BatchAggregationsIterator,
     aggregation_job_continue::test_util::{
-        post_aggregation_job_and_decode, post_aggregation_job_expecting_error,
+        post_aggregation_job_continue_and_decode, post_aggregation_job_continue_expecting_error,
     },
     http_handlers::test_util::HttpHandlerTest,
     test_util::{
@@ -55,7 +56,7 @@ async fn aggregate_continue_sync() {
     } = HttpHandlerTest::new().await;
 
     let time_precision = TimePrecision::from_seconds(10);
-    let aggregation_job_id = random();
+    let helper_aggregation_job_id = random();
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,
@@ -149,7 +150,7 @@ async fn aggregate_continue_sync() {
         &transcript_2.helper_input_share,
     );
 
-    datastore
+    let aggregation_job_datastore_id = datastore
         .run_unnamed_tx(|tx| {
             let helper_task = helper_task.clone();
             let report_share_0 = report_share_0.clone();
@@ -187,21 +188,21 @@ async fn aggregate_continue_sync() {
                 .await
                 .unwrap();
 
-                tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
-                    *helper_task.id(),
-                    aggregation_job_id,
-                    aggregation_param,
-                    (),
-                    Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
-                    AggregationJobState::AwaitingRequest,
-                    AggregationJobStep::from(0),
-                ))
-                .await
-                .unwrap();
+                let aggregation_job_datastore_id = tx
+                    .put_aggregation_job(&UnwrittenAggregationJob::new(
+                        *helper_task.id(),
+                        aggregation_param,
+                        (),
+                        Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
+                        AggregationJobState::AwaitingRequest,
+                        AggregationJobStep::from(0),
+                    ))
+                    .await
+                    .unwrap();
 
                 tx.put_report_aggregation::<0, dummy::Vdaf>(&ReportAggregation::new(
                     *helper_task.id(),
-                    aggregation_job_id,
+                    aggregation_job_datastore_id,
                     *report_metadata_0.id(),
                     *report_metadata_0.time(),
                     0,
@@ -214,7 +215,7 @@ async fn aggregate_continue_sync() {
                 .unwrap();
                 tx.put_report_aggregation::<0, dummy::Vdaf>(&ReportAggregation::new(
                     *helper_task.id(),
-                    aggregation_job_id,
+                    aggregation_job_datastore_id,
                     *report_metadata_1.id(),
                     *report_metadata_1.time(),
                     1,
@@ -227,7 +228,7 @@ async fn aggregate_continue_sync() {
                 .unwrap();
                 tx.put_report_aggregation::<0, dummy::Vdaf>(&ReportAggregation::new(
                     *helper_task.id(),
-                    aggregation_job_id,
+                    aggregation_job_datastore_id,
                     *report_metadata_2.id(),
                     *report_metadata_2.time(),
                     2,
@@ -260,7 +261,7 @@ async fn aggregate_continue_sync() {
                 .await
                 .unwrap();
 
-                Ok(())
+                Ok(aggregation_job_datastore_id)
             })
         })
         .await
@@ -275,8 +276,13 @@ async fn aggregate_continue_sync() {
     );
 
     // Send request, and parse response.
-    let aggregate_resp =
-        post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &router).await;
+    let aggregate_resp = post_aggregation_job_continue_and_decode(
+        &task,
+        helper_aggregation_job_id,
+        &request,
+        &router,
+    )
+    .await;
 
     // Validate response.
     assert_eq!(
@@ -300,7 +306,7 @@ async fn aggregate_continue_sync() {
                 let aggregation_job = tx
                     .get_aggregation_job::<0, TimeInterval, dummy::Vdaf>(
                         task.id(),
-                        &aggregation_job_id,
+                        aggregation_job_datastore_id,
                     )
                     .await
                     .unwrap()
@@ -310,7 +316,7 @@ async fn aggregate_continue_sync() {
                         vdaf.as_ref(),
                         &Role::Helper,
                         task.id(),
-                        &aggregation_job_id,
+                        aggregation_job_datastore_id,
                     )
                     .await
                     .unwrap();
@@ -323,12 +329,14 @@ async fn aggregate_continue_sync() {
     assert_eq!(
         aggregation_job,
         AggregationJob::new(
+            aggregation_job_datastore_id,
             *task.id(),
-            aggregation_job_id,
             aggregation_param,
             (),
             Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
-            AggregationJobState::Finished,
+            AggregationJobState::Finished {
+                helper_aggregation_job_id
+            },
             AggregationJobStep::from(1),
         )
         .with_last_request_hash(aggregation_job.last_request_hash().unwrap())
@@ -338,7 +346,7 @@ async fn aggregate_continue_sync() {
         Vec::from([
             ReportAggregation::new(
                 *task.id(),
-                aggregation_job_id,
+                aggregation_job_datastore_id,
                 *report_metadata_0.id(),
                 *report_metadata_0.time(),
                 0,
@@ -350,7 +358,7 @@ async fn aggregate_continue_sync() {
             ),
             ReportAggregation::new(
                 *task.id(),
-                aggregation_job_id,
+                aggregation_job_datastore_id,
                 *report_metadata_1.id(),
                 *report_metadata_1.time(),
                 1,
@@ -361,7 +369,7 @@ async fn aggregate_continue_sync() {
             ),
             ReportAggregation::new(
                 *task.id(),
-                aggregation_job_id,
+                aggregation_job_datastore_id,
                 *report_metadata_2.id(),
                 *report_metadata_2.time(),
                 2,
@@ -395,7 +403,7 @@ async fn aggregate_continue_async() {
         ..
     } = HttpHandlerTest::new().await;
 
-    let aggregation_job_id = random();
+    let helper_aggregation_job_id = random();
     let time_precision = TimePrecision::from_seconds(10);
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
@@ -463,7 +471,7 @@ async fn aggregate_continue_async() {
         &transcript_1.helper_input_share,
     );
 
-    datastore
+    let aggregation_job_datastore_id = datastore
         .run_unnamed_tx(|tx| {
             let helper_task = helper_task.clone();
             let report_share_0 = report_share_0.clone();
@@ -491,21 +499,23 @@ async fn aggregate_continue_async() {
                 .await
                 .unwrap();
 
-                tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
-                    *helper_task.id(),
-                    aggregation_job_id,
-                    aggregation_param,
-                    (),
-                    Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
-                    AggregationJobState::AwaitingRequest,
-                    AggregationJobStep::from(0),
-                ))
-                .await
-                .unwrap();
+                let aggregation_job_datastore_id = tx
+                    .put_aggregation_job(&UnwrittenAggregationJob::new(
+                        *helper_task.id(),
+                        aggregation_param,
+                        (),
+                        Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
+                        AggregationJobState::AwaitingRequest {
+                            helper_aggregation_job_id,
+                        },
+                        AggregationJobStep::from(0),
+                    ))
+                    .await
+                    .unwrap();
 
                 tx.put_report_aggregation::<0, dummy::Vdaf>(&ReportAggregation::new(
                     *helper_task.id(),
-                    aggregation_job_id,
+                    aggregation_job_datastore_id,
                     *report_metadata_0.id(),
                     *report_metadata_0.time(),
                     0,
@@ -530,7 +540,7 @@ async fn aggregate_continue_async() {
                 .await
                 .unwrap();
 
-                Ok(())
+                Ok(aggregation_job_datastore_id)
             })
         })
         .await
@@ -545,8 +555,13 @@ async fn aggregate_continue_async() {
     );
 
     // Send request, and parse response.
-    let aggregate_resp =
-        post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &router).await;
+    let aggregate_resp = post_aggregation_job_continue_and_decode(
+        &task,
+        helper_aggregation_job_id,
+        &request,
+        &router,
+    )
+    .await;
 
     // Validate response was empty.
     assert!(aggregate_resp.is_none());
@@ -559,7 +574,7 @@ async fn aggregate_continue_async() {
                 let aggregation_job = tx
                     .get_aggregation_job::<0, TimeInterval, dummy::Vdaf>(
                         task.id(),
-                        &aggregation_job_id,
+                        aggregation_job_datastore_id,
                     )
                     .await
                     .unwrap()
@@ -569,7 +584,7 @@ async fn aggregate_continue_async() {
                         vdaf.as_ref(),
                         &Role::Helper,
                         task.id(),
-                        &aggregation_job_id,
+                        aggregation_job_datastore_id,
                     )
                     .await
                     .unwrap();
@@ -582,12 +597,14 @@ async fn aggregate_continue_async() {
     assert_eq!(
         aggregation_job,
         AggregationJob::new(
+            aggregation_job_datastore_id,
             *task.id(),
-            aggregation_job_id,
             aggregation_param,
             (),
             Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
-            AggregationJobState::Active,
+            AggregationJobState::Active {
+                helper_aggregation_job_id
+            },
             AggregationJobStep::from(1),
         )
         .with_last_request_hash(aggregation_job.last_request_hash().unwrap())
@@ -597,7 +614,7 @@ async fn aggregate_continue_async() {
         Vec::from([
             ReportAggregation::new(
                 *task.id(),
-                aggregation_job_id,
+                aggregation_job_datastore_id,
                 *report_metadata_0.id(),
                 *report_metadata_0.time(),
                 0,
@@ -612,7 +629,7 @@ async fn aggregate_continue_async() {
             ),
             ReportAggregation::new(
                 *task.id(),
-                aggregation_job_id,
+                aggregation_job_datastore_id,
                 *report_metadata_1.id(),
                 *report_metadata_1.time(),
                 1,
@@ -813,21 +830,23 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
                 .await
                 .unwrap();
 
-                tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
-                    *helper_task.id(),
-                    aggregation_job_id_0,
-                    aggregation_param,
-                    (),
-                    Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
-                    AggregationJobState::Active,
-                    AggregationJobStep::from(0),
-                ))
-                .await
-                .unwrap();
+                let job_id_0 = tx
+                    .put_aggregation_job(&UnwrittenAggregationJob::new(
+                        *helper_task.id(),
+                        aggregation_param,
+                        (),
+                        Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
+                        AggregationJobState::Active {
+                            helper_aggregation_job_id: aggregation_job_id_0,
+                        },
+                        AggregationJobStep::from(0),
+                    ))
+                    .await
+                    .unwrap();
 
                 tx.put_report_aggregation(&ReportAggregation::<0, dummy::Vdaf>::new(
                     *helper_task.id(),
-                    aggregation_job_id_0,
+                    job_id_0,
                     *report_metadata_0.id(),
                     *report_metadata_0.time(),
                     0,
@@ -840,7 +859,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
                 .unwrap();
                 tx.put_report_aggregation(&ReportAggregation::<0, dummy::Vdaf>::new(
                     *helper_task.id(),
-                    aggregation_job_id_0,
+                    job_id_0,
                     *report_metadata_1.id(),
                     *report_metadata_1.time(),
                     1,
@@ -853,7 +872,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
                 .unwrap();
                 tx.put_report_aggregation(&ReportAggregation::<0, dummy::Vdaf>::new(
                     *helper_task.id(),
-                    aggregation_job_id_0,
+                    job_id_0,
                     *report_metadata_2.id(),
                     *report_metadata_2.time(),
                     2,
@@ -907,7 +926,8 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
 
     // Send request, and parse response.
     let resp =
-        post_aggregation_job_and_decode(&task, &aggregation_job_id_0, &request, &router).await;
+        post_aggregation_job_continue_and_decode(&task, aggregation_job_id_0, &request, &router)
+            .await;
     assert!(resp.is_some());
 
     // Map the batch aggregation ordinal value to 0, as it may vary due to sharding.
@@ -1125,21 +1145,23 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
                 .await
                 .unwrap();
 
-                tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
-                    *helper_task.id(),
-                    aggregation_job_id_1,
-                    aggregation_param,
-                    (),
-                    Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
-                    AggregationJobState::Active,
-                    AggregationJobStep::from(0),
-                ))
-                .await
-                .unwrap();
+                let job_id_1 = tx
+                    .put_aggregation_job(&UnwrittenAggregationJob::new(
+                        *helper_task.id(),
+                        aggregation_param,
+                        (),
+                        Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
+                        AggregationJobState::Active {
+                            helper_aggregation_job_id: aggregation_job_id_1,
+                        },
+                        AggregationJobStep::from(0),
+                    ))
+                    .await
+                    .unwrap();
 
                 tx.put_report_aggregation(&ReportAggregation::<0, dummy::Vdaf>::new(
                     *helper_task.id(),
-                    aggregation_job_id_1,
+                    job_id_1,
                     *report_metadata_3.id(),
                     *report_metadata_3.time(),
                     3,
@@ -1152,7 +1174,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
                 .unwrap();
                 tx.put_report_aggregation(&ReportAggregation::<0, dummy::Vdaf>::new(
                     *helper_task.id(),
-                    aggregation_job_id_1,
+                    job_id_1,
                     *report_metadata_4.id(),
                     *report_metadata_4.time(),
                     4,
@@ -1165,7 +1187,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
                 .unwrap();
                 tx.put_report_aggregation(&ReportAggregation::<0, dummy::Vdaf>::new(
                     *helper_task.id(),
-                    aggregation_job_id_1,
+                    job_id_1,
                     *report_metadata_5.id(),
                     *report_metadata_5.time(),
                     5,
@@ -1193,7 +1215,8 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     );
 
     let resp_2 =
-        post_aggregation_job_and_decode(&task, &aggregation_job_id_1, &request, &router).await;
+        post_aggregation_job_continue_and_decode(&task, aggregation_job_id_1, &request, &router)
+            .await;
     assert!(resp_2.is_some());
 
     // Map the batch aggregation ordinal value to 0, as it may vary due to sharding, and merge
@@ -1327,7 +1350,7 @@ async fn aggregate_continue_leader_sends_non_continue_or_finish_transition() {
         &report_id,
         &13,
     );
-    let aggregation_job_id = random();
+    let helper_aggregation_job_id = random();
     let report_metadata = ReportMetadata::new(
         ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
         Time::from_seconds_since_epoch(54320, &TimePrecision::from_seconds(1)),
@@ -1351,20 +1374,22 @@ async fn aggregate_continue_leader_sends_non_continue_or_finish_transition() {
                 .await
                 .unwrap();
 
-                tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
-                    *helper_task.id(),
-                    aggregation_job_id,
-                    aggregation_param,
-                    (),
-                    Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
-                    AggregationJobState::Active,
-                    AggregationJobStep::from(0),
-                ))
-                .await
-                .unwrap();
+                let job_id = tx
+                    .put_aggregation_job(&UnwrittenAggregationJob::new(
+                        *helper_task.id(),
+                        aggregation_param,
+                        (),
+                        Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
+                        AggregationJobState::Active {
+                            helper_aggregation_job_id,
+                        },
+                        AggregationJobStep::from(0),
+                    ))
+                    .await
+                    .unwrap();
                 tx.put_report_aggregation(&ReportAggregation::<0, dummy::Vdaf>::new(
                     *helper_task.id(),
-                    aggregation_job_id,
+                    job_id,
                     *report_metadata.id(),
                     *report_metadata.time(),
                     0,
@@ -1391,7 +1416,9 @@ async fn aggregate_continue_leader_sends_non_continue_or_finish_transition() {
         )]),
     );
 
-    let resp = post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &router).await;
+    let resp =
+        post_aggregation_job_continue_and_decode(&task, aggregation_job_id, &request, &router)
+            .await;
     let verify_resps =
         assert_matches!(resp, Some(AggregationJobResp{verify_resps}) => verify_resps);
     assert_eq!(verify_resps.len(), 1);
@@ -1442,7 +1469,7 @@ async fn aggregate_continue_verify_step_fails() {
         &report_id,
         &13,
     );
-    let aggregation_job_id = random();
+    let helper_aggregation_job_id = random();
     let report_metadata = ReportMetadata::new(
         report_id,
         Time::from_seconds_since_epoch(54320, &TimePrecision::from_seconds(1)),
@@ -1475,20 +1502,22 @@ async fn aggregate_continue_verify_step_fails() {
                 )
                 .await
                 .unwrap();
-                tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
-                    *helper_task.id(),
-                    aggregation_job_id,
-                    aggregation_param,
-                    (),
-                    Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
-                    AggregationJobState::Active,
-                    AggregationJobStep::from(0),
-                ))
-                .await
-                .unwrap();
+                let aggregation_job_datastore_id = tx
+                    .put_aggregation_job(&UnwrittenAggregationJob::new(
+                        *helper_task.id(),
+                        aggregation_param,
+                        (),
+                        Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
+                        AggregationJobState::Active {
+                            helper_aggregation_job_id,
+                        },
+                        AggregationJobStep::from(0),
+                    ))
+                    .await
+                    .unwrap();
                 tx.put_report_aggregation(&ReportAggregation::<0, dummy::Vdaf>::new(
                     *helper_task.id(),
-                    aggregation_job_id,
+                    aggregation_job_datastore_id,
                     *report_metadata.id(),
                     *report_metadata.time(),
                     0,
@@ -1498,6 +1527,9 @@ async fn aggregate_continue_verify_step_fails() {
                     },
                 ))
                 .await
+                .unwrap();
+
+                Ok(aggregation_job_datastore_id)
             })
         })
         .await
@@ -1516,7 +1548,8 @@ async fn aggregate_continue_verify_step_fails() {
     );
 
     let aggregate_resp =
-        post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &router).await;
+        post_aggregation_job_continue_and_decode(&task, aggregation_job_id, &request, &router)
+            .await;
     assert_eq!(
         aggregate_resp,
         Some(AggregationJobResp {
@@ -1536,7 +1569,7 @@ async fn aggregate_continue_verify_step_fails() {
                 let aggregation_job = tx
                     .get_aggregation_job::<0, TimeInterval, dummy::Vdaf>(
                         task.id(),
-                        &aggregation_job_id,
+                        aggregation_job_datastore_id,
                     )
                     .await
                     .unwrap()
@@ -1546,7 +1579,7 @@ async fn aggregate_continue_verify_step_fails() {
                         &vdaf,
                         &Role::Helper,
                         task.id(),
-                        &aggregation_job_id,
+                        aggregation_job_datastore_id,
                         report_metadata.id(),
                     )
                     .await
@@ -1561,12 +1594,14 @@ async fn aggregate_continue_verify_step_fails() {
     assert_eq!(
         aggregation_job,
         AggregationJob::new(
+            aggregation_job_datastore_id,
             *task.id(),
-            aggregation_job_id,
             aggregation_param,
             (),
             Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
-            AggregationJobState::Finished,
+            AggregationJobState::Finished {
+                helper_aggregation_job_id
+            },
             AggregationJobStep::from(1),
         )
         .with_last_request_hash(aggregation_job.last_request_hash().unwrap())
@@ -1626,7 +1661,7 @@ async fn aggregate_continue_unexpected_transition() {
         &report_id,
         &13,
     );
-    let aggregation_job_id = random();
+    let helper_aggregation_job_id = random();
     let report_metadata = ReportMetadata::new(
         report_id,
         Time::from_seconds_since_epoch(54320, &TimePrecision::from_seconds(1)),
@@ -1649,20 +1684,22 @@ async fn aggregate_continue_unexpected_transition() {
                 )
                 .await
                 .unwrap();
-                tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
-                    *helper_task.id(),
-                    aggregation_job_id,
-                    aggregation_param,
-                    (),
-                    Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
-                    AggregationJobState::Active,
-                    AggregationJobStep::from(0),
-                ))
-                .await
-                .unwrap();
+                let job_id = tx
+                    .put_aggregation_job(&UnwrittenAggregationJob::new(
+                        *helper_task.id(),
+                        aggregation_param,
+                        (),
+                        Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
+                        AggregationJobState::Active {
+                            helper_aggregation_job_id,
+                        },
+                        AggregationJobStep::from(0),
+                    ))
+                    .await
+                    .unwrap();
                 tx.put_report_aggregation(&ReportAggregation::<0, dummy::Vdaf>::new(
                     *helper_task.id(),
-                    aggregation_job_id,
+                    job_id,
                     *report_metadata.id(),
                     *report_metadata.time(),
                     0,
@@ -1691,9 +1728,9 @@ async fn aggregate_continue_unexpected_transition() {
         )]),
     );
 
-    post_aggregation_job_expecting_error(
+    post_aggregation_job_continue_expecting_error(
         &task,
-        &aggregation_job_id,
+        helper_aggregation_job_id,
         &request,
         &router,
         StatusCode::BAD_REQUEST,
@@ -1756,7 +1793,7 @@ async fn aggregate_continue_out_of_order_transition() {
         Time::from_seconds_since_epoch(54320, &TimePrecision::from_seconds(1)),
         Vec::new(),
     );
-    let aggregation_job_id = random();
+    let helper_aggregation_job_id = random();
 
     // Setup datastore.
     datastore
@@ -1785,21 +1822,23 @@ async fn aggregate_continue_out_of_order_transition() {
                 .await
                 .unwrap();
 
-                tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
-                    *helper_task.id(),
-                    aggregation_job_id,
-                    aggregation_param,
-                    (),
-                    Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
-                    AggregationJobState::Active,
-                    AggregationJobStep::from(0),
-                ))
-                .await
-                .unwrap();
+                let job_id = tx
+                    .put_aggregation_job(&UnwrittenAggregationJob::new(
+                        *helper_task.id(),
+                        aggregation_param,
+                        (),
+                        Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
+                        AggregationJobState::Active {
+                            helper_aggregation_job_id,
+                        },
+                        AggregationJobStep::from(0),
+                    ))
+                    .await
+                    .unwrap();
 
                 tx.put_report_aggregation(&ReportAggregation::<0, dummy::Vdaf>::new(
                     *helper_task.id(),
-                    aggregation_job_id,
+                    job_id,
                     *report_metadata_0.id(),
                     *report_metadata_0.time(),
                     0,
@@ -1812,7 +1851,7 @@ async fn aggregate_continue_out_of_order_transition() {
                 .unwrap();
                 tx.put_report_aggregation(&ReportAggregation::<0, dummy::Vdaf>::new(
                     *helper_task.id(),
-                    aggregation_job_id,
+                    job_id,
                     *report_metadata_1.id(),
                     *report_metadata_1.time(),
                     1,
@@ -1848,9 +1887,9 @@ async fn aggregate_continue_out_of_order_transition() {
             ),
         ]),
     );
-    post_aggregation_job_expecting_error(
+    post_aggregation_job_continue_expecting_error(
         &task,
-        &aggregation_job_id,
+        helper_aggregation_job_id,
         &request,
         &router,
         StatusCode::BAD_REQUEST,
@@ -1884,7 +1923,7 @@ async fn aggregate_continue_for_non_waiting_aggregation() {
     .with_time_precision(time_precision)
     .build();
     let helper_task = task.helper_view().unwrap();
-    let aggregation_job_id = random();
+    let helper_aggregation_job_id = random();
     let report_metadata = ReportMetadata::new(
         ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
         Time::from_seconds_since_epoch(54320, &TimePrecision::from_seconds(1)),
@@ -1906,20 +1945,22 @@ async fn aggregate_continue_for_non_waiting_aggregation() {
                 )
                 .await
                 .unwrap();
-                tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
-                    *helper_task.id(),
-                    aggregation_job_id,
-                    dummy::AggregationParam(0),
-                    (),
-                    Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
-                    AggregationJobState::Active,
-                    AggregationJobStep::from(0),
-                ))
-                .await
-                .unwrap();
+                let job_id = tx
+                    .put_aggregation_job(&UnwrittenAggregationJob::new(
+                        *helper_task.id(),
+                        dummy::AggregationParam(0),
+                        (),
+                        Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
+                        AggregationJobState::Active {
+                            helper_aggregation_job_id,
+                        },
+                        AggregationJobStep::from(0),
+                    ))
+                    .await
+                    .unwrap();
                 tx.put_report_aggregation(&ReportAggregation::<0, dummy::Vdaf>::new(
                     *helper_task.id(),
-                    aggregation_job_id,
+                    job_id,
                     *report_metadata.id(),
                     *report_metadata.time(),
                     0,
@@ -1945,9 +1986,9 @@ async fn aggregate_continue_for_non_waiting_aggregation() {
             },
         )]),
     );
-    post_aggregation_job_expecting_error(
+    post_aggregation_job_continue_expecting_error(
         &task,
-        &aggregation_job_id,
+        helper_aggregation_job_id,
         &request,
         &router,
         StatusCode::BAD_REQUEST,

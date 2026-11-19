@@ -14,7 +14,7 @@ use janus_aggregator_core::{
         models::{
             AcquiredAggregationJob, AggregationJob, AggregationJobDatastoreId, AggregationJobState,
             BatchAggregation, BatchAggregationState, LeaderStoredReport, Lease, ReportAggregation,
-            ReportAggregationState, merge_batch_aggregations_by_batch,
+            ReportAggregationState, UnwrittenAggregationJob, merge_batch_aggregations_by_batch,
         },
         task_counters::TaskAggregationCounter,
         test_util::{EphemeralDatastore, ephemeral_datastore},
@@ -24,7 +24,7 @@ use janus_aggregator_core::{
 };
 use janus_core::{
     Runtime,
-    auth_tokens::test_util::MatchAuthenticationToken,
+    auth_tokens::test_util::MockExt,
     hpke::HpkeKeypair,
     initialize_rustls,
     report_id::ReportIdChecksumExt,
@@ -187,8 +187,7 @@ async fn aggregation_job_driver() {
             }
 
             let job_id = tx
-                .put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
-                    AggregationJobDatastoreId::TEST,
+                .put_aggregation_job(&UnwrittenAggregationJob::new(
                     *task.id(),
                     aggregation_param,
                     (),
@@ -354,16 +353,14 @@ async fn aggregation_job_driver() {
         mocked_aggregate.assert_async().await;
     }
 
-    let want_aggregation_job: AggregationJob<0, TimeInterval, _> =
-        AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
-            *task.id(),
-            aggregation_job_id,
-            aggregation_param,
-            (),
-            Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
-            AggregationJobState::Finished,
-            AggregationJobStep::from(2),
-        );
+    let want_aggregation_job: AggregationJob<0, TimeInterval, _> = UnwrittenAggregationJob::new(
+        aggregation_job_id,
+        aggregation_param,
+        (),
+        Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
+        AggregationJobState::Finished,
+        AggregationJobStep::from(2),
+    );
     let want_accepted_report_aggregation = ReportAggregation::<0, dummy::Vdaf>::new(
         *task.id(),
         aggregation_job_id,
@@ -583,7 +580,6 @@ async fn leader_sync_time_interval_aggregation_job_init_single_step() {
         Vec::from([Extension::new(ExtensionType::Taskbind, Vec::new())]),
         &transcript,
     );
-    let aggregation_job_id = random();
 
     let lease = ds
         .run_unnamed_tx(|tx| {
@@ -609,21 +605,17 @@ async fn leader_sync_time_interval_aggregation_job_init_single_step() {
                         .unwrap();
                 }
 
-                tx.put_aggregation_job(&AggregationJob::<
-                    VERIFY_KEY_LENGTH_PRIO3,
-                    TimeInterval,
-                    Prio3Count,
-                >::new(
-                    *task.id(),
-                    aggregation_job_id,
-                    (),
-                    (),
-                    Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
-                    AggregationJobState::Active,
-                    AggregationJobStep::from(0),
-                ))
-                .await
-                .unwrap();
+                let job_id = tx
+                    .put_aggregation_job(&UnwrittenAggregationJob::new(
+                        *task.id(),
+                        (),
+                        (),
+                        Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
+                        AggregationJobState::LeaderInit,
+                        AggregationJobStep::from(0),
+                    ))
+                    .await
+                    .unwrap();
 
                 for (ord, report) in [
                     &report,
@@ -635,7 +627,7 @@ async fn leader_sync_time_interval_aggregation_job_init_single_step() {
                 .enumerate()
                 {
                     tx.put_report_aggregation(
-                        &report.as_leader_init_report_aggregation(aggregation_job_id, ord as u64),
+                        &report.as_leader_init_report_aggregation(job_id, ord as u64),
                     )
                     .await
                     .unwrap();
@@ -672,10 +664,6 @@ async fn leader_sync_time_interval_aggregation_job_init_single_step() {
         .await
         .unwrap();
     assert_eq!(lease.leased().task_id(), task.id());
-    assert_eq!(
-        lease.leased().aggregation_job_datastore_id(),
-        &aggregation_job_id
-    );
 
     // Setup: prepare mocked HTTP response. (first an error response, then a success)
     // (This is fragile in that it expects the leader request to be deterministically encoded.
@@ -709,24 +697,15 @@ async fn leader_sync_time_interval_aggregation_job_init_single_step() {
         )]),
     };
     let mocked_aggregate_failure = server
-        .mock(
-            "PUT",
-            task.aggregation_job_uri(&aggregation_job_id, None)
-                .unwrap()
-                .path(),
-        )
+        .mock("POST", task.aggregation_job_creation_uri().unwrap().path())
         .with_status(500)
         .with_header("Content-Type", "application/problem+json")
         .with_body("{\"type\": \"urn:ietf:params:ppm:dap:error:unauthorizedRequest\"}")
         .create_async()
         .await;
+    let helper_aggregation_job_id = random();
     let mocked_aggregate_success = server
-        .mock(
-            "PUT",
-            task.aggregation_job_uri(&aggregation_job_id, None)
-                .unwrap()
-                .path(),
-        )
+        .mock("POST", task.aggregation_job_creation_uri().unwrap().path())
         .match_authentication_token(agg_auth_token)
         .match_header(
             CONTENT_TYPE.as_str(),

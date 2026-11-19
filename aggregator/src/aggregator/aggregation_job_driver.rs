@@ -877,7 +877,7 @@ where
             &self.http_client,
             self.backoff.build(),
             Method::POST,
-            task.aggregation_job_uri(&aggregation_job_dap_id, None)?,
+            task.aggregation_job_uri(aggregation_job_dap_id, Some(aggregation_job.step()))?,
             AGGREGATION_JOB_ROUTE,
             Some(RequestBody {
                 content_type: AggregationJobContinueReq::MEDIA_TYPE,
@@ -897,7 +897,6 @@ where
             .map(parse_retry_after)
             .transpose()?;
         let body = http_response.body();
-        // TODO(timg): need to check for a location header here so leader can figure out the job ID
         let resp = if !body.is_empty() {
             check_content_type::<AggregationJobResp>(http_response.headers())
                 .map_err(|e| Error::BadContentType(e.into()))?;
@@ -979,7 +978,7 @@ where
             &self.http_client,
             self.backoff.build(),
             Method::GET,
-            task.aggregation_job_uri(&aggregation_job_dap_id, Some(aggregation_job.step()))?,
+            task.aggregation_job_uri(aggregation_job_dap_id, Some(aggregation_job.step()))?,
             AGGREGATION_JOB_ROUTE,
             None,
             // The only way a task wouldn't have an aggregator auth token in it is in the taskprov
@@ -1574,7 +1573,7 @@ where
                 self.keypair_use_counter.clone(),
             ),
             &task,
-            &aggregation_job,
+            aggregation_job.aggregation_parameter(),
             report_aggregations,
         )
         .await?;
@@ -1660,8 +1659,8 @@ where
                 self.aggregate_step_failure_counter.clone(),
                 &task_aggregation_counters,
             ),
-            &task,
-            &aggregation_job,
+            *task.id(),
+            aggregation_job.aggregation_parameter(),
             report_aggregations,
         )
         .await;
@@ -1806,8 +1805,9 @@ where
                         .map(|ra| WritableReportAggregation::new(ra, None))
                         .collect();
 
-                    let aggregation_job_uri =
-                        task.aggregation_job_uri(aggregation_job.dap_id().unwrap(), None);
+                    let aggregation_job_uri = aggregation_job
+                        .dap_id()
+                        .map(|job_id| task.aggregation_job_uri(*job_id, None));
                     let aggregator_auth_token = task.aggregator_auth_token().cloned();
 
                     try_join!(
@@ -1835,20 +1835,23 @@ where
         // up in the HTTP request duration histogram.
         //
         // https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-09#section-4.5.2.2-20
-        let _ = send_request_to_helper(
-            &self.http_client,
-            self.backoff.build(),
-            Method::DELETE,
-            aggregation_job_uri?,
-            AGGREGATION_JOB_ROUTE,
-            None,
-            // The only way a task wouldn't have an aggregator auth token in it is in the taskprov
-            // case, and Janus never acts as the leader with taskprov enabled.
-            &aggregator_auth_token
-                .ok_or_else(|| Error::InvalidConfiguration("task has no aggregator auth token"))?,
-            &self.http_request_duration_histogram,
-        )
-        .await;
+        if let Some(aggregation_job_uri) = aggregation_job_uri {
+            let _ = send_request_to_helper(
+                &self.http_client,
+                self.backoff.build(),
+                Method::DELETE,
+                aggregation_job_uri?,
+                AGGREGATION_JOB_ROUTE,
+                None,
+                // The only way a task wouldn't have an aggregator auth token in it is in the taskprov
+                // case, and Janus never acts as the leader with taskprov enabled.
+                &aggregator_auth_token.ok_or_else(|| {
+                    Error::InvalidConfiguration("task has no aggregator auth token")
+                })?,
+                &self.http_request_duration_histogram,
+            )
+            .await;
+        }
         Ok(())
     }
 

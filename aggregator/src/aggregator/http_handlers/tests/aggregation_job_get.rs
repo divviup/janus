@@ -5,6 +5,7 @@ use http::{Request, StatusCode};
 use janus_aggregator_core::{
     datastore::models::{
         AggregationJob, AggregationJobState, ReportAggregation, ReportAggregationState,
+        UnwrittenAggregationJob,
     },
     task::{
         AggregationMode, BatchMode, VerifyKey,
@@ -41,7 +42,7 @@ async fn aggregation_job_get_ready() {
         ..
     } = HttpHandlerTest::new().await;
 
-    let aggregation_job_id = random();
+    let helper_aggregation_job_id = random();
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
         AggregationMode::Asynchronous,
@@ -87,21 +88,23 @@ async fn aggregation_job_get_ready() {
                 .await
                 .unwrap();
 
-                tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
-                    *helper_task.id(),
-                    aggregation_job_id,
-                    aggregation_param,
-                    (),
-                    Interval::minimal(*report_metadata.time()).unwrap(),
-                    AggregationJobState::AwaitingRequest,
-                    AggregationJobStep::from(0),
-                ))
-                .await
-                .unwrap();
+                let job_id = tx
+                    .put_aggregation_job(&UnwrittenAggregationJob::new(
+                        *helper_task.id(),
+                        aggregation_param,
+                        (),
+                        Interval::minimal(*report_metadata.time()).unwrap(),
+                        AggregationJobState::AwaitingRequest {
+                            helper_aggregation_job_id,
+                        },
+                        AggregationJobStep::from(0),
+                    ))
+                    .await
+                    .unwrap();
 
                 tx.put_report_aggregation(&ReportAggregation::<0, dummy::Vdaf>::new(
                     *helper_task.id(),
-                    aggregation_job_id,
+                    job_id,
                     *report_metadata.id(),
                     *report_metadata.time(),
                     0,
@@ -125,7 +128,7 @@ async fn aggregation_job_get_ready() {
     // Send request.
     let aggregate_resp = get_aggregation_job_and_decode(
         &task,
-        &aggregation_job_id,
+        aggregation_job_id,
         Some(AggregationJobStep::from(0)),
         &router,
     )
@@ -212,21 +215,23 @@ async fn aggregation_job_get_unready() {
                 .await
                 .unwrap();
 
-                tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
-                    *helper_task.id(),
-                    aggregation_job_id,
-                    aggregation_param,
-                    (),
-                    Interval::minimal(*report_metadata.time()).unwrap(),
-                    AggregationJobState::Active,
-                    AggregationJobStep::from(0),
-                ))
-                .await
-                .unwrap();
+                let job_id = tx
+                    .put_aggregation_job(&UnwrittenAggregationJob::new(
+                        *helper_task.id(),
+                        aggregation_param,
+                        (),
+                        Interval::minimal(*report_metadata.time()).unwrap(),
+                        AggregationJobState::Active {
+                            helper_aggregation_job_id,
+                        },
+                        AggregationJobStep::from(0),
+                    ))
+                    .await
+                    .unwrap();
 
                 tx.put_report_aggregation(&ReportAggregation::<0, dummy::Vdaf>::new(
                     *helper_task.id(),
-                    aggregation_job_id,
+                    job_id,
                     *report_metadata.id(),
                     *report_metadata.time(),
                     0,
@@ -248,7 +253,7 @@ async fn aggregation_job_get_unready() {
     // Send request.
     let mut response = get_aggregation_job(
         &task,
-        &aggregation_job_id,
+        aggregation_job_id,
         Some(AggregationJobStep::from(0)),
         &router,
     )
@@ -316,21 +321,23 @@ async fn aggregation_job_get_wrong_step() {
                 .await
                 .unwrap();
 
-                tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
-                    *helper_task.id(),
-                    aggregation_job_id,
-                    aggregation_param,
-                    (),
-                    Interval::minimal(*report_metadata.time()).unwrap(),
-                    AggregationJobState::AwaitingRequest,
-                    AggregationJobStep::from(0),
-                ))
-                .await
-                .unwrap();
+                let job_id = tx
+                    .put_aggregation_job(&UnwrittenAggregationJob::new(
+                        *helper_task.id(),
+                        aggregation_param,
+                        (),
+                        Interval::minimal(*report_metadata.time()).unwrap(),
+                        AggregationJobState::AwaitingRequest {
+                            helper_aggregation_job_id,
+                        },
+                        AggregationJobStep::from(0),
+                    ))
+                    .await
+                    .unwrap();
 
                 tx.put_report_aggregation(&ReportAggregation::<0, dummy::Vdaf>::new(
                     *helper_task.id(),
-                    aggregation_job_id,
+                    job_id,
                     *report_metadata.id(),
                     *report_metadata.time(),
                     0,
@@ -354,7 +361,7 @@ async fn aggregation_job_get_wrong_step() {
     // Send request.
     let response = get_aggregation_job(
         &task,
-        &aggregation_job_id,
+        aggregation_job_id,
         Some(AggregationJobStep::from(1)),
         &router,
     )
@@ -421,21 +428,23 @@ async fn aggregation_job_get_missing_step() {
                 .await
                 .unwrap();
 
-                tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
-                    *helper_task.id(),
-                    aggregation_job_id,
-                    aggregation_param,
-                    (),
-                    Interval::minimal(*report_metadata.time()).unwrap(),
-                    AggregationJobState::AwaitingRequest,
-                    AggregationJobStep::from(0),
-                ))
-                .await
-                .unwrap();
+                let job_id = tx
+                    .put_aggregation_job(&UnwrittenAggregationJob::new(
+                        *helper_task.id(),
+                        aggregation_param,
+                        (),
+                        Interval::minimal(*report_metadata.time()).unwrap(),
+                        AggregationJobState::AwaitingRequest {
+                            helper_aggregation_job_id,
+                        },
+                        AggregationJobStep::from(0),
+                    ))
+                    .await
+                    .unwrap();
 
                 tx.put_report_aggregation(&ReportAggregation::<0, dummy::Vdaf>::new(
                     *helper_task.id(),
-                    aggregation_job_id,
+                    job_id,
                     *report_metadata.id(),
                     *report_metadata.time(),
                     0,
@@ -457,7 +466,7 @@ async fn aggregation_job_get_missing_step() {
         .unwrap();
 
     // Send request.
-    let response = get_aggregation_job(&task, &aggregation_job_id, None, &router).await;
+    let response = get_aggregation_job(&task, aggregation_job_id, None, &router).await;
 
     // Validate result.
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
@@ -520,21 +529,23 @@ async fn aggregation_job_get_sync() {
                 .await
                 .unwrap();
 
-                tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
-                    *helper_task.id(),
-                    aggregation_job_id,
-                    aggregation_param,
-                    (),
-                    Interval::minimal(*report_metadata.time()).unwrap(),
-                    AggregationJobState::AwaitingRequest,
-                    AggregationJobStep::from(0),
-                ))
-                .await
-                .unwrap();
+                let job_id = tx
+                    .put_aggregation_job(&UnwrittenAggregationJob::new(
+                        *helper_task.id(),
+                        aggregation_param,
+                        (),
+                        Interval::minimal(*report_metadata.time()).unwrap(),
+                        AggregationJobState::AwaitingRequest {
+                            helper_aggregation_job_id,
+                        },
+                        AggregationJobStep::from(0),
+                    ))
+                    .await
+                    .unwrap();
 
                 tx.put_report_aggregation(&ReportAggregation::<0, dummy::Vdaf>::new(
                     *helper_task.id(),
-                    aggregation_job_id,
+                    job_id,
                     *report_metadata.id(),
                     *report_metadata.time(),
                     0,
@@ -558,7 +569,7 @@ async fn aggregation_job_get_sync() {
     // Send request.
     let response = get_aggregation_job(
         &task,
-        &aggregation_job_id,
+        aggregation_job_id,
         Some(AggregationJobStep::from(0)),
         &router,
     )
@@ -570,7 +581,7 @@ async fn aggregation_job_get_sync() {
 
 async fn get_aggregation_job(
     task: &Task,
-    aggregation_job_id: &AggregationJobId,
+    aggregation_job_id: AggregationJobId,
     step: Option<AggregationJobStep>,
     router: &Router,
 ) -> http::Response<Body> {
@@ -589,7 +600,7 @@ async fn get_aggregation_job(
 
 async fn get_aggregation_job_and_decode(
     task: &Task,
-    aggregation_job_id: &AggregationJobId,
+    aggregation_job_id: AggregationJobId,
     step: Option<AggregationJobStep>,
     router: &Router,
 ) -> AggregationJobResp {

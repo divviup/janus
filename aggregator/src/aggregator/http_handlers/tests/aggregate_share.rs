@@ -83,7 +83,7 @@ impl AggregateShareTestCase {
 
     pub(super) async fn get_aggregate_share(
         &self,
-        aggregate_share_id: &AggregateShareId,
+        aggregate_share_id: AggregateShareId,
     ) -> http::Response<Body> {
         let req = Request::get(
             self.task
@@ -99,7 +99,7 @@ impl AggregateShareTestCase {
 
     pub(super) async fn delete_aggregate_share(
         &self,
-        aggregate_share_id: &AggregateShareId,
+        aggregate_share_id: AggregateShareId,
     ) -> http::Response<Body> {
         let req = Request::delete(
             self.task
@@ -1062,11 +1062,11 @@ async fn aggregate_share_request_get_poll_after_post() {
     let aggregate_share_id = aggregate_share_id_from_response(*test_case.task.id(), &response);
 
     // Try to GET the first ID again. It should be OK.
-    let response = test_case.get_aggregate_share(&aggregate_share_id).await;
+    let response = test_case.get_aggregate_share(aggregate_share_id).await;
     assert_eq!(response.status(), StatusCode::OK);
 
     // Ensure it's idempotent.
-    let mut response = test_case.get_aggregate_share(&aggregate_share_id).await;
+    let mut response = test_case.get_aggregate_share(aggregate_share_id).await;
     assert_eq!(response.status(), StatusCode::OK);
 
     assert_eq!(
@@ -1079,7 +1079,7 @@ async fn aggregate_share_request_get_poll_after_post() {
         .unwrap();
 
     // We should be able to delete it
-    let response = test_case.delete_aggregate_share(&aggregate_share_id).await;
+    let response = test_case.delete_aggregate_share(aggregate_share_id).await;
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
 }
 
@@ -1113,7 +1113,7 @@ async fn aggregate_share_request_get_poll_after_post_leader_selected() {
     assert_eq!(response.status(), StatusCode::OK);
     let aggregate_share_id = aggregate_share_id_from_response(*test_case.task.id(), &response);
 
-    let mut response = test_case.get_aggregate_share(&aggregate_share_id).await;
+    let mut response = test_case.get_aggregate_share(aggregate_share_id).await;
     assert_eq!(response.status(), StatusCode::OK);
 
     let aggregate_share_resp: AggregateShareMessage = decode_response_body(&mut response).await;
@@ -1157,7 +1157,7 @@ async fn aggregate_share_request_narrower_selector_than_query() {
     assert_eq!(response.status(), StatusCode::OK);
     let aggregate_share_id = aggregate_share_id_from_response(*test_case.task.id(), &response);
 
-    let mut response = test_case.get_aggregate_share(&aggregate_share_id).await;
+    let mut response = test_case.get_aggregate_share(aggregate_share_id).await;
     assert_eq!(response.status(), StatusCode::OK);
 
     let aggregate_share_resp: AggregateShareMessage = decode_response_body(&mut response).await;
@@ -1400,7 +1400,7 @@ async fn aggregate_share_request_get_unrecognized_id() {
     let nonexistent_aggregate_share_id = AggregateShareId::from([99u8; 16]);
 
     let mut response = test_case
-        .get_aggregate_share(&nonexistent_aggregate_share_id)
+        .get_aggregate_share(nonexistent_aggregate_share_id)
         .await;
     test_case.check_unrecognized_aggregate_share_response(
         response.status(),
@@ -1420,7 +1420,7 @@ async fn aggregate_share_delete_nonexistant() {
     let nonexistent_aggregate_share_id = AggregateShareId::from([99u8; 16]);
 
     let mut response = test_case
-        .delete_aggregate_share(&nonexistent_aggregate_share_id)
+        .delete_aggregate_share(nonexistent_aggregate_share_id)
         .await;
     test_case.check_unrecognized_aggregate_share_response(
         response.status(),
@@ -1546,11 +1546,11 @@ async fn recreate_deleted_aggregate_share_time_interval() {
     decode_response_body::<AggregateShareMessage>(&mut response).await;
     let aggregate_share_id = aggregate_share_id_from_response(*test_case.task.id(), &response);
 
-    let mut response = test_case.delete_aggregate_share(&aggregate_share_id).await;
+    let mut response = test_case.delete_aggregate_share(aggregate_share_id).await;
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
     assert!(take_response_body(&mut response).await.is_empty());
 
-    let mut response = test_case.get_aggregate_share(&aggregate_share_id).await;
+    let mut response = test_case.get_aggregate_share(aggregate_share_id).await;
     test_case.check_unrecognized_aggregate_share_response(
         response.status(),
         take_problem_details(&mut response).await,
@@ -1615,11 +1615,11 @@ async fn recreate_deleted_aggregate_share_leader_selected() {
     let aggregate_share_id = aggregate_share_id_from_response(*test_case.task.id(), &response);
     decode_response_body::<AggregateShareMessage>(&mut response).await;
 
-    let mut response = test_case.delete_aggregate_share(&aggregate_share_id).await;
+    let mut response = test_case.delete_aggregate_share(aggregate_share_id).await;
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
     assert!(take_response_body(&mut response).await.is_empty());
 
-    let mut response = test_case.get_aggregate_share(&aggregate_share_id).await;
+    let mut response = test_case.get_aggregate_share(aggregate_share_id).await;
     test_case.check_unrecognized_aggregate_share_response(
         response.status(),
         take_problem_details(&mut response).await,
@@ -1764,7 +1764,7 @@ async fn recreate_expired_aggregate_share_time_interval() {
     let aggregate_share_id = aggregate_share_id_from_response(*test_case.task.id(), &response);
     decode_response_body::<AggregateShareMessage>(&mut response).await;
 
-    let mut response = test_case.get_aggregate_share(&aggregate_share_id).await;
+    let mut response = test_case.get_aggregate_share(aggregate_share_id).await;
     assert_eq!(response.status(), StatusCode::OK);
     decode_response_body::<AggregateShareMessage>(&mut response).await;
 
@@ -1775,7 +1775,7 @@ async fn recreate_expired_aggregate_share_time_interval() {
 
     assert_eq!(
         test_case
-            .get_aggregate_share(&aggregate_share_id)
+            .get_aggregate_share(aggregate_share_id)
             .await
             .status(),
         StatusCode::NOT_FOUND,
@@ -1858,7 +1858,7 @@ async fn recreate_expired_aggregate_share_leader_selected() {
     let aggregate_share_id = aggregate_share_id_from_response(*test_case.task.id(), &response);
     decode_response_body::<AggregateShareMessage>(&mut response).await;
 
-    let mut response = test_case.get_aggregate_share(&aggregate_share_id).await;
+    let mut response = test_case.get_aggregate_share(aggregate_share_id).await;
     assert_eq!(response.status(), StatusCode::OK);
     decode_response_body::<AggregateShareMessage>(&mut response).await;
 
@@ -1869,7 +1869,7 @@ async fn recreate_expired_aggregate_share_leader_selected() {
 
     assert_eq!(
         test_case
-            .get_aggregate_share(&aggregate_share_id)
+            .get_aggregate_share(aggregate_share_id)
             .await
             .status(),
         StatusCode::NOT_FOUND,

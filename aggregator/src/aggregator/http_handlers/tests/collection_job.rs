@@ -317,14 +317,14 @@ async fn collection_job_get_request_unauthenticated_collection_jobs() {
 
     // Incorrect authentication token.
     let response = test_case
-        .get_collection_job_with_auth_token(&collection_job_id, Some(&random()))
+        .get_collection_job_with_auth_token(collection_job_id, Some(&random()))
         .await;
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
 
     // Aggregator authentication token.
     let response = test_case
         .get_collection_job_with_auth_token(
-            &collection_job_id,
+            collection_job_id,
             Some(test_case.task.aggregator_auth_token()),
         )
         .await;
@@ -332,7 +332,7 @@ async fn collection_job_get_request_unauthenticated_collection_jobs() {
 
     // Missing authentication token.
     let response = test_case
-        .get_collection_job_with_auth_token(&collection_job_id, None)
+        .get_collection_job_with_auth_token(collection_job_id, None)
         .await;
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }
@@ -380,7 +380,7 @@ async fn collection_job_get_request_no_such_collection_job() {
     let no_such_collection_job_id: CollectionJobId = random();
 
     let response = test_case
-        .get_collection_job(&no_such_collection_job_id)
+        .get_collection_job(no_such_collection_job_id)
         .await;
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
@@ -472,10 +472,10 @@ async fn recreate_deleted_collection_job_time_interval() {
             Interval::minimal(Time::from_time_precision_units(10)).unwrap(),
         )
         .await;
-    let response = test_case.delete_collection_job(&collection_job_id).await;
+    let response = test_case.delete_collection_job(collection_job_id).await;
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
-    let mut response = test_case.get_collection_job(&collection_job_id).await;
+    let mut response = test_case.get_collection_job(collection_job_id).await;
     test_case.check_gone_response(
         response.status(),
         take_problem_details(&mut response).await,
@@ -530,10 +530,10 @@ async fn recreate_deleted_collection_job_leader_selected() {
         )
         .await;
 
-    let response = test_case.delete_collection_job(&collection_job_id).await;
+    let response = test_case.delete_collection_job(collection_job_id).await;
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
-    let mut response = test_case.get_collection_job(&collection_job_id).await;
+    let mut response = test_case.get_collection_job(collection_job_id).await;
     test_case.check_gone_response(
         response.status(),
         take_problem_details(&mut response).await,
@@ -641,7 +641,7 @@ async fn recreate_expired_collection_job_time_interval() {
         2 * expiry.as_seconds(test_case.task.time_precision()) as i64,
     ));
 
-    let response = test_case.get_collection_job(&collection_job_id).await;
+    let response = test_case.get_collection_job(collection_job_id).await;
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
     // Re-creating the job with an identical request should be refused.
@@ -690,7 +690,7 @@ async fn recreate_expired_collection_job_leader_selected() {
         2 * expiry.as_seconds(test_case.task.time_precision()) as i64,
     ));
 
-    let response = test_case.get_collection_job(&collection_job_id).await;
+    let response = test_case.get_collection_job(collection_job_id).await;
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
     // Put another outstanding batch in the datastore to ensure subsequent job creation requests

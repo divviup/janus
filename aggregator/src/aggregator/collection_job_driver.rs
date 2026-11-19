@@ -447,7 +447,7 @@ impl CollectionJobDriver {
             CollectionJobState::Poll { aggregate_share_id } => {
                 let (response_id, http_response) = aggregate_share_request(
                     Method::GET,
-                    task.aggregate_share_uri(aggregate_share_id)?,
+                    task.aggregate_share_uri(*aggregate_share_id)?,
                     AGGREGATE_SHARE_ROUTE,
                     None,
                 )
@@ -475,7 +475,7 @@ impl CollectionJobDriver {
                     Some(
                         aggregate_share_request(
                             Method::DELETE,
-                            task.aggregate_share_uri(id)?,
+                            task.aggregate_share_uri(*id)?,
                             AGGREGATE_SHARE_ROUTE,
                             None,
                         )
@@ -1018,7 +1018,7 @@ mod tests {
     };
     use janus_core::{
         Runtime,
-        auth_tokens::test_util::MatchAuthenticationToken,
+        auth_tokens::test_util::MockExt,
         initialize_rustls,
         retries::test_util::LimitedRetryer,
         test_util::{install_test_trace_subscriber, runtime::TestRuntimeManager},
@@ -2028,9 +2028,7 @@ mod tests {
             server
                 .mock(
                     "DELETE",
-                    task.aggregate_share_uri(&aggregate_share_id)
-                        .unwrap()
-                        .path(),
+                    task.aggregate_share_uri(aggregate_share_id).unwrap().path(),
                 )
                 .with_status(mock_delete_returned_status.unwrap())
                 .create_async()
@@ -2355,9 +2353,7 @@ mod tests {
         let mocked_async_aggregate_share_ready = server
             .mock(
                 "GET",
-                task.aggregate_share_uri(&aggregate_share_id)
-                    .unwrap()
-                    .path(),
+                task.aggregate_share_uri(aggregate_share_id).unwrap().path(),
             )
             .match_authentication_token(agg_auth_token)
             .with_status(200)

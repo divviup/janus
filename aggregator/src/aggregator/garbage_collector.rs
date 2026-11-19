@@ -182,6 +182,7 @@ mod tests {
                 AggregateShareJob, AggregateShareJobState, AggregationJob, AggregationJobState,
                 BatchAggregation, BatchAggregationState, CollectionJob, CollectionJobState,
                 LeaderStoredReport, ReportAggregation, ReportAggregationState,
+                UnwrittenAggregationJob,
             },
             test_util::ephemeral_datastore,
         },
@@ -247,24 +248,24 @@ mod tests {
                     tx.put_client_report(&report).await.unwrap();
 
                     // Aggregation artifacts.
-                    let aggregation_job_id = random();
-                    tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
-                        *task.id(),
-                        aggregation_job_id,
-                        aggregation_param,
-                        (),
-                        Interval::minimal(client_timestamp).unwrap(),
-                        AggregationJobState::Active,
-                        AggregationJobStep::from(0),
-                    ))
-                    .await
-                    .unwrap();
+                    let helper_aggregation_job_id = random();
+                    let job_id = tx
+                        .put_aggregation_job(&UnwrittenAggregationJob::new(
+                            *task.id(),
+                            aggregation_param,
+                            (),
+                            Interval::minimal(client_timestamp).unwrap(),
+                            AggregationJobState::Active {
+                                helper_aggregation_job_id,
+                            },
+                            AggregationJobStep::from(0),
+                        ))
+                        .await
+                        .unwrap();
 
-                    tx.put_report_aggregation(
-                        &report.as_leader_init_report_aggregation(aggregation_job_id, 0),
-                    )
-                    .await
-                    .unwrap();
+                    tx.put_report_aggregation(&report.as_leader_init_report_aggregation(job_id, 0))
+                        .await
+                        .unwrap();
 
                     // Collection artifacts.
                     //
@@ -436,22 +437,24 @@ mod tests {
                     .unwrap();
 
                     // Aggregation artifacts.
-                    let aggregation_job_id = random();
-                    tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
-                        *task.id(),
-                        aggregation_job_id,
-                        aggregation_param,
-                        (),
-                        Interval::minimal(client_timestamp).unwrap(),
-                        AggregationJobState::Active,
-                        AggregationJobStep::from(0),
-                    ))
-                    .await
-                    .unwrap();
+                    let helper_aggregation_job_id = random();
+                    let job_id = tx
+                        .put_aggregation_job(&UnwrittenAggregationJob::new(
+                            *task.id(),
+                            aggregation_param,
+                            (),
+                            Interval::minimal(client_timestamp).unwrap(),
+                            AggregationJobState::Active {
+                                helper_aggregation_job_id,
+                            },
+                            AggregationJobStep::from(0),
+                        ))
+                        .await
+                        .unwrap();
 
                     tx.put_report_aggregation(&ReportAggregation::<0, dummy::Vdaf>::new(
                         *task.id(),
-                        aggregation_job_id,
+                        job_id,
                         *report_share.metadata().id(),
                         client_timestamp,
                         0,
@@ -632,19 +635,18 @@ mod tests {
 
                     // Aggregation artifacts.
                     let batch_id = random();
-                    let aggregation_job = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
+                    let aggregation_job = UnwrittenAggregationJob::new(
                         *task.id(),
-                        random(),
                         aggregation_param,
                         batch_id,
                         Interval::minimal(client_timestamp).unwrap(),
-                        AggregationJobState::Active,
+                        AggregationJobState::Active {
+                            helper_aggregation_job_id: random(),
+                        },
                         AggregationJobStep::from(0),
                     );
-                    tx.put_aggregation_job(&aggregation_job).await.unwrap();
-
-                    let report_aggregation =
-                        report.as_leader_init_report_aggregation(*aggregation_job.id(), 0);
+                    let job_id = tx.put_aggregation_job(&aggregation_job).await.unwrap();
+                    let report_aggregation = report.as_leader_init_report_aggregation(job_id, 0);
                     tx.put_report_aggregation(&report_aggregation)
                         .await
                         .unwrap();
@@ -834,20 +836,21 @@ mod tests {
 
                     // Aggregation artifacts.
                     let batch_id = random();
-                    let aggregation_job = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
+                    let aggregation_job = UnwrittenAggregationJob::new(
                         *task.id(),
-                        random(),
                         aggregation_param,
                         batch_id,
                         Interval::minimal(client_timestamp).unwrap(),
-                        AggregationJobState::Active,
+                        AggregationJobState::Active {
+                            helper_aggregation_job_id: random(),
+                        },
                         AggregationJobStep::from(0),
                     );
-                    tx.put_aggregation_job(&aggregation_job).await.unwrap();
+                    let job_id = tx.put_aggregation_job(&aggregation_job).await.unwrap();
 
                     let report_aggregation = ReportAggregation::<0, dummy::Vdaf>::new(
                         *task.id(),
-                        *aggregation_job.id(),
+                        job_id,
                         *report_share.metadata().id(),
                         client_timestamp,
                         0,

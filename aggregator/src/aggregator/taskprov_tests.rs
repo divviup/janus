@@ -15,7 +15,7 @@ use janus_aggregator_core::{
         models::{
             AggregateShareJob, AggregateShareJobState, AggregationJob, AggregationJobState,
             BatchAggregation, BatchAggregationState, HpkeKeyState, ReportAggregation,
-            ReportAggregationState,
+            ReportAggregationState, UnwrittenAggregationJob,
         },
         test_util::{EphemeralDatastore, ephemeral_datastore},
     },
@@ -30,6 +30,7 @@ use janus_core::{
     auth_tokens::test_util::WithAuthenticationToken,
     hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
     report_id::ReportIdChecksumExt,
+    retries::HeaderMapExt,
     taskprov::TASKPROV_HEADER,
     test_util::{VdafTranscript, install_test_trace_subscriber, runtime::TestRuntime},
     time::{Clock, DateTimeExt, MockClock},
@@ -297,7 +298,6 @@ async fn taskprov_aggregate_init() {
                 .clone(),
         )]),
     );
-    let aggregation_job_id_1: AggregationJobId = random();
 
     let (transcript_2, report_share_2, aggregation_param_2) = test.next_report_share();
     let batch_id_2 = random();
@@ -315,24 +315,18 @@ async fn taskprov_aggregate_init() {
                 .clone(),
         )]),
     );
-    let aggregation_job_id_2: AggregationJobId = random();
 
-    for (name, request, aggregation_job_id, report_share) in [
-        ("request_1", request_1, aggregation_job_id_1, report_share_1),
-        ("request_2", request_2, aggregation_job_id_2, report_share_2),
+    for (name, request, report_share) in [
+        ("request_1", request_1, report_share_1),
+        ("request_2", request_2, report_share_2),
     ] {
         let response = test
             .router
             .clone()
             .oneshot(
                 Request::builder()
-                    .method("PUT")
-                    .uri(
-                        test.task
-                            .aggregation_job_uri(&aggregation_job_id, None)
-                            .unwrap()
-                            .path(),
-                    )
+                    .method("POST")
+                    .uri(test.task.aggregation_job_creation_uri().unwrap().path())
                     .header(AUTHORIZATION, "Bearer invalid_token")
                     .header(CONTENT_TYPE, AggregationJobInitializeReq::MEDIA_TYPE)
                     .header(
@@ -351,13 +345,8 @@ async fn taskprov_aggregate_init() {
             .clone()
             .oneshot(
                 Request::builder()
-                    .method("PUT")
-                    .uri(
-                        test.task
-                            .aggregation_job_uri(&aggregation_job_id, None)
-                            .unwrap()
-                            .path(),
-                    )
+                    .method("POST")
+                    .uri(test.task.aggregation_job_creation_uri().unwrap().path())
                     .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
                     .header(CONTENT_TYPE, AggregationJobInitializeReq::MEDIA_TYPE)
                     .header(
@@ -370,7 +359,7 @@ async fn taskprov_aggregate_init() {
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::CREATED, "{name}");
+        assert_eq!(response.status(), StatusCode::OK, "{name}");
         assert_eq!(
             response.headers().get("content-type").unwrap(),
             AggregationJobResp::MEDIA_TYPE,
@@ -414,7 +403,6 @@ async fn taskprov_aggregate_init() {
     assert_eq!(aggregation_jobs.len(), 2);
     assert!(
         aggregation_jobs[0].task_id().eq(&test.task_id)
-            && aggregation_jobs[0].id().eq(&aggregation_job_id_1)
             && aggregation_jobs[0]
                 .partial_batch_identifier()
                 .eq(&batch_id_1)
@@ -422,7 +410,6 @@ async fn taskprov_aggregate_init() {
     );
     assert!(
         aggregation_jobs[1].task_id().eq(&test.task_id)
-            && aggregation_jobs[1].id().eq(&aggregation_job_id_2)
             && aggregation_jobs[1]
                 .partial_batch_identifier()
                 .eq(&batch_id_2)
@@ -470,13 +457,8 @@ async fn taskprov_aggregate_init_without_task_interval() {
         .clone()
         .oneshot(
             Request::builder()
-                .method("PUT")
-                .uri(
-                    test.task
-                        .aggregation_job_uri(&aggregation_job_id, None)
-                        .unwrap()
-                        .path(),
-                )
+                .method("POST")
+                .uri(test.task.aggregation_job_creation_uri().unwrap().path())
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
                 .header(CONTENT_TYPE, AggregationJobInitializeReq::MEDIA_TYPE)
                 .header(
@@ -488,7 +470,7 @@ async fn taskprov_aggregate_init_without_task_interval() {
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(response.status(), StatusCode::OK);
 
     // The provisioned task must carry no time bounds, mirroring the absent task_interval.
     let got_task = test
@@ -530,13 +512,8 @@ async fn taskprov_aggregate_init_missing_extension() {
         .clone()
         .oneshot(
             Request::builder()
-                .method("PUT")
-                .uri(
-                    test.task
-                        .aggregation_job_uri(&aggregation_job_id, None)
-                        .unwrap()
-                        .path(),
-                )
+                .method("POST")
+                .uri(test.task.aggregation_job_creation_uri().unwrap().path())
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
                 .header(CONTENT_TYPE, AggregationJobInitializeReq::MEDIA_TYPE)
                 .header(
@@ -549,7 +526,7 @@ async fn taskprov_aggregate_init_missing_extension() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
         response.headers().get("content-type").unwrap(),
         AggregationJobResp::MEDIA_TYPE,
@@ -625,13 +602,8 @@ async fn taskprov_aggregate_init_malformed_extension() {
         .clone()
         .oneshot(
             Request::builder()
-                .method("PUT")
-                .uri(
-                    test.task
-                        .aggregation_job_uri(&aggregation_job_id, None)
-                        .unwrap()
-                        .path(),
-                )
+                .method("POST")
+                .uri(test.task.aggregation_job_creation_uri().unwrap().path())
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
                 .header(CONTENT_TYPE, AggregationJobInitializeReq::MEDIA_TYPE)
                 .header(
@@ -644,7 +616,7 @@ async fn taskprov_aggregate_init_malformed_extension() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
         response.headers().get("content-type").unwrap(),
         AggregationJobResp::MEDIA_TYPE,
@@ -725,13 +697,8 @@ async fn taskprov_opt_out_task_ended_regression() {
         .clone()
         .oneshot(
             Request::builder()
-                .method("PUT")
-                .uri(
-                    test.task
-                        .aggregation_job_uri(&aggregation_job_id, None)
-                        .unwrap()
-                        .path(),
-                )
+                .method("POST")
+                .uri(test.task.aggregation_job_creation_uri().unwrap().path())
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
                 .header(CONTENT_TYPE, AggregationJobInitializeReq::MEDIA_TYPE)
                 .header(
@@ -789,14 +756,9 @@ async fn taskprov_opt_out_mismatched_task_id() {
         .clone()
         .oneshot(
             Request::builder()
-                .method("PUT")
+                .method("POST")
                 // Use the test case task's ID.
-                .uri(
-                    test.task
-                        .aggregation_job_uri(&aggregation_job_id, None)
-                        .unwrap()
-                        .path(),
-                )
+                .uri(test.task.aggregation_job_creation_uri().unwrap().path())
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
                 .header(CONTENT_TYPE, AggregationJobInitializeReq::MEDIA_TYPE)
                 .header(
@@ -841,8 +803,6 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
         )]),
     );
 
-    let aggregation_job_id: AggregationJobId = random();
-
     let another_task_config = TaskConfigurationBuilder::new(
         Vec::from("foobar".as_bytes()),
         // Attempt to configure leader as a helper.
@@ -868,10 +828,8 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
         .clone()
         .oneshot(
             Request::builder()
-                .method("PUT")
-                .uri(format!(
-                    "/tasks/{another_task_id}/aggregation_jobs/{aggregation_job_id}"
-                ))
+                .method("POST")
+                .uri(format!("/tasks/{another_task_id}/aggregation_jobs"))
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
                 .header(CONTENT_TYPE, AggregationJobInitializeReq::MEDIA_TYPE)
                 .header(
@@ -915,8 +873,6 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
         )]),
     );
 
-    let aggregation_job_id: AggregationJobId = random();
-
     let another_task_config = TaskConfigurationBuilder::new(
         Vec::from("foobar".as_bytes()),
         // Some non-existent aggregator.
@@ -942,10 +898,8 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
         .clone()
         .oneshot(
             Request::builder()
-                .method("PUT")
-                .uri(format!(
-                    "/tasks/{another_task_id}/aggregation_jobs/{aggregation_job_id}"
-                ))
+                .method("POST")
+                .uri(format!("/tasks/{another_task_id}/aggregation_jobs"))
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
                 .header(CONTENT_TYPE, AggregationJobInitializeReq::MEDIA_TYPE)
                 .header(
@@ -989,8 +943,6 @@ async fn taskprov_opt_out_unsupported_extension() {
         )]),
     );
 
-    let aggregation_job_id: AggregationJobId = random();
-
     let another_task_config = TaskConfigurationBuilder::new(
         Vec::from("foobar".as_bytes()),
         "https://leader.example.com/".as_bytes().try_into().unwrap(),
@@ -1019,10 +971,8 @@ async fn taskprov_opt_out_unsupported_extension() {
         .clone()
         .oneshot(
             Request::builder()
-                .method("PUT")
-                .uri(format!(
-                    "/tasks/{another_task_id}/aggregation_jobs/{aggregation_job_id}"
-                ))
+                .method("POST")
+                .uri(format!("/tasks/{another_task_id}/aggregation_jobs"))
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
                 .header(CONTENT_TYPE, AggregationJobInitializeReq::MEDIA_TYPE)
                 .header(
@@ -1062,7 +1012,7 @@ async fn taskprov_opt_out_unsupported_extension() {
 async fn taskprov_aggregate_continue() {
     let test = TaskprovTestCase::new().await;
 
-    let aggregation_job_id = random();
+    let helper_aggregation_job_id = random();
     let batch_id = random();
     let aggregate_share_id = random();
 
@@ -1090,20 +1040,22 @@ async fn taskprov_aggregate_continue() {
                 )
                 .await?;
 
-                tx.put_aggregation_job(&AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
-                    *task.id(),
-                    aggregation_job_id,
-                    aggregation_param,
-                    batch_id,
-                    Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
-                    AggregationJobState::Active,
-                    AggregationJobStep::from(0),
-                ))
-                .await?;
+                let job_id = tx
+                    .put_aggregation_job(&UnwrittenAggregationJob::new(
+                        *task.id(),
+                        aggregation_param,
+                        batch_id,
+                        Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
+                        AggregationJobState::Active {
+                            helper_aggregation_job_id,
+                        },
+                        AggregationJobStep::from(0),
+                    ))
+                    .await?;
 
                 tx.put_report_aggregation::<0, dummy::Vdaf>(&ReportAggregation::new(
                     *task.id(),
-                    aggregation_job_id,
+                    job_id,
                     *report_share.metadata().id(),
                     *report_share.metadata().time(),
                     0,
@@ -1156,7 +1108,7 @@ async fn taskprov_aggregate_continue() {
                 .method("POST")
                 .uri(
                     test.task
-                        .aggregation_job_uri(&aggregation_job_id, None)
+                        .aggregation_job_uri(helper_aggregation_job_id, None)
                         .unwrap()
                         .path(),
                 )
@@ -1181,7 +1133,7 @@ async fn taskprov_aggregate_continue() {
                 .method("POST")
                 .uri(
                     test.task
-                        .aggregation_job_uri(&aggregation_job_id, None)
+                        .aggregation_job_uri(helper_aggregation_job_id, None)
                         .unwrap()
                         .path(),
                 )
@@ -1347,7 +1299,6 @@ async fn end_to_end() {
     let test = TaskprovTestCase::new().await;
 
     let batch_id = random();
-    let aggregation_job_id = random();
 
     let (transcript, report_share, aggregation_param) = test.next_report_share();
     let aggregation_job_init_request = AggregationJobInitializeReq::new(
@@ -1368,13 +1319,8 @@ async fn end_to_end() {
         .clone()
         .oneshot(
             Request::builder()
-                .method("PUT")
-                .uri(
-                    test.task
-                        .aggregation_job_uri(&aggregation_job_id, None)
-                        .unwrap()
-                        .path(),
-                )
+                .method("POST")
+                .uri(test.task.aggregation_job_creation_uri().unwrap().path())
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
                 .header(CONTENT_TYPE, AggregationJobInitializeReq::MEDIA_TYPE)
                 .header(
@@ -1390,6 +1336,11 @@ async fn end_to_end() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::CREATED);
+    let aggregation_job_id = response
+        .headers()
+        .aggregation_job_id_from_location(test.task_id)
+        .unwrap()
+        .unwrap();
     assert_eq!(
         response.headers().get("content-type").unwrap(),
         AggregationJobResp::MEDIA_TYPE,
@@ -1431,7 +1382,7 @@ async fn end_to_end() {
                 .method("POST")
                 .uri(
                     test.task
-                        .aggregation_job_uri(&aggregation_job_id, None)
+                        .aggregation_job_uri(aggregation_job_id, None)
                         .unwrap()
                         .path(),
                 )
@@ -1539,7 +1490,6 @@ async fn end_to_end_sumvec_hmac() {
     let measurement = Vec::from([255, 1, 10, 20, 30, 0, 99, 100, 0, 0, 0, 0]);
     let test = TaskprovTestCase::with_vdaf(vdaf_config, vdaf, measurement, ()).await;
     let batch_id = random();
-    let aggregation_job_id = random();
     let (transcript, report_share, aggregation_param) = test.next_report_share();
     let aggregation_job_init_request = AggregationJobInitializeReq::new(
         0,
@@ -1559,13 +1509,8 @@ async fn end_to_end_sumvec_hmac() {
         .clone()
         .oneshot(
             Request::builder()
-                .method("PUT")
-                .uri(
-                    test.task
-                        .aggregation_job_uri(&aggregation_job_id, None)
-                        .unwrap()
-                        .path(),
-                )
+                .method("POST")
+                .uri(test.task.aggregation_job_creation_uri().unwrap().path())
                 .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
                 .header(CONTENT_TYPE, AggregationJobInitializeReq::MEDIA_TYPE)
                 .header(
@@ -1580,7 +1525,7 @@ async fn end_to_end_sumvec_hmac() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
         response.headers().get("content-type").unwrap(),
         AggregationJobResp::MEDIA_TYPE,

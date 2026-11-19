@@ -6,7 +6,7 @@ use axum::{
     extract::{FromRequestParts, Path, State as AxumState},
     middleware,
     response::{IntoResponse, Response},
-    routing::{get, post, put},
+    routing::{get, post},
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use bytes::Bytes;
@@ -25,7 +25,8 @@ use janus_core::{
     Runtime,
     auth_tokens::{AuthenticationToken, DAP_AUTH_HEADER},
     http::{
-        aggregate_share_location, check_content_type, collection_job_location, extract_bearer_token,
+        aggregate_share_location, aggregation_job_location, check_content_type,
+        collection_job_location, extract_bearer_token,
     },
     taskprov::TASKPROV_HEADER,
 };
@@ -52,7 +53,7 @@ use super::{
 use crate::aggregator::{AggregationJobContinueResult, problem_details::ProblemDocument};
 
 #[cfg(test)]
-mod tests;
+pub mod tests;
 
 /// Default retry-after for rate limiting responses.
 const RATE_LIMIT_RETRY_AFTER: StdDuration = StdDuration::from_secs(30);
@@ -345,20 +346,17 @@ impl EmptyBody {
     /// Return an EmptyBody with the location set to the relative path to the
     /// aggregation job for the task.
     fn for_aggregation_job(
-        task_id: &TaskId,
-        aggregation_job_id: &AggregationJobId,
-        step: u16,
+        task_id: TaskId,
+        aggregation_job_id: AggregationJobId,
+        step: AggregationJobStep,
     ) -> Self {
         Self {
-            location: (
-                http::header::LOCATION,
-                format!("/tasks/{task_id}/aggregation_jobs/{aggregation_job_id}?step={step}"),
-            ),
+            location: aggregation_job_location(task_id, aggregation_job_id, step),
         }
     }
 
     /// Construct an `EmptyBody` for a collection job.
-    fn for_collection_job(task_id: &TaskId, collection_job_id: &CollectionJobId) -> Self {
+    fn for_collection_job(task_id: TaskId, collection_job_id: CollectionJobId) -> Self {
         Self {
             location: collection_job_location(task_id, collection_job_id),
         }
@@ -762,7 +760,7 @@ async fn upload_post(
         .into_async_read();
 
     let upload_errors = match aggregator
-        .handle_upload(&task_id, decode_reports_stream(body_reader))
+        .upload_reports(&task_id, decode_reports_stream(body_reader))
         .await
     {
         Ok(upload_errors) => upload_errors,
@@ -798,18 +796,28 @@ async fn aggregation_jobs_post_new(
 
     let auth_token = parse_auth_token_from_headers(&task_id, &headers)?;
     let taskprov_task_config = parse_taskprov_header_from_headers(&aggregator, &task_id, &headers)?;
-    let response = aggregator
-        .handle_aggregate_init(&task_id, &body, auth_token, taskprov_task_config.as_ref())
+    let (aggregation_job_id, response_bytes) = aggregator
+        .create_aggregation_job(&task_id, &body, auth_token, taskprov_task_config.as_ref())
         .await?;
 
-    match response {
-        Some(response) => Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE)
-            .with_status(StatusCode::CREATED)
-            .into_response()),
+    let resp = match response_bytes {
+        Some(response_bytes) => (
+            StatusCode::OK,
+            [
+                (CONTENT_TYPE, AggregationJobResp::MEDIA_TYPE.to_owned()),
+                aggregation_job_location(task_id, aggregation_job_id, AggregationJobStep::from(0)),
+            ],
+            response_bytes,
+        )
+            .into_response(),
+
         None => {
-            Ok(EmptyBody::for_aggregation_job(&task_id, &aggregation_job_id, 0).into_response())
+            EmptyBody::for_aggregation_job(task_id, aggregation_job_id, AggregationJobStep::from(0))
+                .into_response()
         }
-    }
+    };
+
+    Ok(resp)
 }
 
 /// Axum handler for the "/tasks/.../aggregation_jobs/..." POST endpoint.
@@ -823,33 +831,32 @@ async fn aggregation_jobs_post(
 ) -> Result<Response, Error> {
     validate_content_type_headers::<AggregationJobContinueReq>(&headers)?;
 
-    let task_id = path.task_id;
-    let aggregation_job_id = path.aggregation_job_id;
-    let auth_token = parse_auth_token_from_headers(&task_id, &headers)?;
-    let taskprov_task_config = parse_taskprov_header_from_headers(&aggregator, &task_id, &headers)?;
+    let auth_token = parse_auth_token_from_headers(&path.task_id, &headers)?;
+    let taskprov_task_config =
+        parse_taskprov_header_from_headers(&aggregator, &path.task_id, &headers)?;
     let response = aggregator
-        .handle_aggregate_continue(
-            &task_id,
-            &aggregation_job_id,
+        .continue_aggregation_job(
+            &path.task_id,
+            &path.aggregation_job_id,
             &body,
             auth_token,
             taskprov_task_config.as_ref(),
         )
         .await?;
 
-    match response {
+    let resp = match response {
         AggregationJobContinueResult::Sync(resp) => {
-            Ok(EncodedBody::new(resp, AggregationJobResp::MEDIA_TYPE)
+            EncodedBody::new(resp, AggregationJobResp::MEDIA_TYPE)
                 .with_status(StatusCode::ACCEPTED)
-                .into_response())
+                .into_response()
         }
         AggregationJobContinueResult::Async(step) => {
-            Ok(
-                EmptyBody::for_aggregation_job(&task_id, &aggregation_job_id, step.into())
-                    .into_response(),
-            )
+            EmptyBody::for_aggregation_job(path.task_id, path.aggregation_job_id, step)
+                .into_response()
         }
-    }
+    };
+
+    Ok(resp)
 }
 
 /// Axum handler for the "/tasks/.../aggregation_jobs/..." GET endpoint.
@@ -859,32 +866,31 @@ async fn aggregation_jobs_get(
     axum::extract::RawQuery(query): axum::extract::RawQuery,
     AxumState(aggregator): AxumState<Arc<Aggregator>>,
 ) -> Result<Response, Error> {
-    let task_id = path.task_id;
-    let aggregation_job_id = path.aggregation_job_id;
-    let auth_token = parse_auth_token_from_headers(&task_id, &headers)?;
-    let taskprov_task_config = parse_taskprov_header_from_headers(&aggregator, &task_id, &headers)?;
+    let auth_token = parse_auth_token_from_headers(&path.task_id, &headers)?;
+    let taskprov_task_config =
+        parse_taskprov_header_from_headers(&aggregator, &path.task_id, &headers)?;
     let step = parse_step_from_query(query.as_deref())?
         .ok_or_else(|| Error::BadRequest("missing step query parameter".into()))?;
 
     let response = aggregator
-        .handle_aggregate_get(
-            &task_id,
-            &aggregation_job_id,
+        .get_aggregation_job(
+            &path.task_id,
+            &path.aggregation_job_id,
             auth_token,
             taskprov_task_config.as_ref(),
             step,
         )
         .await?;
 
-    match response {
-        Some(response) => Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE)
+    let resp = match response {
+        Some(response) => EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE)
             .with_status(StatusCode::OK)
-            .into_response()),
-        None => Ok(
-            EmptyBody::for_aggregation_job(&task_id, &aggregation_job_id, step.into())
-                .into_response(),
-        ),
-    }
+            .into_response(),
+        None => EmptyBody::for_aggregation_job(path.task_id, path.aggregation_job_id, step)
+            .into_response(),
+    };
+
+    Ok(resp)
 }
 
 /// Axum handler for the "/tasks/.../aggregation_jobs/..." DELETE endpoint.
@@ -893,15 +899,14 @@ async fn aggregation_jobs_delete(
     path: AggregationJobPath,
     AxumState(aggregator): AxumState<Arc<Aggregator>>,
 ) -> Result<StatusCode, Error> {
-    let task_id = path.task_id;
-    let aggregation_job_id = path.aggregation_job_id;
-    let auth_token = parse_auth_token_from_headers(&task_id, &headers)?;
-    let taskprov_task_config = parse_taskprov_header_from_headers(&aggregator, &task_id, &headers)?;
+    let auth_token = parse_auth_token_from_headers(&path.task_id, &headers)?;
+    let taskprov_task_config =
+        parse_taskprov_header_from_headers(&aggregator, &path.task_id, &headers)?;
 
     aggregator
-        .handle_aggregate_delete(
-            &task_id,
-            &aggregation_job_id,
+        .delete_aggregation_job(
+            &path.task_id,
+            &path.aggregation_job_id,
             auth_token,
             taskprov_task_config.as_ref(),
         )
@@ -924,7 +929,7 @@ async fn collection_jobs_post(
 
     let auth_token = parse_auth_token_from_headers(&task_id, &headers)?;
     let (collection_job_id, collection_job_resp) = aggregator
-        .handle_create_collection_job(&task_id, &body, auth_token)
+        .create_collection_job(&task_id, &body, auth_token)
         .await?;
 
     let resp = match collection_job_resp {
@@ -932,14 +937,13 @@ async fn collection_jobs_post(
             StatusCode::OK,
             [
                 (CONTENT_TYPE, CollectionJobResp::MEDIA_TYPE.to_owned()),
-                collection_job_location(&task_id, &collection_job_id),
+                collection_job_location(task_id, collection_job_id),
             ],
             response_bytes,
         )
             .into_response(),
-        None => EmptyBody::for_collection_job(&task_id, &collection_job_id).into_response(),
+        None => EmptyBody::for_collection_job(task_id, collection_job_id).into_response(),
     };
-
     Ok(resp)
 }
 
@@ -951,7 +955,7 @@ async fn collection_jobs_get(
 ) -> Result<Response, Error> {
     let auth_token = parse_auth_token_from_headers(&path.task_id, &headers)?;
     let resp = match aggregator
-        .handle_get_collection_job(&path.task_id, &path.collection_job_id, auth_token)
+        .get_collection_job(&path.task_id, &path.collection_job_id, auth_token)
         .await?
     {
         Some(response_bytes) => (
@@ -963,9 +967,7 @@ async fn collection_jobs_get(
             response_bytes,
         )
             .into_response(),
-        None => {
-            EmptyBody::for_collection_job(&path.task_id, &path.collection_job_id).into_response()
-        }
+        None => EmptyBody::for_collection_job(path.task_id, path.collection_job_id).into_response(),
     };
     Ok(resp)
 }
@@ -978,7 +980,7 @@ async fn collection_jobs_delete(
 ) -> Result<StatusCode, Error> {
     let auth_token = parse_auth_token_from_headers(&path.task_id, &headers)?;
     aggregator
-        .handle_delete_collection_job(&path.task_id, &path.collection_job_id, auth_token)
+        .delete_collection_job(&path.task_id, &path.collection_job_id, auth_token)
         .await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -998,14 +1000,14 @@ async fn aggregate_shares_post(
     let auth_token = parse_auth_token_from_headers(&task_id, &headers)?;
     let taskprov_task_config = parse_taskprov_header_from_headers(&aggregator, &task_id, &headers)?;
     let (agg_share_id, response_bytes) = aggregator
-        .handle_post_aggregate_share(&task_id, &body, auth_token, taskprov_task_config.as_ref())
+        .create_aggregate_share(&task_id, &body, auth_token, taskprov_task_config.as_ref())
         .await?;
 
     Ok((
         StatusCode::OK,
         [
             (CONTENT_TYPE, AggregateShare::MEDIA_TYPE.to_owned()),
-            aggregate_share_location(&task_id, &agg_share_id),
+            aggregate_share_location(task_id, agg_share_id),
         ],
         response_bytes,
     )
@@ -1022,7 +1024,7 @@ async fn aggregate_shares_get(
     let taskprov_task_config =
         parse_taskprov_header_from_headers(&aggregator, &path.task_id, &headers)?;
     let response_bytes = aggregator
-        .handle_get_aggregate_share(
+        .get_aggregate_share(
             &path.task_id,
             &path.aggregate_share_id,
             auth_token,
@@ -1051,7 +1053,7 @@ async fn aggregate_shares_delete(
     let taskprov_task_config = parse_taskprov_header_from_headers(&aggregator, &task_id, &headers)?;
     let aggregate_share_id = path.aggregate_share_id;
     aggregator
-        .handle_delete_aggregate_share(
+        .delete_aggregate_share(
             &task_id,
             &aggregate_share_id,
             auth_token,

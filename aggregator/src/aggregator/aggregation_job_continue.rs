@@ -5,15 +5,13 @@ use std::panic;
 use assert_matches::assert_matches;
 use janus_aggregator_core::{
     AsyncAggregator,
-    batch_mode::AccumulableBatchMode,
     datastore::{
-        models::{AggregationJob, ReportAggregation, ReportAggregationState},
+        models::{ReportAggregation, ReportAggregationState},
         task_counters::TaskAggregationCounter,
     },
-    task::AggregatorTask,
 };
 use janus_core::vdaf::vdaf_application_context;
-use janus_messages::{Role, VerifyResp, VerifyStepResult};
+use janus_messages::{Role, TaskId, VerifyResp, VerifyStepResult};
 use opentelemetry::metrics::Counter;
 use prio::topology::ping_pong::{Continued, PingPongState, PingPongTopology as _};
 use rayon::iter::{IntoParallelIterator as _, ParallelIterator as _};
@@ -57,16 +55,15 @@ impl AggregateContinueMetrics {
 /// ### Panics
 ///
 /// Panics if a provided report aggregation is in a state other than `HelperContinueProcessing`.
-pub async fn compute_helper_aggregate_continue<const SEED_SIZE: usize, B, A>(
+pub async fn compute_helper_aggregate_continue<const SEED_SIZE: usize, A>(
     vdaf: &A,
     metrics: AggregateContinueMetrics,
-    task: &AggregatorTask,
-    aggregation_job: &AggregationJob<SEED_SIZE, B, A>,
+    task_id: TaskId,
+    aggregation_parameter: &A::AggregationParam,
     report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
 ) -> Vec<WritableReportAggregation<SEED_SIZE, A>>
 where
     A: AsyncAggregator<SEED_SIZE>,
-    B: AccumulableBatchMode,
 {
     let report_aggregation_count = report_aggregations.len();
 
@@ -78,9 +75,8 @@ where
     let producer_task = tokio::task::spawn_blocking({
         let parent_span = Span::current();
         let metrics = metrics.clone();
-        let task_id = *task.id();
         let vdaf = vdaf.clone();
-        let aggregation_parameter = aggregation_job.aggregation_parameter().clone();
+        let aggregation_parameter = aggregation_parameter.clone();
 
         move || {
             let span = info_span!(parent: &parent_span, "step_aggregation_job threadpool task");
@@ -220,9 +216,9 @@ pub mod test_util {
 
     use crate::aggregator::http_handlers::test_util::{decode_response_body, take_problem_details};
 
-    async fn post_aggregation_job(
+    async fn post_aggregation_job_continue(
         task: &Task,
-        aggregation_job_id: &AggregationJobId,
+        aggregation_job_id: AggregationJobId,
         request: &AggregationJobContinueReq,
         router: &Router,
     ) -> http::Response<Body> {
@@ -240,13 +236,14 @@ pub mod test_util {
         router.clone().oneshot(req).await.unwrap()
     }
 
-    pub async fn post_aggregation_job_and_decode(
+    pub async fn post_aggregation_job_continue_and_decode(
         task: &Task,
-        aggregation_job_id: &AggregationJobId,
+        aggregation_job_id: AggregationJobId,
         request: &AggregationJobContinueReq,
         router: &Router,
     ) -> Option<AggregationJobResp> {
-        let mut response = post_aggregation_job(task, aggregation_job_id, request, router).await;
+        let mut response =
+            post_aggregation_job_continue(task, aggregation_job_id, request, router).await;
 
         let length: Option<usize> = response
             .headers()
@@ -295,32 +292,33 @@ pub mod test_util {
         }
     }
 
-    pub async fn post_aggregation_job_expecting_status(
+    pub async fn post_aggregation_job_continue_expecting_status(
         task: &Task,
-        aggregation_job_id: &AggregationJobId,
+        aggregation_job_id: AggregationJobId,
         request: &AggregationJobContinueReq,
         router: &Router,
         want_status: StatusCode,
     ) -> http::Response<Body> {
-        let response = post_aggregation_job(task, aggregation_job_id, request, router).await;
+        let response =
+            post_aggregation_job_continue(task, aggregation_job_id, request, router).await;
 
         assert_eq!(want_status, response.status());
 
         response
     }
 
-    pub async fn post_aggregation_job_expecting_error(
+    pub async fn post_aggregation_job_continue_expecting_error(
         task: &Task,
-        aggregation_job_id: &AggregationJobId,
+        aggregation_job_id: AggregationJobId,
         request: &AggregationJobContinueReq,
         router: &Router,
         want_status: StatusCode,
         want_error_type: &str,
         want_error_title: &str,
         want_detail: Option<&str>,
-        want_aggregation_job_id: Option<&AggregationJobId>,
+        want_aggregation_job_id: Option<AggregationJobId>,
     ) {
-        let mut response = post_aggregation_job_expecting_status(
+        let mut response = post_aggregation_job_continue_expecting_status(
             task,
             aggregation_job_id,
             request,
@@ -363,7 +361,8 @@ mod tests {
         datastore::{
             Datastore,
             models::{
-                AggregationJob, AggregationJobState, ReportAggregation, ReportAggregationState,
+                AggregationJob, AggregationJobDatastoreId, AggregationJobState, ReportAggregation,
+                ReportAggregationState, UnwrittenAggregationJob,
             },
             test_util::{EphemeralDatastore, ephemeral_datastore},
         },
@@ -394,10 +393,11 @@ mod tests {
 
     use crate::aggregator::{
         aggregation_job_continue::test_util::{
-            post_aggregation_job_and_decode, post_aggregation_job_expecting_error,
-            post_aggregation_job_expecting_status,
+            post_aggregation_job_continue_and_decode,
+            post_aggregation_job_continue_expecting_error,
+            post_aggregation_job_continue_expecting_status,
         },
-        aggregation_job_init::test_util::{VerifyInitGenerator, put_aggregation_job},
+        aggregation_job_init::test_util::{VerifyInitGenerator, post_aggregation_job_init},
         http_handlers::{
             AggregatorHandlerBuilder,
             test_util::{HttpHandlerTest, take_problem_details},
@@ -413,6 +413,7 @@ mod tests {
         datastore: Arc<Datastore>,
         verify_init_generator: VerifyInitGenerator<VERIFY_KEY_LENGTH, V>,
         aggregation_job_id: AggregationJobId,
+        aggregation_job_datastore_id: AggregationJobDatastoreId,
         aggregation_parameter: V::AggregationParam,
         first_continue_request: AggregationJobContinueReq,
         first_continue_response: Option<AggregationJobResp>,
@@ -427,7 +428,7 @@ mod tests {
         // Set up datastore & request.
         install_test_trace_subscriber();
 
-        let aggregation_job_id = random();
+        let helper_aggregation_job_id = random();
         let task = TaskBuilder::new(
             BatchMode::TimeInterval,
             AggregationMode::Synchronous,
@@ -452,7 +453,7 @@ mod tests {
 
         let (verify_init, transcript) = verify_init_generator.next(&13);
 
-        datastore
+        let aggregation_job_datastore_id = datastore
             .run_unnamed_tx(|tx| {
                 let helper_task = helper_task.clone();
                 let verify_init = verify_init.clone();
@@ -468,25 +469,27 @@ mod tests {
                     .await
                     .unwrap();
 
-                    tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
-                        *helper_task.id(),
-                        aggregation_job_id,
-                        aggregation_parameter,
-                        (),
-                        Interval::new(
-                            *verify_init.report_share().metadata().time(),
-                            janus_messages::Duration::ONE,
-                        )
-                        .unwrap(),
-                        AggregationJobState::Active,
-                        AggregationJobStep::from(0),
-                    ))
-                    .await
-                    .unwrap();
+                    let aggregation_job_datastore_id = tx
+                        .put_aggregation_job(&UnwrittenAggregationJob::new(
+                            *helper_task.id(),
+                            aggregation_parameter,
+                            (),
+                            Interval::new(
+                                *verify_init.report_share().metadata().time(),
+                                janus_messages::Duration::ONE,
+                            )
+                            .unwrap(),
+                            AggregationJobState::Active {
+                                helper_aggregation_job_id,
+                            },
+                            AggregationJobStep::from(0),
+                        ))
+                        .await
+                        .unwrap();
 
                     tx.put_report_aggregation::<0, dummy::Vdaf>(&ReportAggregation::new(
                         *helper_task.id(),
-                        aggregation_job_id,
+                        aggregation_job_datastore_id,
                         *verify_init.report_share().metadata().id(),
                         *verify_init.report_share().metadata().time(),
                         0,
@@ -498,7 +501,7 @@ mod tests {
                     .await
                     .unwrap();
 
-                    Ok(())
+                    Ok(aggregation_job_datastore_id)
                 })
             })
             .await
@@ -530,7 +533,8 @@ mod tests {
             task,
             datastore,
             verify_init_generator,
-            aggregation_job_id,
+            aggregation_job_id: helper_aggregation_job_id,
+            aggregation_job_datastore_id,
             aggregation_parameter,
             first_continue_request,
             first_continue_response: None,
@@ -545,9 +549,9 @@ mod tests {
     -> AggregationJobContinueTestCase<0, dummy::Vdaf> {
         let mut test_case = setup_aggregation_job_continue_test().await;
 
-        let first_continue_response = post_aggregation_job_and_decode(
+        let first_continue_response = post_aggregation_job_continue_and_decode(
             &test_case.task,
-            &test_case.aggregation_job_id,
+            test_case.aggregation_job_id,
             &test_case.first_continue_request,
             &test_case.router,
         )
@@ -593,9 +597,9 @@ mod tests {
         let request = AggregationJobContinueReq::new(AggregationJobStep::from(1), Vec::new());
         let aggregation_job_id = random();
 
-        post_aggregation_job_expecting_error(
+        post_aggregation_job_continue_expecting_error(
             &task,
-            &aggregation_job_id,
+            aggregation_job_id,
             &request,
             &router,
             StatusCode::BAD_REQUEST,
@@ -630,7 +634,7 @@ mod tests {
         let aggregation_job_id: AggregationJobId = random();
 
         let req = Request::delete(
-            task.aggregation_job_uri(&aggregation_job_id, None)
+            task.aggregation_job_uri(aggregation_job_id, None)
                 .unwrap()
                 .path(),
         )
@@ -661,9 +665,9 @@ mod tests {
             test_case.first_continue_request.verify_continues().to_vec(),
         );
 
-        post_aggregation_job_expecting_error(
+        post_aggregation_job_continue_expecting_error(
             &test_case.task,
-            &test_case.aggregation_job_id,
+            test_case.aggregation_job_id,
             &step_zero_request,
             &test_case.router,
             StatusCode::BAD_REQUEST,
@@ -681,9 +685,9 @@ mod tests {
 
         // Re-send the request, simulating the leader crashing and losing the helper's response. The
         // helper should send back the exact same response.
-        let second_continue_resp = post_aggregation_job_and_decode(
+        let second_continue_resp = post_aggregation_job_continue_and_decode(
             &test_case.task,
-            &test_case.aggregation_job_id,
+            test_case.aggregation_job_id,
             &test_case.first_continue_request,
             &test_case.router,
         )
@@ -707,7 +711,7 @@ mod tests {
             .run_unnamed_tx(|tx| {
                 let task_id = *test_case.task.id();
                 let unrelated_verify_init = unrelated_verify_init.clone();
-                let aggregation_job_id = test_case.aggregation_job_id;
+                let aggregation_job_datastore_id = test_case.aggregation_job_datastore_id;
 
                 Box::pin(async move {
                     tx.put_scrubbed_report(
@@ -721,7 +725,7 @@ mod tests {
                     let aggregation_job = tx
                         .get_aggregation_job::<0, TimeInterval, dummy::Vdaf>(
                             &task_id,
-                            &aggregation_job_id,
+                            aggregation_job_datastore_id,
                         )
                         .await
                         .unwrap();
@@ -731,7 +735,7 @@ mod tests {
                             &dummy::Vdaf::new(2),
                             &Role::Helper,
                             &task_id,
-                            &aggregation_job_id,
+                            aggregation_job_datastore_id,
                         )
                         .await
                         .unwrap();
@@ -755,9 +759,9 @@ mod tests {
             )]),
         );
 
-        let _ = post_aggregation_job_expecting_status(
+        let _ = post_aggregation_job_continue_expecting_status(
             &test_case.task,
-            &test_case.aggregation_job_id,
+            test_case.aggregation_job_id,
             &modified_request,
             &test_case.router,
             StatusCode::CONFLICT,
@@ -768,13 +772,13 @@ mod tests {
         let (after_aggregation_job, after_report_aggregations) = test_case
             .datastore
             .run_unnamed_tx(|tx| {
-                let (task_id, aggregation_job_id) =
-                    (*test_case.task.id(), test_case.aggregation_job_id);
+                let (task_id, aggregation_job_datastore_id) =
+                    (*test_case.task.id(), test_case.aggregation_job_datastore_id);
                 Box::pin(async move {
                     let aggregation_job = tx
                         .get_aggregation_job::<0, TimeInterval, dummy::Vdaf>(
                             &task_id,
-                            &aggregation_job_id,
+                            aggregation_job_datastore_id,
                         )
                         .await
                         .unwrap();
@@ -784,7 +788,7 @@ mod tests {
                             &dummy::Vdaf::new(2),
                             &Role::Helper,
                             &task_id,
-                            &aggregation_job_id,
+                            aggregation_job_datastore_id,
                         )
                         .await
                         .unwrap();
@@ -806,13 +810,13 @@ mod tests {
         test_case
             .datastore
             .run_unnamed_tx(|tx| {
-                let (task_id, aggregation_job_id) =
-                    (*test_case.task.id(), test_case.aggregation_job_id);
+                let (task_id, aggregation_job_datastore_id) =
+                    (*test_case.task.id(), test_case.aggregation_job_datastore_id);
                 Box::pin(async move {
                     let aggregation_job = tx
                         .get_aggregation_job::<0, TimeInterval, dummy::Vdaf>(
                             &task_id,
-                            &aggregation_job_id,
+                            aggregation_job_datastore_id,
                         )
                         .await
                         .unwrap()
@@ -833,9 +837,9 @@ mod tests {
             test_case.first_continue_request.verify_continues().to_vec(),
         );
 
-        post_aggregation_job_expecting_error(
+        post_aggregation_job_continue_expecting_error(
             &test_case.task,
-            &test_case.aggregation_job_id,
+            test_case.aggregation_job_id,
             &past_step_request,
             &test_case.router,
             StatusCode::BAD_REQUEST,
@@ -858,9 +862,9 @@ mod tests {
             test_case.first_continue_request.verify_continues().to_vec(),
         );
 
-        post_aggregation_job_expecting_error(
+        post_aggregation_job_continue_expecting_error(
             &test_case.task,
-            &test_case.aggregation_job_id,
+            test_case.aggregation_job_id,
             &future_step_request,
             &test_case.router,
             StatusCode::BAD_REQUEST,
@@ -881,7 +885,7 @@ mod tests {
             let req = Request::delete(
                 test_case
                     .task
-                    .aggregation_job_uri(&test_case.aggregation_job_id, None)
+                    .aggregation_job_uri(test_case.aggregation_job_id, None)
                     .unwrap()
                     .path(),
             )
@@ -896,13 +900,13 @@ mod tests {
         test_case
             .datastore
             .run_unnamed_tx(|tx| {
-                let (task_id, aggregation_job_id) =
-                    (*test_case.task.id(), test_case.aggregation_job_id);
+                let (task_id, aggregation_job_datastore_id) =
+                    (*test_case.task.id(), test_case.aggregation_job_datastore_id);
                 Box::pin(async move {
                     let aggregation_job = tx
                         .get_aggregation_job::<0, TimeInterval, dummy::Vdaf>(
                             &task_id,
-                            &aggregation_job_id,
+                            aggregation_job_datastore_id,
                         )
                         .await
                         .unwrap()
@@ -924,13 +928,8 @@ mod tests {
             Vec::new(),
             Vec::from([verify_init_msg]),
         );
-        let mut response = put_aggregation_job(
-            &test_case.task,
-            &test_case.aggregation_job_id,
-            &init_req,
-            &test_case.router,
-        )
-        .await;
+        let mut response =
+            post_aggregation_job_init(&test_case.task, &init_req, &test_case.router).await;
 
         assert_eq!(
             take_problem_details(&mut response).await,
@@ -944,16 +943,16 @@ mod tests {
         );
 
         // Subsequent attempts to continue the job should fail.
-        post_aggregation_job_expecting_error(
+        post_aggregation_job_continue_expecting_error(
             &test_case.task,
-            &test_case.aggregation_job_id,
+            test_case.aggregation_job_id,
             &test_case.first_continue_request,
             &test_case.router,
             StatusCode::GONE,
             "https://docs.divviup.org/references/janus-errors#aggregation-job-deleted",
             "The aggregation job has been deleted.",
             None,
-            Some(&test_case.aggregation_job_id),
+            Some(test_case.aggregation_job_id),
         )
         .await;
     }

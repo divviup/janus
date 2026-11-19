@@ -5,8 +5,7 @@ use std::{collections::HashMap, panic, sync::Arc};
 use assert_matches::assert_matches;
 use janus_aggregator_core::{
     AsyncAggregator,
-    batch_mode::AccumulableBatchMode,
-    datastore::models::{AggregationJob, ReportAggregation, ReportAggregationState},
+    datastore::models::{ReportAggregation, ReportAggregationState},
     task::AggregatorTask,
 };
 use janus_core::{
@@ -96,17 +95,16 @@ impl From<AggregatorMetrics> for AggregateInitMetrics {
 /// ### Panics
 ///
 /// Panics if a provided report aggregation is in a state other than `HelperInitProcessing`.
-pub async fn compute_helper_aggregate_init<const SEED_SIZE: usize, B, A>(
+pub async fn compute_helper_aggregate_init<const SEED_SIZE: usize, A>(
     clock: &dyn Clock,
     hpke_keypairs: Arc<HpkeKeypairCache>,
     vdaf: &A,
     metrics: AggregateInitMetrics,
     task: &AggregatorTask,
-    aggregation_job: &AggregationJob<SEED_SIZE, B, A>,
+    aggregation_parameter: &A::AggregationParam,
     report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
 ) -> Result<Vec<WritableReportAggregation<SEED_SIZE, A>>, Error>
 where
-    B: AccumulableBatchMode,
     A: AsyncAggregator<SEED_SIZE>,
 {
     let verify_key = task.vdaf_verify_key()?;
@@ -132,7 +130,7 @@ where
         let task_start = task.task_start();
         let task_end = task.task_end();
         let metrics = metrics.clone();
-        let aggregation_parameter = aggregation_job.aggregation_parameter().clone();
+        let aggregation_parameter = aggregation_parameter.clone();
 
         move || {
             let span =
@@ -556,29 +554,39 @@ where
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
+    use std::assert_matches;
+
     use axum::{Router, body::Body};
-    use http::{Request, header};
+    use http::{Request, Response, StatusCode, header};
     use janus_aggregator_core::{
         AsyncAggregator,
-        task::{AggregatorTask, test_util::Task},
+        datastore::Datastore,
+        task::{
+            AggregationMode, AggregatorTask, BatchMode,
+            test_util::{Task, TaskBuilder},
+        },
     };
     use janus_core::{
         auth_tokens::test_util::WithAuthenticationToken,
         test_util::{VdafTranscript, run_vdaf},
         time::{Clock, DateTimeExt as _, MockClock},
+        vdaf::VdafInstance,
     };
     use janus_messages::{
-        AggregationJobId, AggregationJobInitializeReq, Extension, HpkeConfig, MediaType,
-        ReportMetadata, ReportShare, VerifyInit,
+        AggregationJobInitializeReq, AggregationJobResp, Duration, Extension, HpkeConfig,
+        MediaType, ReportMetadata, ReportShare, Role, TimePrecision, VerifyInit, VerifyStepResult,
     };
     use prio::{
         codec::Encode,
-        vdaf::{self},
+        vdaf::{self, dummy},
     };
     use rand::random;
     use tower::ServiceExt;
 
-    use crate::aggregator::test_util::generate_helper_report_share;
+    use crate::aggregator::{
+        http_handlers::test_util::{HttpHandlerTest, decode_response_body},
+        test_util::generate_helper_report_share,
+    };
 
     #[derive(Clone)]
     pub struct VerifyInitGenerator<const VERIFY_KEY_SIZE: usize, V>
@@ -692,19 +700,16 @@ pub mod test_util {
         }
     }
 
-    pub async fn put_aggregation_job(
+    // TODO(timg) double check that this free function is useful. can it just be
+    // AggregationJobInitTestCase::post_aggregation_job_init?
+    pub async fn post_aggregation_job_init(
         task: &Task,
-        aggregation_job_id: &AggregationJobId,
         aggregation_job: &AggregationJobInitializeReq,
         router: &Router,
     ) -> http::Response<Body> {
         let request = Request::builder()
-            .method("PUT")
-            .uri(
-                task.aggregation_job_uri(aggregation_job_id, None)
-                    .unwrap()
-                    .path(),
-            )
+            .method("POST")
+            .uri(task.aggregation_job_creation_uri().unwrap().path())
             .with_authentication_token(task.aggregator_auth_token())
             .header(
                 header::CONTENT_TYPE,
@@ -714,226 +719,390 @@ pub mod test_util {
             .unwrap();
         router.clone().oneshot(request).await.unwrap()
     }
+
+    pub struct AggregationJobInitTestCase {
+        pub http_handler_test: HttpHandlerTest,
+        pub task: Task,
+        pub vdaf: dummy::Vdaf,
+        pub verify_init_generator: VerifyInitGenerator<0, dummy::Vdaf>,
+        pub aggregation_job_init_req: AggregationJobInitializeReq,
+        pub aggregation_param: dummy::AggregationParam,
+    }
+
+    impl AggregationJobInitTestCase {
+        pub async fn new() -> Self {
+            Self::builder().build().await
+        }
+
+        pub fn builder() -> AggregationJobInitTestCaseBuilder {
+            AggregationJobInitTestCaseBuilder {
+                task_builder: TaskBuilder::new(
+                    BatchMode::TimeInterval,
+                    AggregationMode::Synchronous,
+                    VdafInstance::Fake { rounds: 1 },
+                ),
+                role: Role::Helper,
+                vdaf: dummy::Vdaf::new(1),
+                clock: MockClock::default(),
+            }
+        }
+
+        pub fn router(&self) -> Router {
+            self.http_handler_test.router.clone()
+        }
+
+        pub fn clock(&self) -> &MockClock {
+            &self.http_handler_test.clock
+        }
+
+        pub fn datastore(&self) -> &Datastore {
+            &self.http_handler_test.datastore
+        }
+
+        pub async fn post_prepared_aggregation_job_init(&self) -> Response<Body> {
+            self.post_aggregation_job_init(&self.aggregation_job_init_req)
+                .await
+        }
+
+        pub async fn post_aggregation_job_init(
+            &self,
+            aggregation_job_init_req: &AggregationJobInitializeReq,
+        ) -> Response<Body> {
+            post_aggregation_job_init(
+                &self.task,
+                aggregation_job_init_req,
+                &self.http_handler_test.router,
+            )
+            .await
+        }
+
+        pub async fn post_aggregation_job_init_expecting_success(
+            &self,
+            aggregation_job_init_req: &AggregationJobInitializeReq,
+        ) -> AggregationJobResp {
+            let mut response = self
+                .post_aggregation_job_init(aggregation_job_init_req)
+                .await;
+            assert_eq!(response.status(), StatusCode::CREATED);
+
+            let aggregation_job_resp: AggregationJobResp =
+                decode_response_body(&mut response).await;
+            assert_eq!(
+                aggregation_job_resp.verify_resps.len(),
+                aggregation_job_init_req.verify_inits().len(),
+            );
+
+            aggregation_job_resp
+        }
+
+        /// Run the first step of job preparation, returning the helper's [`AggregationJobResp`].
+        pub async fn run_first_step(&self) -> AggregationJobResp {
+            let aggregation_job_resp = self
+                .post_aggregation_job_init_expecting_success(&self.aggregation_job_init_req)
+                .await;
+            assert_matches!(
+                aggregation_job_resp.verify_resps[0].result(),
+                &VerifyStepResult::Continue { .. }
+            );
+
+            aggregation_job_resp
+        }
+    }
+
+    pub struct AggregationJobInitTestCaseBuilder {
+        task_builder: TaskBuilder,
+        vdaf: dummy::Vdaf,
+        role: Role,
+        clock: MockClock,
+    }
+
+    impl AggregationJobInitTestCaseBuilder {
+        pub async fn build(self) -> AggregationJobInitTestCase {
+            let http_handler_test = HttpHandlerTest::builder()
+                .with_clock(self.clock)
+                .build()
+                .await;
+
+            let time_precision = TimePrecision::from_seconds(100);
+            let task = self
+                .task_builder
+                .with_time_precision(time_precision)
+                .with_tolerable_clock_skew(Duration::from_seconds(500, &time_precision))
+                .with_aggregator_auth_token(random())
+                .build();
+            let role_task = match self.role {
+                Role::Leader => task.leader_view().unwrap(),
+                Role::Helper => task.helper_view().unwrap(),
+                _ => panic!("unexpected role"),
+            };
+            http_handler_test
+                .datastore
+                .put_aggregator_task(&role_task)
+                .await
+                .unwrap();
+
+            let aggregation_param = dummy::AggregationParam(7);
+            let verify_init_generator = VerifyInitGenerator::new(
+                http_handler_test.clock.clone(),
+                role_task,
+                http_handler_test.hpke_keypair.config().clone(),
+                self.vdaf.clone(),
+                aggregation_param.clone(),
+            );
+
+            let verify_inits = Vec::from([
+                verify_init_generator.next(&13).0,
+                verify_init_generator.next(&13).0,
+            ]);
+
+            let aggregation_job_init_req = AggregationJobInitializeReq::new(
+                0,
+                aggregation_param.get_encoded().unwrap(),
+                Vec::new(),
+                verify_inits.clone(),
+            );
+
+            AggregationJobInitTestCase {
+                http_handler_test,
+                task,
+                vdaf: self.vdaf,
+                verify_init_generator,
+                aggregation_job_init_req,
+                aggregation_param,
+            }
+        }
+
+        pub fn with_role(self, role: Role) -> Self {
+            Self { role, ..self }
+        }
+
+        /// Set the VDAF to be used in the eventual test case.
+        ///
+        /// A `VdafInstance` corresponding to this value MUST be set on this test case's task using
+        /// [`Self::build_task`].
+        pub fn with_vdaf(self, vdaf: dummy::Vdaf) -> Self {
+            Self { vdaf, ..self }
+        }
+
+        pub fn with_clock(self, clock: MockClock) -> Self {
+            Self { clock, ..self }
+        }
+
+        pub fn build_task<F: FnMut(TaskBuilder) -> TaskBuilder>(self, mut f: F) -> Self {
+            Self {
+                task_builder: f(self.task_builder),
+                ..self
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use assert_matches::assert_matches;
-    use axum::{Router, body::Body};
+    use axum::body::Body;
     use http::{Request, StatusCode, header};
-    use janus_aggregator_core::{
-        AsyncAggregator,
-        datastore::test_util::{EphemeralDatastore, ephemeral_datastore},
-        task::{
-            AggregationMode, BatchMode,
-            test_util::{Task, TaskBuilder},
-        },
-        test_util::noop_meter,
-    };
+
     use janus_core::{
-        auth_tokens::{AuthenticationToken, DAP_AUTH_HEADER, test_util::WithAuthenticationToken},
-        test_util::{install_test_trace_subscriber, runtime::TestRuntime},
+        auth_tokens::{AuthenticationToken, DAP_AUTH_HEADER},
         time::{Clock, DateTimeExt, MockClock, TimeExt as _},
         vdaf::VdafInstance,
     };
     use janus_messages::{
-        AggregationJobExtension, AggregationJobExtensionType, AggregationJobId,
-        AggregationJobInitializeReq, AggregationJobResp, Duration, Extension, ExtensionType,
-        Interval, MediaType, ReportError, ReportMetadata, TimePrecision, VerifyResp,
-        VerifyStepResult,
+        AggregationJobExtension, AggregationJobExtensionType, AggregationJobInitializeReq,
+        AggregationJobResp, Duration, Extension, ExtensionType, Interval, MediaType, ReportError,
+        ReportMetadata, TimePrecision, VerifyResp, VerifyStepResult,
     };
-    use prio::{
-        codec::Encode,
-        vdaf::{self, dummy},
-    };
+    use prio::{codec::Encode, vdaf::dummy};
     use rand::random;
     use serde_json::json;
     use tower::ServiceExt;
 
     use crate::aggregator::{
-        Config,
-        aggregation_job_init::test_util::{VerifyInitGenerator, put_aggregation_job},
-        http_handlers::{
-            AggregatorHandlerBuilder,
-            test_util::{decode_response_body, take_problem_details},
-        },
+        aggregation_job_init::test_util::AggregationJobInitTestCase,
+        http_handlers::test_util::{decode_response_body, take_problem_details},
     };
 
-    pub(super) struct AggregationJobInitTestCase<
-        const VERIFY_KEY_SIZE: usize,
-        V: AsyncAggregator<VERIFY_KEY_SIZE>,
-    > {
-        pub(super) clock: MockClock,
-        pub(super) task: Task,
-        pub(super) verify_init_generator: VerifyInitGenerator<VERIFY_KEY_SIZE, V>,
-        pub(super) aggregation_job_id: AggregationJobId,
-        pub(super) aggregation_job_init_req: AggregationJobInitializeReq,
-        aggregation_job_init_resp: Option<AggregationJobResp>,
-        pub(super) aggregation_param: V::AggregationParam,
-        pub(super) router: Router,
-        _ephemeral_datastore: EphemeralDatastore,
-    }
+    // pub(super) struct AggregationJobInitTestCase<
+    //     const VERIFY_KEY_SIZE: usize,
+    //     V: AsyncAggregator<VERIFY_KEY_SIZE>,
+    // > {
+    //     pub(super) clock: MockClock,
+    //     pub(super) task: Task,
+    //     pub(super) verify_init_generator: VerifyInitGenerator<VERIFY_KEY_SIZE, V>,
+    //     pub(super) aggregation_job_id: AggregationJobId,
+    //     pub(super) aggregation_job_init_req: AggregationJobInitializeReq,
+    //     aggregation_job_init_resp: Option<AggregationJobResp>,
+    //     pub(super) aggregation_param: V::AggregationParam,
+    //     pub(super) router: Router,
+    //     _ephemeral_datastore: EphemeralDatastore,
+    // }
 
-    pub(super) async fn setup_aggregate_init_test() -> AggregationJobInitTestCase<0, dummy::Vdaf> {
-        setup_aggregate_init_test_for_vdaf(
-            dummy::Vdaf::new(1),
-            VdafInstance::Fake { rounds: 1 },
-            dummy::AggregationParam(0),
-            0,
-        )
-        .await
-    }
+    // pub(super) async fn setup_aggregate_init_test() -> AggregationJobInitTestCase<0, dummy::Vdaf> {
+    //     setup_aggregate_init_test_for_vdaf(
+    //         dummy::Vdaf::new(1),
+    //         VdafInstance::Fake { rounds: 1 },
+    //         dummy::AggregationParam(0),
+    //         0,
+    //     )
+    //     .await
+    // }
 
-    async fn setup_multi_step_aggregate_init_test() -> AggregationJobInitTestCase<0, dummy::Vdaf> {
-        setup_aggregate_init_test_for_vdaf(
-            dummy::Vdaf::new(2),
-            VdafInstance::Fake { rounds: 2 },
-            dummy::AggregationParam(7),
-            13,
-        )
-        .await
-    }
+    // async fn setup_multi_step_aggregate_init_test() -> AggregationJobInitTestCase<0, dummy::Vdaf> {
+    //     setup_aggregate_init_test_for_vdaf(
+    //         dummy::Vdaf::new(2),
+    //         VdafInstance::Fake { rounds: 2 },
+    //         dummy::AggregationParam(7),
+    //         13,
+    //     )
+    //     .await
+    // }
 
-    async fn setup_aggregate_init_test_for_vdaf<
-        const VERIFY_KEY_SIZE: usize,
-        V: AsyncAggregator<VERIFY_KEY_SIZE> + vdaf::Client<16>,
-    >(
-        vdaf: V,
-        vdaf_instance: VdafInstance,
-        aggregation_param: V::AggregationParam,
-        measurement: V::Measurement,
-    ) -> AggregationJobInitTestCase<VERIFY_KEY_SIZE, V> {
-        let mut test_case = setup_aggregate_init_test_without_sending_request(
-            vdaf,
-            vdaf_instance,
-            aggregation_param,
-            measurement,
-            AuthenticationToken::Bearer(random()),
-        )
-        .await;
+    // async fn setup_aggregate_init_test_for_vdaf<
+    //     const VERIFY_KEY_SIZE: usize,
+    //     V: AsyncAggregator<VERIFY_KEY_SIZE> + vdaf::Client<16>,
+    // >(
+    //     vdaf: V,
+    //     vdaf_instance: VdafInstance,
+    //     aggregation_param: V::AggregationParam,
+    //     measurement: V::Measurement,
+    // ) -> AggregationJobInitTestCase<VERIFY_KEY_SIZE, V> {
+    //     let mut test_case = setup_aggregate_init_test_without_sending_request(
+    //         vdaf,
+    //         vdaf_instance,
+    //         aggregation_param,
+    //         measurement,
+    //         AuthenticationToken::Bearer(random()),
+    //     )
+    //     .await;
 
-        let mut response = put_aggregation_job(
-            &test_case.task,
-            &test_case.aggregation_job_id,
-            &test_case.aggregation_job_init_req,
-            &test_case.router,
-        )
-        .await;
-        assert_eq!(response.status(), StatusCode::CREATED);
+    //     let mut response = post_aggregation_job_init(
+    //         &test_case.task,
+    //         &test_case.aggregation_job_init_req,
+    //         &test_case.router,
+    //     )
+    //     .await;
+    //     assert_eq!(response.status(), StatusCode::CREATED);
 
-        let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut response).await;
-        let verify_resps = assert_matches!(
-            &aggregation_job_resp,
-            AggregationJobResp { verify_resps } => verify_resps
-        );
-        assert_eq!(
-            verify_resps.len(),
-            test_case.aggregation_job_init_req.verify_inits().len(),
-        );
-        assert_matches!(verify_resps[0].result(), &VerifyStepResult::Continue { .. });
+    //     let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut response).await;
+    //     let verify_resps = assert_matches!(
+    //         &aggregation_job_resp,
+    //         AggregationJobResp { verify_resps } => verify_resps
+    //     );
+    //     assert_eq!(
+    //         verify_resps.len(),
+    //         test_case.aggregation_job_init_req.verify_inits().len(),
+    //     );
+    //     assert_matches!(verify_resps[0].result(), &VerifyStepResult::Continue { .. });
 
-        test_case.aggregation_job_init_resp = Some(aggregation_job_resp);
-        test_case
-    }
+    //     test_case.aggregation_job_init_resp = Some(aggregation_job_resp);
+    //     test_case
+    // }
 
-    async fn setup_aggregate_init_test_without_sending_request<
-        const VERIFY_KEY_SIZE: usize,
-        V: AsyncAggregator<VERIFY_KEY_SIZE> + vdaf::Client<16>,
-    >(
-        vdaf: V,
-        vdaf_instance: VdafInstance,
-        aggregation_param: V::AggregationParam,
-        measurement: V::Measurement,
-        auth_token: AuthenticationToken,
-    ) -> AggregationJobInitTestCase<VERIFY_KEY_SIZE, V> {
-        install_test_trace_subscriber();
+    // async fn setup_aggregate_init_test_without_sending_request<
+    //     const VERIFY_KEY_SIZE: usize,
+    //     V: AsyncAggregator<VERIFY_KEY_SIZE> + vdaf::Client<16>,
+    // >(
+    //     vdaf: V,
+    //     vdaf_instance: VdafInstance,
+    //     aggregation_param: V::AggregationParam,
+    //     measurement: V::Measurement,
+    //     auth_token: AuthenticationToken,
+    // ) -> AggregationJobInitTestCase<VERIFY_KEY_SIZE, V> {
+    //     install_test_trace_subscriber();
 
-        let time_precision = TimePrecision::from_seconds(100);
-        let task = TaskBuilder::new(
-            BatchMode::TimeInterval,
-            AggregationMode::Synchronous,
-            vdaf_instance,
-        )
-        .with_time_precision(time_precision)
-        .with_tolerable_clock_skew(Duration::from_seconds(500, &time_precision))
-        .with_aggregator_auth_token(auth_token)
-        .build();
-        let helper_task = task.helper_view().unwrap();
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+    //     let time_precision = TimePrecision::from_seconds(100);
+    //     let task = TaskBuilder::new(
+    //         BatchMode::TimeInterval,
+    //         AggregationMode::Synchronous,
+    //         vdaf_instance,
+    //     )
+    //     .with_time_precision(time_precision)
+    //     .with_tolerable_clock_skew(Duration::from_seconds(500, &time_precision))
+    //     .with_aggregator_auth_token(auth_token)
+    //     .build();
+    //     let helper_task = task.helper_view().unwrap();
+    //     let clock = MockClock::default();
+    //     let ephemeral_datastore = ephemeral_datastore().await;
+    //     let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
-        datastore.put_aggregator_task(&helper_task).await.unwrap();
-        let keypair = datastore.put_hpke_key().await.unwrap();
+    //     datastore.put_aggregator_task(&helper_task).await.unwrap();
+    //     let keypair = datastore.put_hpke_key().await.unwrap();
 
-        let meter = noop_meter();
-        let builder = AggregatorHandlerBuilder::new(
-            Arc::clone(&datastore),
-            TestRuntime::default(),
-            &meter,
-            Config::default(),
-        )
-        .await
-        .unwrap();
-        let router = builder.build_axum_router(None);
+    //     let meter = noop_meter();
+    //     let builder = AggregatorHandlerBuilder::new(
+    //         Arc::clone(&datastore),
+    //         TestRuntime::default(),
+    //         &meter,
+    //         Config::default(),
+    //     )
+    //     .await
+    //     .unwrap();
+    //     let router = builder.build_axum_router(None);
 
-        let verify_init_generator = VerifyInitGenerator::new(
-            clock.clone(),
-            helper_task.clone(),
-            keypair.config().clone(),
-            vdaf,
-            aggregation_param.clone(),
-        );
+    //     let verify_init_generator = VerifyInitGenerator::new(
+    //         clock.clone(),
+    //         helper_task.clone(),
+    //         keypair.config().clone(),
+    //         vdaf,
+    //         aggregation_param.clone(),
+    //     );
 
-        let verify_inits = Vec::from([
-            verify_init_generator.next(&measurement).0,
-            verify_init_generator.next(&measurement).0,
-        ]);
+    //     let verify_inits = Vec::from([
+    //         verify_init_generator.next(&measurement).0,
+    //         verify_init_generator.next(&measurement).0,
+    //     ]);
 
-        let aggregation_job_id = random();
-        let aggregation_job_init_req = AggregationJobInitializeReq::new(
-            0,
-            aggregation_param.get_encoded().unwrap(),
-            Vec::new(),
-            verify_inits.clone(),
-        );
+    //     let aggregation_job_id = random();
+    //     let aggregation_job_init_req = AggregationJobInitializeReq::new(
+    //         0,
+    //         aggregation_param.get_encoded().unwrap(),
+    //         Vec::new(),
+    //         verify_inits.clone(),
+    //     );
 
-        AggregationJobInitTestCase {
-            clock,
-            task,
-            verify_init_generator,
-            aggregation_job_id,
-            aggregation_job_init_req,
-            aggregation_job_init_resp: None,
-            aggregation_param,
-            router,
-            _ephemeral_datastore: ephemeral_datastore,
-        }
-    }
+    //     AggregationJobInitTestCase {
+    //         clock,
+    //         task,
+    //         verify_init_generator,
+    //         aggregation_job_id,
+    //         aggregation_job_init_req,
+    //         aggregation_job_init_resp: None,
+    //         aggregation_param,
+    //         router,
+    //         _ephemeral_datastore: ephemeral_datastore,
+    //     }
+    // }
 
+    #[rstest::rstest]
+    #[case::not_bearer_token("wrong kind of token")]
+    #[case::not_base64("Bearer: ")]
     #[tokio::test]
-    async fn aggregation_job_init_authorization_dap_auth_token() {
-        let test_case = setup_aggregate_init_test_without_sending_request(
-            dummy::Vdaf::new(1),
-            VdafInstance::Fake { rounds: 1 },
-            dummy::AggregationParam(0),
-            0,
-            AuthenticationToken::DapAuth(random()),
-        )
-        .await;
+    async fn malformed_authorization_header(#[case] header_value: &'static str) {
+        let test_case = AggregationJobInitTestCase::builder()
+            .build_task(|task_builder| {
+                task_builder.with_aggregator_auth_token(AuthenticationToken::DapAuth(random()))
+            })
+            .build()
+            .await;
 
-        let req = Request::builder()
-            .method("PUT")
+        // Authenticate using a malformed "Authorization: Bearer <token>" header and a
+        // `DAP-Auth-Token` header. The presence of the former should cause an error despite
+        // the latter being present and well formed.
+        let request = Request::builder()
+            .method("POST")
             .uri(
                 test_case
                     .task
-                    .aggregation_job_uri(&test_case.aggregation_job_id, None)
+                    .aggregation_job_creation_uri()
                     .unwrap()
                     .path(),
             )
-            .with_authentication_token(test_case.task.aggregator_auth_token())
+            .header(header::AUTHORIZATION, header_value)
+            .header(
+                DAP_AUTH_HEADER,
+                test_case.task.aggregator_auth_token().as_ref().to_owned(),
+            )
             .header(
                 header::CONTENT_TYPE,
                 AggregationJobInitializeReq::MEDIA_TYPE,
@@ -942,73 +1111,14 @@ mod tests {
                 test_case.aggregation_job_init_req.get_encoded().unwrap(),
             ))
             .unwrap();
-        let response = test_case.router.clone().oneshot(req).await.unwrap();
-
-        assert_eq!(response.status(), StatusCode::CREATED);
-    }
-
-    #[rstest::rstest]
-    #[case::not_bearer_token("wrong kind of token")]
-    #[case::not_base64("Bearer: ")]
-    #[tokio::test]
-    async fn aggregation_job_init_malformed_authorization_header(
-        #[case] header_value: &'static str,
-    ) {
-        let test_case = setup_aggregate_init_test_without_sending_request(
-            dummy::Vdaf::new(1),
-            VdafInstance::Fake { rounds: 1 },
-            dummy::AggregationParam(0),
-            0,
-            AuthenticationToken::Bearer(random()),
-        )
-        .await;
-
-        // Authenticate using a malformed "Authorization: Bearer <token>" header and a
-        // `DAP-Auth-Token` header. The presence of the former should cause an error despite
-        // the latter being present and well formed.
-        let response = test_case
-            .router
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("PUT")
-                    .uri(
-                        test_case
-                            .task
-                            .aggregation_job_uri(&test_case.aggregation_job_id, None)
-                            .unwrap()
-                            .path(),
-                    )
-                    .header(header::AUTHORIZATION, header_value)
-                    .header(
-                        DAP_AUTH_HEADER,
-                        test_case.task.aggregator_auth_token().as_ref().to_owned(),
-                    )
-                    .header(
-                        header::CONTENT_TYPE,
-                        AggregationJobInitializeReq::MEDIA_TYPE,
-                    )
-                    .body(Body::from(
-                        test_case.aggregation_job_init_req.get_encoded().unwrap(),
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let response = test_case.router().oneshot(request).await.unwrap();
 
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
-    async fn aggregation_job_init_unexpected_taskbind_extension() {
-        let test_case = setup_aggregate_init_test_without_sending_request(
-            dummy::Vdaf::new(1),
-            VdafInstance::Fake { rounds: 1 },
-            dummy::AggregationParam(0),
-            0,
-            random(),
-        )
-        .await;
+    async fn unexpected_taskbind_extension() {
+        let test_case = AggregationJobInitTestCase::new().await;
 
         let verify_init = test_case
             .verify_init_generator
@@ -1027,13 +1137,9 @@ mod tests {
             Vec::from([verify_init]),
         );
 
-        let mut response = put_aggregation_job(
-            &test_case.task,
-            &test_case.aggregation_job_id,
-            &aggregation_job_init_req,
-            &test_case.router,
-        )
-        .await;
+        let mut response = test_case
+            .post_aggregation_job_init(&aggregation_job_init_req)
+            .await;
         assert_eq!(response.status(), StatusCode::CREATED);
 
         let want_aggregation_job_resp = AggregationJobResp {
@@ -1048,10 +1154,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn aggregation_job_mutation_aggregation_job() {
-        let test_case = setup_aggregate_init_test().await;
+    async fn mutation_aggregation_parameter() {
+        let test_case = AggregationJobInitTestCase::new().await;
+        test_case.run_first_step().await;
 
-        // Put the aggregation job again, but with a different aggregation parameter.
+        // Put the aggregation job again, but with a different aggregation parameter. It should be
+        // rejected because the reports have already been assigned to an aggregation job using a
+        // different aggregation parameter.
         let mutated_aggregation_job_init_req = AggregationJobInitializeReq::new(
             0,
             dummy::AggregationParam(1).get_encoded().unwrap(),
@@ -1059,19 +1168,16 @@ mod tests {
             test_case.aggregation_job_init_req.verify_inits().to_vec(),
         );
 
-        let response = put_aggregation_job(
-            &test_case.task,
-            &test_case.aggregation_job_id,
-            &mutated_aggregation_job_init_req,
-            &test_case.router,
-        )
-        .await;
+        let response = test_case
+            .post_aggregation_job_init(&mutated_aggregation_job_init_req)
+            .await;
         assert_eq!(response.status(), StatusCode::CONFLICT);
     }
 
     #[tokio::test]
-    async fn aggregation_job_mutation_report_shares() {
-        let test_case = setup_aggregate_init_test().await;
+    async fn mutation_which_verify_inits() {
+        let test_case = AggregationJobInitTestCase::new().await;
+        test_case.run_first_step().await;
 
         let verify_inits = test_case.aggregation_job_init_req.verify_inits();
 
@@ -1097,22 +1203,27 @@ mod tests {
                 Vec::new(),
                 mutated_verify_inits,
             );
-            let response = put_aggregation_job(
-                &test_case.task,
-                &test_case.aggregation_job_id,
-                &mutated_aggregation_job_init_req,
-                &test_case.router,
-            )
-            .await;
+            let response = test_case
+                .post_aggregation_job_init(&mutated_aggregation_job_init_req)
+                .await;
+            // TODO(timg): what we have here is a bunch of aggregation jobs that overlap with a
+            // previously created one. DAP says to enforce anti-replay at the time of committing
+            // output shares (https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-20#section-4.5.4.3)
+            // Should we allow these aggregation jobs to be created then?
             assert_eq!(response.status(), StatusCode::CONFLICT);
         }
     }
 
     #[tokio::test]
-    async fn aggregation_job_mutation_report_aggregations() {
+    async fn mutation_verify_init_contents() {
         // We set up a multi-step VDAF in this test so that the aggregation job won't finish on the
         // first step.
-        let test_case = setup_multi_step_aggregate_init_test().await;
+        let test_case = AggregationJobInitTestCase::builder()
+            .build_task(|task_builder| task_builder.with_vdaf(VdafInstance::Fake { rounds: 2 }))
+            .with_vdaf(dummy::Vdaf::new(2))
+            .build()
+            .await;
+        test_case.run_first_step().await;
 
         // Generate some new reports using the existing reports' metadata, but varying the
         // measurement values such that the verify state computed during aggregation
@@ -1136,28 +1247,17 @@ mod tests {
             mutated_verify_inits,
         );
 
-        let response = put_aggregation_job(
-            &test_case.task,
-            &test_case.aggregation_job_id,
-            &mutated_aggregation_job_init_req,
-            &test_case.router,
-        )
-        .await;
+        let response = test_case
+            .post_aggregation_job_init(&mutated_aggregation_job_init_req)
+            .await;
         assert_eq!(response.status(), StatusCode::CONFLICT);
     }
 
     #[tokio::test]
-    async fn aggregation_job_intolerable_clock_skew() {
-        let mut test_case = setup_aggregate_init_test_without_sending_request(
-            dummy::Vdaf::new(1),
-            VdafInstance::Fake { rounds: 1 },
-            dummy::AggregationParam(0),
-            0,
-            AuthenticationToken::Bearer(random()),
-        )
-        .await;
+    async fn intolerable_clock_skew() {
+        let test_case = AggregationJobInitTestCase::new().await;
 
-        test_case.aggregation_job_init_req = AggregationJobInitializeReq::new(
+        let aggregation_job_init_req = AggregationJobInitializeReq::new(
             0,
             test_case.aggregation_param.get_encoded().unwrap(),
             Vec::new(),
@@ -1169,7 +1269,7 @@ mod tests {
                         ReportMetadata::new(
                             random(),
                             test_case
-                                .clock
+                                .clock()
                                 .now()
                                 .to_time(test_case.task.time_precision())
                                 .add_duration(test_case.task.tolerable_clock_skew())
@@ -1186,7 +1286,7 @@ mod tests {
                         ReportMetadata::new(
                             random(),
                             test_case
-                                .clock
+                                .clock()
                                 .now()
                                 .to_time(test_case.task.time_precision())
                                 .add_duration(test_case.task.tolerable_clock_skew())
@@ -1201,95 +1301,51 @@ mod tests {
             ]),
         );
 
-        let mut response = put_aggregation_job(
-            &test_case.task,
-            &test_case.aggregation_job_id,
-            &test_case.aggregation_job_init_req,
-            &test_case.router,
-        )
-        .await;
-        assert_eq!(response.status(), StatusCode::CREATED);
-
-        let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut response).await;
-        let verify_resps = assert_matches!(
-            aggregation_job_resp,
-            AggregationJobResp { verify_resps } => verify_resps
-        );
-        assert_eq!(
-            verify_resps.len(),
-            test_case.aggregation_job_init_req.verify_inits().len(),
-        );
-        assert_matches!(verify_resps[0].result(), &VerifyStepResult::Continue { .. });
+        let aggregation_job_resp = test_case
+            .post_aggregation_job_init_expecting_success(&aggregation_job_init_req)
+            .await;
         assert_matches!(
-            verify_resps[1].result(),
+            aggregation_job_resp.verify_resps[0].result(),
+            &VerifyStepResult::Continue { .. }
+        );
+        assert_matches!(
+            aggregation_job_resp.verify_resps[1].result(),
             &VerifyStepResult::Reject(ReportError::ReportTooEarly)
         );
     }
 
     #[tokio::test]
-    async fn aggregation_job_task_expired() {
-        install_test_trace_subscriber();
-
+    async fn task_expired() {
         let clock = MockClock::default();
         let time_precision = TimePrecision::from_seconds(100);
         let task_end_time = clock.now().to_time(&time_precision);
 
-        let task = TaskBuilder::new(
-            BatchMode::TimeInterval,
-            AggregationMode::Synchronous,
-            VdafInstance::Fake { rounds: 1 },
-        )
-        .with_time_precision(time_precision)
-        .with_tolerable_clock_skew(Duration::from_seconds(500, &time_precision))
-        .with_aggregator_auth_token(AuthenticationToken::Bearer(random()))
-        .with_task_interval(Some(
-            Interval::new(
-                task_end_time
-                    .sub_duration(&Duration::from_seconds(1000, &time_precision))
-                    .unwrap(),
-                Duration::from_seconds(1000, &time_precision),
-            )
-            .unwrap(),
-        ))
-        .build();
-        let helper_task = task.helper_view().unwrap();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
-
-        datastore.put_aggregator_task(&helper_task).await.unwrap();
-        let keypair = datastore.put_hpke_key().await.unwrap();
-
-        let meter = noop_meter();
-        let builder = AggregatorHandlerBuilder::new(
-            Arc::clone(&datastore),
-            TestRuntime::default(),
-            &meter,
-            Config::default(),
-        )
-        .await
-        .unwrap();
-        let router = builder.build_axum_router(None);
-
-        let vdaf = dummy::Vdaf::new(1);
-        let aggregation_param = dummy::AggregationParam(0);
-
-        let verify_init_generator = VerifyInitGenerator::new(
-            clock.clone(),
-            helper_task.clone(),
-            keypair.config().clone(),
-            vdaf,
-            aggregation_param,
-        );
-
-        let aggregation_job_id = random();
+        let test_case = AggregationJobInitTestCase::builder()
+            .with_clock(clock.clone())
+            .build_task(|task_builder| {
+                task_builder
+                    .with_time_precision(time_precision)
+                    .with_task_interval(Some(
+                        Interval::new(
+                            task_end_time
+                                .sub_duration(&Duration::from_seconds(1000, &time_precision))
+                                .unwrap(),
+                            Duration::from_seconds(1000, &time_precision),
+                        )
+                        .unwrap(),
+                    ))
+            })
+            .build()
+            .await;
 
         let aggregation_job_init_req = AggregationJobInitializeReq::new(
             0,
-            aggregation_param.get_encoded().unwrap(),
+            test_case.aggregation_param.get_encoded().unwrap(),
             Vec::new(),
             Vec::from([
                 // Report with timestamp before task end should be accepted.
-                verify_init_generator
+                test_case
+                    .verify_init_generator
                     .next_with_metadata(
                         ReportMetadata::new(
                             random(),
@@ -1300,7 +1356,8 @@ mod tests {
                     )
                     .0,
                 // Report with timestamp after task end should be rejected.
-                verify_init_generator
+                test_case
+                    .verify_init_generator
                     .next_with_metadata(
                         ReportMetadata::new(
                             random(),
@@ -1311,7 +1368,8 @@ mod tests {
                     )
                     .0,
                 // Report with timestamp exactly at task end should also be rejected.
-                verify_init_generator
+                test_case
+                    .verify_init_generator
                     .next_with_metadata(
                         ReportMetadata::new(random(), task_end_time, Vec::new()),
                         &0,
@@ -1320,61 +1378,43 @@ mod tests {
             ]),
         );
 
-        let mut response = put_aggregation_job(
-            &task,
-            &aggregation_job_id,
-            &aggregation_job_init_req,
-            &router,
-        )
-        .await;
-        assert_eq!(response.status(), StatusCode::CREATED);
-
-        let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut response).await;
-        let verify_resps = assert_matches!(
-            aggregation_job_resp,
-            AggregationJobResp { verify_resps } => verify_resps
-        );
-        assert_eq!(
-            verify_resps.len(),
-            aggregation_job_init_req.verify_inits().len(),
-        );
-        assert_matches!(verify_resps[0].result(), &VerifyStepResult::Continue { .. });
+        let aggregation_job_resp = test_case
+            .post_aggregation_job_init_expecting_success(&aggregation_job_init_req)
+            .await;
         assert_matches!(
-            verify_resps[1].result(),
+            aggregation_job_resp.verify_resps[0].result(),
+            &VerifyStepResult::Continue { .. }
+        );
+        assert_matches!(
+            aggregation_job_resp.verify_resps[1].result(),
             &VerifyStepResult::Reject(ReportError::TaskExpired)
         );
         assert_matches!(
-            verify_resps[2].result(),
+            aggregation_job_resp.verify_resps[2].result(),
             &VerifyStepResult::Reject(ReportError::TaskExpired)
         );
     }
 
     #[tokio::test]
-    async fn aggregation_job_init_two_step_vdaf_idempotence() {
+    async fn two_step_vdaf_idempotence() {
         // We set up a multi-step VDAF in this test so that the aggregation job won't finish on the
         // first step.
-        let test_case = setup_multi_step_aggregate_init_test().await;
+        let test_case = AggregationJobInitTestCase::builder()
+            .build_task(|task_builder| task_builder.with_vdaf(VdafInstance::Fake { rounds: 2 }))
+            .with_vdaf(dummy::Vdaf::new(2))
+            .build()
+            .await;
+        let aggregation_job_resp = test_case.run_first_step().await;
 
         // Send the aggregation job init request again. We should get an identical response back.
-        let mut response = put_aggregation_job(
-            &test_case.task,
-            &test_case.aggregation_job_id,
-            &test_case.aggregation_job_init_req,
-            &test_case.router,
-        )
-        .await;
-
-        let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut response).await;
-        assert_eq!(
-            aggregation_job_resp,
-            test_case.aggregation_job_init_resp.unwrap(),
-        );
+        let aggregation_job_resp_again = test_case
+            .post_aggregation_job_init_expecting_success(&test_case.aggregation_job_init_req)
+            .await;
+        assert_eq!(aggregation_job_resp, aggregation_job_resp_again);
     }
 
     #[tokio::test]
-    async fn aggregation_job_task_not_started() {
-        install_test_trace_subscriber();
-
+    async fn task_not_started() {
         let clock = MockClock::default();
         let time_precision = TimePrecision::from_seconds(100);
         let task_start_time = clock
@@ -1383,60 +1423,30 @@ mod tests {
             .sub_duration(&Duration::from_seconds(1000, &time_precision))
             .unwrap();
 
-        let task = TaskBuilder::new(
-            BatchMode::TimeInterval,
-            AggregationMode::Synchronous,
-            VdafInstance::Fake { rounds: 1 },
-        )
-        .with_time_precision(time_precision)
-        .with_tolerable_clock_skew(Duration::from_seconds(500, &time_precision))
-        .with_aggregator_auth_token(AuthenticationToken::Bearer(random()))
-        .with_task_interval(Some(
-            Interval::new(
-                task_start_time,
-                Duration::from_seconds(2000, &time_precision),
-            )
-            .unwrap(),
-        ))
-        .build();
-        let helper_task = task.helper_view().unwrap();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
-
-        datastore.put_aggregator_task(&helper_task).await.unwrap();
-        let keypair = datastore.put_hpke_key().await.unwrap();
-
-        let meter = noop_meter();
-        let builder = AggregatorHandlerBuilder::new(
-            Arc::clone(&datastore),
-            TestRuntime::default(),
-            &meter,
-            Config::default(),
-        )
-        .await
-        .unwrap();
-        let router = builder.build_axum_router(None);
-
-        let vdaf = dummy::Vdaf::new(1);
-        let aggregation_param = dummy::AggregationParam(0);
-
-        let verify_init_generator = VerifyInitGenerator::new(
-            clock.clone(),
-            helper_task.clone(),
-            keypair.config().clone(),
-            vdaf,
-            aggregation_param,
-        );
-
-        let aggregation_job_id = random();
+        let test_case = AggregationJobInitTestCase::builder()
+            .with_clock(clock.clone())
+            .build_task(|task_builder| {
+                task_builder
+                    .with_time_precision(time_precision)
+                    .with_task_interval(Some(
+                        Interval::new(
+                            task_start_time,
+                            Duration::from_seconds(2000, &time_precision),
+                        )
+                        .unwrap(),
+                    ))
+            })
+            .build()
+            .await;
 
         let aggregation_job_init_req = AggregationJobInitializeReq::new(
             0,
-            aggregation_param.get_encoded().unwrap(),
+            test_case.aggregation_param.get_encoded().unwrap(),
             Vec::new(),
             Vec::from([
                 // Report with timestamp after task start should be accepted.
-                verify_init_generator
+                test_case
+                    .verify_init_generator
                     .next_with_metadata(
                         ReportMetadata::new(
                             random(),
@@ -1447,7 +1457,8 @@ mod tests {
                     )
                     .0,
                 // Report with timestamp before task start should be rejected.
-                verify_init_generator
+                test_case
+                    .verify_init_generator
                     .next_with_metadata(
                         ReportMetadata::new(
                             random(),
@@ -1460,34 +1471,22 @@ mod tests {
             ]),
         );
 
-        let mut response = put_aggregation_job(
-            &task,
-            &aggregation_job_id,
-            &aggregation_job_init_req,
-            &router,
-        )
-        .await;
-        assert_eq!(response.status(), StatusCode::CREATED);
-
-        let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut response).await;
-        let verify_resps = assert_matches!(
-            aggregation_job_resp,
-            AggregationJobResp { verify_resps } => verify_resps
-        );
-        assert_eq!(
-            verify_resps.len(),
-            aggregation_job_init_req.verify_inits().len(),
-        );
-        assert_matches!(verify_resps[0].result(), &VerifyStepResult::Continue { .. });
+        let aggregation_job_resp = test_case
+            .post_aggregation_job_init_expecting_success(&aggregation_job_init_req)
+            .await;
         assert_matches!(
-            verify_resps[1].result(),
+            aggregation_job_resp.verify_resps[0].result(),
+            &VerifyStepResult::Continue { .. }
+        );
+        assert_matches!(
+            aggregation_job_resp.verify_resps[1].result(),
             &VerifyStepResult::Reject(ReportError::TaskNotStarted)
         );
     }
 
     #[tokio::test]
-    async fn aggregation_job_init_unexpected_batch_id_extension() {
-        let test_case = setup_aggregate_init_test().await;
+    async fn unexpected_batch_id_extension() {
+        let test_case = AggregationJobInitTestCase::new().await;
 
         // A time-interval task has no use for a `leader_selected_batch_id` extension and rejects
         // it as an `invalidMessage`.
@@ -1498,8 +1497,7 @@ mod tests {
             test_case.aggregation_job_init_req.verify_inits().to_vec(),
         );
 
-        let mut response =
-            put_aggregation_job(&test_case.task, &random(), &request, &test_case.router).await;
+        let mut response = test_case.post_aggregation_job_init(&request).await;
         assert_eq!(
             take_problem_details(&mut response).await,
             json!({
@@ -1513,8 +1511,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn aggregation_job_init_out_of_order_extensions() {
-        let test_case = setup_aggregate_init_test().await;
+    async fn out_of_order_extensions() {
+        let test_case = AggregationJobInitTestCase::new().await;
 
         // Extensions must be in strictly increasing order of extension type; a decreasing pair is
         // an `invalidMessage`.
@@ -1528,8 +1526,7 @@ mod tests {
             test_case.aggregation_job_init_req.verify_inits().to_vec(),
         );
 
-        let mut response =
-            put_aggregation_job(&test_case.task, &random(), &request, &test_case.router).await;
+        let mut response = test_case.post_aggregation_job_init(&request).await;
         assert_eq!(
             take_problem_details(&mut response).await,
             json!({
@@ -1543,8 +1540,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn aggregation_job_init_unsupported_extension() {
-        let test_case = setup_aggregate_init_test().await;
+    async fn unsupported_extension() {
+        let test_case = AggregationJobInitTestCase::new().await;
 
         // An extension type the helper does not recognize is an `unsupportedExtension`.
         let request = AggregationJobInitializeReq::new(
@@ -1557,8 +1554,7 @@ mod tests {
             test_case.aggregation_job_init_req.verify_inits().to_vec(),
         );
 
-        let mut response =
-            put_aggregation_job(&test_case.task, &random(), &request, &test_case.router).await;
+        let mut response = test_case.post_aggregation_job_init(&request).await;
         assert_eq!(
             take_problem_details(&mut response).await,
             json!({

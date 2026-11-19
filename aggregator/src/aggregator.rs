@@ -28,7 +28,7 @@ use janus_aggregator_core::{
     AsyncAggregator, AsyncAggregatorWithNoise,
     batch_mode::AccumulableBatchMode,
     datastore::{
-        self, Datastore, Error as DatastoreError, Transaction,
+        self, Datastore, Error as DatastoreError,
         models::{
             AggregateShareJob, AggregateShareJobState, AggregationJob, AggregationJobDatastoreId,
             AggregationJobState, CollectionJob, CollectionJobState, LeaderStoredReport,
@@ -396,7 +396,7 @@ impl Aggregator {
         Ok((encoded_hpke_config_list, signature))
     }
 
-    async fn handle_upload(
+    async fn upload_reports(
         &self,
         task_id: &TaskId,
         reports: impl Stream<Item = Result<Report, Error>>,
@@ -410,7 +410,7 @@ impl Aggregator {
             return Err(Arc::new(Error::UnrecognizedTask(*task_id)));
         }
         task_aggregator
-            .handle_upload(
+            .upload_reports(
                 self.datastore.clock(),
                 &self.hpke_keypairs,
                 &self.metrics,
@@ -419,17 +419,13 @@ impl Aggregator {
             .await
     }
 
-    // TODO(timg): rename these methods to discuss aggregation jobs
-    async fn handle_aggregate_init(
+    async fn create_aggregation_job(
         &self,
         task_id: &TaskId,
-        aggregation_job_id: &AggregationJobId,
         req_bytes: &[u8],
         auth_token: Option<AuthenticationToken>,
         taskprov_task_config: Option<&TaskConfiguration>,
-    ) -> Result<Option<AggregationJobResp>, Error> {
-        // TODO(timg): somewhere in here, helper needs to choose aggregation job ID and respond with
-        // it
+    ) -> Result<(AggregationJobId, Option<Vec<u8>>), Error> {
         let task_aggregator = match self.task_aggregators.get(task_id).await? {
             Some(task_aggregator) => {
                 if task_aggregator.task.role() != &Role::Helper {
@@ -482,20 +478,19 @@ impl Aggregator {
         };
 
         task_aggregator
-            .handle_aggregate_init(
+            .create_aggregation_job(
                 Arc::clone(&self.datastore),
                 Arc::clone(&self.hpke_keypairs),
                 &self.metrics,
                 self.cfg.batch_aggregation_shard_count,
                 self.cfg.task_counter_shard_count,
-                aggregation_job_id,
                 taskprov_task_config.is_some(),
                 req_bytes,
             )
             .await
     }
 
-    async fn handle_aggregate_continue(
+    async fn continue_aggregation_job(
         &self,
         task_id: &TaskId,
         aggregation_job_id: &AggregationJobId,
@@ -538,7 +533,7 @@ impl Aggregator {
         let request_hash = digest(&SHA256, req_bytes).as_ref().try_into().unwrap();
 
         task_aggregator
-            .handle_aggregate_continue(
+            .continue_aggregation_job(
                 Arc::clone(&self.datastore),
                 &self.metrics,
                 self.cfg.batch_aggregation_shard_count,
@@ -550,7 +545,7 @@ impl Aggregator {
             .await
     }
 
-    async fn handle_aggregate_get(
+    async fn get_aggregation_job(
         &self,
         task_id: &TaskId,
         aggregation_job_id: &AggregationJobId,
@@ -593,11 +588,11 @@ impl Aggregator {
         }
 
         task_aggregator
-            .handle_aggregate_get(Arc::clone(&self.datastore), aggregation_job_id, step)
+            .get_aggregation_job(Arc::clone(&self.datastore), aggregation_job_id, step)
             .await
     }
 
-    async fn handle_aggregate_delete(
+    async fn delete_aggregation_job(
         &self,
         task_id: &TaskId,
         aggregation_job_id: &AggregationJobId,
@@ -634,13 +629,13 @@ impl Aggregator {
         }
 
         task_aggregator
-            .handle_aggregate_delete(&self.datastore, aggregation_job_id)
+            .delete_aggregation_job(&self.datastore, aggregation_job_id)
             .await
     }
 
     /// Handle a collection job creation request. Only supported by the leader. `req_bytes` is an
     /// encoded [`CollectionJobReq`]. Returns an encoded [`CollectionJobResp`] on success.
-    async fn handle_create_collection_job(
+    async fn create_collection_job(
         &self,
         task_id: &TaskId,
         req_bytes: &[u8],
@@ -662,15 +657,18 @@ impl Aggregator {
         }
 
         task_aggregator
-            .handle_create_collection_job(&self.datastore, req_bytes)
+            .create_collection_job(&self.datastore, req_bytes)
             .await
     }
 
-    /// Handle a GET request for a collection job. `collection_job_id` is the unique identifier
-    /// for the collection job parsed out of the request URI. Returns an encoded
-    /// [`Collection`] if the collect job has been run to completion, `None` if the collection
-    /// job has not yet run, or an error otherwise.
-    async fn handle_get_collection_job(
+    /// Handle a GET request for a collection job.
+    ///
+    /// `collection_job_id` is the unique identifier for the collection job parsed out of the
+    /// request URI.
+    ///
+    /// Returns an encoded  [`Collection`] if the collect job has been run to completion, `None` if
+    /// the collection job has not yet run, or an error otherwise.
+    async fn get_collection_job(
         &self,
         task_id: &TaskId,
         collection_job_id: &CollectionJobId,
@@ -692,12 +690,12 @@ impl Aggregator {
         }
 
         task_aggregator
-            .handle_get_collection_job(&self.datastore, collection_job_id)
+            .get_collection_job(&self.datastore, collection_job_id)
             .await
     }
 
     /// Handle a DELETE request for a collection job.
-    async fn handle_delete_collection_job(
+    async fn delete_collection_job(
         &self,
         task_id: &TaskId,
         collection_job_id: &CollectionJobId,
@@ -719,7 +717,7 @@ impl Aggregator {
         }
 
         task_aggregator
-            .handle_delete_collection_job(&self.datastore, collection_job_id)
+            .delete_collection_job(&self.datastore, collection_job_id)
             .await?;
 
         Ok(())
@@ -769,7 +767,7 @@ impl Aggregator {
     /// Handle an aggregate share request. Only supported by the helper. `req_bytes` is an
     /// encoded [`AggregateShareReq`]. Returns the [`AggregateShareId`] and an encoded
     /// [`AggregateShare`].
-    async fn handle_post_aggregate_share(
+    async fn create_aggregate_share(
         &self,
         task_id: &TaskId,
         req_bytes: &[u8],
@@ -791,7 +789,7 @@ impl Aggregator {
             .await?;
 
         task_aggregator
-            .handle_create_aggregate_share(
+            .create_aggregate_share(
                 &self.datastore,
                 self.datastore.clock(),
                 self.cfg.batch_aggregation_shard_count,
@@ -804,7 +802,7 @@ impl Aggregator {
 
     /// Handle a GET request on an aggregate share. Only supported by the helper. Returns an encoded
     /// [`AggregateShare`].
-    async fn handle_get_aggregate_share(
+    async fn get_aggregate_share(
         &self,
         task_id: &TaskId,
         aggregate_share_id: &AggregateShareId,
@@ -824,12 +822,12 @@ impl Aggregator {
             )
             .await?;
         task_aggregator
-            .handle_get_aggregate_share(&self.datastore, &collector_hpke_config, aggregate_share_id)
+            .get_aggregate_share(&self.datastore, &collector_hpke_config, aggregate_share_id)
             .await
     }
 
     /// Handle an aggregate share deletion request. Only supported by the helper.
-    async fn handle_delete_aggregate_share(
+    async fn delete_aggregate_share(
         &self,
         task_id: &TaskId,
         aggregate_share_id: &AggregateShareId,
@@ -852,7 +850,7 @@ impl Aggregator {
             )
             .await?;
         task_aggregator
-            .handle_delete_aggregate_share(&self.datastore, aggregate_share_id)
+            .delete_aggregate_share(&self.datastore, aggregate_share_id)
             .await
     }
 
@@ -1116,7 +1114,7 @@ impl TaskAggregator {
         })
     }
 
-    async fn handle_upload(
+    async fn upload_reports(
         &self,
         clock: &dyn Clock,
         hpke_keypairs: &HpkeKeypairCache,
@@ -1124,7 +1122,7 @@ impl TaskAggregator {
         reports: impl Stream<Item = Result<Report, Error>>,
     ) -> Result<UploadErrors, Arc<Error>> {
         self.vdaf_ops
-            .handle_upload(
+            .upload_reports(
                 clock,
                 hpke_keypairs,
                 metrics,
@@ -1135,33 +1133,31 @@ impl TaskAggregator {
             .await
     }
 
-    async fn handle_aggregate_init(
+    async fn create_aggregation_job(
         &self,
         datastore: Arc<Datastore>,
         hpke_keypairs: Arc<HpkeKeypairCache>,
         metrics: &AggregatorMetrics,
         batch_aggregation_shard_count: u64,
         task_counter_shard_count: u64,
-        aggregation_job_id: &AggregationJobId,
         require_taskbind_extension: bool,
         req_bytes: &[u8],
-    ) -> Result<Option<AggregationJobResp>, Error> {
+    ) -> Result<(AggregationJobId, Option<Vec<u8>>), Error> {
         self.vdaf_ops
-            .handle_aggregate_init(
+            .create_aggregation_job(
                 datastore,
                 hpke_keypairs,
                 metrics,
                 self.task.as_ref(),
                 batch_aggregation_shard_count,
                 task_counter_shard_count,
-                aggregation_job_id,
                 require_taskbind_extension,
                 req_bytes,
             )
             .await
     }
 
-    async fn handle_aggregate_continue(
+    async fn continue_aggregation_job(
         &self,
         datastore: Arc<Datastore>,
         metrics: &AggregatorMetrics,
@@ -1172,7 +1168,7 @@ impl TaskAggregator {
         request_hash: [u8; 32],
     ) -> Result<AggregationJobContinueResult, Error> {
         self.vdaf_ops
-            .handle_aggregate_continue(
+            .continue_aggregation_job(
                 datastore,
                 metrics,
                 self.task.as_ref(),
@@ -1185,34 +1181,34 @@ impl TaskAggregator {
             .await
     }
 
-    async fn handle_aggregate_get(
+    async fn get_aggregation_job(
         &self,
         datastore: Arc<Datastore>,
         aggregation_job_id: &AggregationJobId,
         step: AggregationJobStep,
     ) -> Result<Option<AggregationJobResp>, Error> {
         self.vdaf_ops
-            .handle_aggregate_get(datastore, Arc::clone(&self.task), aggregation_job_id, step)
+            .get_aggregation_job(datastore, Arc::clone(&self.task), aggregation_job_id, step)
             .await
     }
 
-    async fn handle_aggregate_delete(
+    async fn delete_aggregation_job(
         &self,
         datastore: &Datastore,
         aggregation_job_id: &AggregationJobId,
     ) -> Result<(), Error> {
         self.vdaf_ops
-            .handle_aggregate_delete(datastore, Arc::clone(&self.task), aggregation_job_id)
+            .delete_aggregation_job(datastore, Arc::clone(&self.task), aggregation_job_id)
             .await
     }
 
-    async fn handle_create_collection_job(
+    async fn create_collection_job(
         &self,
         datastore: &Datastore,
         req_bytes: &[u8],
     ) -> Result<(CollectionJobId, Option<Vec<u8>>), Error> {
         self.vdaf_ops
-            .handle_create_collection_job(
+            .create_collection_job(
                 datastore,
                 datastore.clock(),
                 Arc::clone(&self.task),
@@ -1221,27 +1217,27 @@ impl TaskAggregator {
             .await
     }
 
-    async fn handle_get_collection_job(
+    async fn get_collection_job(
         &self,
         datastore: &Datastore,
         collection_job_id: &CollectionJobId,
     ) -> Result<Option<Vec<u8>>, Error> {
         self.vdaf_ops
-            .handle_get_collection_job(datastore, Arc::clone(&self.task), collection_job_id)
+            .get_collection_job(datastore, Arc::clone(&self.task), collection_job_id)
             .await
     }
 
-    async fn handle_delete_collection_job(
+    async fn delete_collection_job(
         &self,
         datastore: &Datastore,
         collection_job_id: &CollectionJobId,
     ) -> Result<(), Error> {
         self.vdaf_ops
-            .handle_delete_collection_job(datastore, Arc::clone(&self.task), collection_job_id)
+            .delete_collection_job(datastore, Arc::clone(&self.task), collection_job_id)
             .await
     }
 
-    async fn handle_create_aggregate_share(
+    async fn create_aggregate_share(
         &self,
         datastore: &Datastore,
         clock: &dyn Clock,
@@ -1251,7 +1247,7 @@ impl TaskAggregator {
         collector_hpke_config: &HpkeConfig,
     ) -> Result<(AggregateShareId, Vec<u8>), Error> {
         self.vdaf_ops
-            .handle_create_aggregate_share(
+            .create_aggregate_share(
                 datastore,
                 clock,
                 Arc::clone(&self.task),
@@ -1263,14 +1259,14 @@ impl TaskAggregator {
             .await
     }
 
-    async fn handle_get_aggregate_share(
+    async fn get_aggregate_share(
         &self,
         datastore: &Datastore,
         collector_hpke_config: &HpkeConfig,
         aggregate_share_id: &AggregateShareId,
     ) -> Result<Vec<u8>, Error> {
         self.vdaf_ops
-            .handle_get_aggregate_share(
+            .get_aggregate_share(
                 datastore,
                 Arc::clone(&self.task),
                 collector_hpke_config,
@@ -1279,13 +1275,13 @@ impl TaskAggregator {
             .await
     }
 
-    async fn handle_delete_aggregate_share(
+    async fn delete_aggregate_share(
         &self,
         datastore: &Datastore,
         aggregate_share_id: &AggregateShareId,
     ) -> Result<(), Error> {
         self.vdaf_ops
-            .handle_delete_aggregate_share(datastore, Arc::clone(&self.task), aggregate_share_id)
+            .delete_aggregate_share(datastore, Arc::clone(&self.task), aggregate_share_id)
             .await
     }
 }
@@ -1499,7 +1495,7 @@ macro_rules! vdaf_ops_dispatch {
 
 impl VdafOps {
     #[tracing::instrument(skip_all, fields(task_id = ?task.id()), err(level = Level::DEBUG))]
-    async fn handle_upload(
+    async fn upload_reports(
         &self,
         clock: &dyn Clock,
         hpke_keypairs: &HpkeKeypairCache,
@@ -1511,7 +1507,7 @@ impl VdafOps {
         match task.batch_mode() {
             task::BatchMode::TimeInterval => {
                 vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
-                    Self::handle_upload_generic::<VERIFY_KEY_LENGTH, TimeInterval, VdafType>(
+                    Self::upload_reports_generic::<VERIFY_KEY_LENGTH, TimeInterval, VdafType>(
                         Arc::clone(vdaf),
                         clock,
                         hpke_keypairs,
@@ -1525,7 +1521,7 @@ impl VdafOps {
             }
             task::BatchMode::LeaderSelected { .. } => {
                 vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
-                    Self::handle_upload_generic::<VERIFY_KEY_LENGTH, LeaderSelected, VdafType>(
+                    Self::upload_reports_generic::<VERIFY_KEY_LENGTH, LeaderSelected, VdafType>(
                         Arc::clone(vdaf),
                         clock,
                         hpke_keypairs,
@@ -1548,7 +1544,7 @@ impl VdafOps {
         fields(task_id = ?task.id()),
         err(level = Level::DEBUG)
     )]
-    async fn handle_aggregate_init(
+    async fn create_aggregation_job(
         &self,
         datastore: Arc<Datastore>,
         hpke_keypairs: Arc<HpkeKeypairCache>,
@@ -1556,14 +1552,13 @@ impl VdafOps {
         task: &AggregatorTask,
         batch_aggregation_shard_count: u64,
         task_counter_shard_count: u64,
-        aggregation_job_id: &AggregationJobId,
         require_taskbind_extension: bool,
         req_bytes: &[u8],
-    ) -> Result<Option<AggregationJobResp>, Error> {
+    ) -> Result<(AggregationJobId, Option<Vec<u8>>), Error> {
         match task.batch_mode() {
             task::BatchMode::TimeInterval => {
                 vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
-                    Self::handle_aggregate_init_generic::<
+                    Self::create_aggregation_job_generic::<
                         VERIFY_KEY_LENGTH,
                         TimeInterval,
                         VdafType,
@@ -1575,7 +1570,6 @@ impl VdafOps {
                         task,
                         batch_aggregation_shard_count,
                         task_counter_shard_count,
-                        aggregation_job_id,
                         require_taskbind_extension,
                         req_bytes,
                     )
@@ -1584,7 +1578,7 @@ impl VdafOps {
             }
             task::BatchMode::LeaderSelected { .. } => {
                 vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
-                    Self::handle_aggregate_init_generic::<
+                    Self::create_aggregation_job_generic::<
                         VERIFY_KEY_LENGTH,
                         LeaderSelected,
                         VdafType,
@@ -1596,7 +1590,6 @@ impl VdafOps {
                         task,
                         batch_aggregation_shard_count,
                         task_counter_shard_count,
-                        aggregation_job_id,
                         require_taskbind_extension,
                         req_bytes,
                     )
@@ -1611,7 +1604,7 @@ impl VdafOps {
         fields(task_id = ?task.id(), step = %req.step()),
         err(level = Level::DEBUG)
     )]
-    async fn handle_aggregate_continue(
+    async fn continue_aggregation_job(
         &self,
         datastore: Arc<Datastore>,
         metrics: &AggregatorMetrics,
@@ -1625,7 +1618,7 @@ impl VdafOps {
         match task.batch_mode() {
             task::BatchMode::TimeInterval => {
                 vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
-                    Self::handle_aggregate_continue_generic::<
+                    Self::continue_aggregation_job_generic::<
                         VERIFY_KEY_LENGTH,
                         TimeInterval,
                         VdafType,
@@ -1645,7 +1638,7 @@ impl VdafOps {
             }
             task::BatchMode::LeaderSelected { .. } => {
                 vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
-                    Self::handle_aggregate_continue_generic::<
+                    Self::continue_aggregation_job_generic::<
                         VERIFY_KEY_LENGTH,
                         LeaderSelected,
                         VdafType,
@@ -1671,7 +1664,7 @@ impl VdafOps {
         fields(task_id = ?task.id()),
         err(level = Level::DEBUG)
     )]
-    async fn handle_aggregate_get(
+    async fn get_aggregation_job(
         &self,
         datastore: Arc<Datastore>,
         task: Arc<AggregatorTask>,
@@ -1681,7 +1674,7 @@ impl VdafOps {
         match task.batch_mode() {
             task::BatchMode::TimeInterval => {
                 vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
-                    Self::handle_aggregate_get_generic::<
+                    Self::get_aggregation_job_generic::<
                         VERIFY_KEY_LENGTH,
                         TimeInterval,
                         VdafType,
@@ -1697,7 +1690,7 @@ impl VdafOps {
 
             task::BatchMode::LeaderSelected { .. } => {
                 vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
-                    Self::handle_aggregate_get_generic::<
+                    Self::get_aggregation_job_generic::<
                         VERIFY_KEY_LENGTH,
                         LeaderSelected,
                         VdafType,
@@ -1718,7 +1711,7 @@ impl VdafOps {
         fields(task_id = ?task.id()),
         err(level = Level::DEBUG)
     )]
-    async fn handle_aggregate_delete(
+    async fn delete_aggregation_job(
         &self,
         datastore: &Datastore,
         task: Arc<AggregatorTask>,
@@ -1727,7 +1720,7 @@ impl VdafOps {
         match task.batch_mode() {
             task::BatchMode::TimeInterval => {
                 vdaf_ops_dispatch!(self, (_, VdafType, VERIFY_KEY_LENGTH) => {
-                    Self::handle_aggregate_delete_generic::<
+                    Self::delete_aggregation_job_generic::<
                         VERIFY_KEY_LENGTH,
                         TimeInterval,
                         VdafType,
@@ -1740,7 +1733,7 @@ impl VdafOps {
             }
             task::BatchMode::LeaderSelected { .. } => {
                 vdaf_ops_dispatch!(self, (_, VdafType, VERIFY_KEY_LENGTH) => {
-                    Self::handle_aggregate_delete_generic::<
+                    Self::delete_aggregation_job_generic::<
                         VERIFY_KEY_LENGTH,
                         LeaderSelected,
                         VdafType,
@@ -1754,7 +1747,7 @@ impl VdafOps {
         }
     }
 
-    async fn handle_upload_generic<const SEED_SIZE: usize, B, A>(
+    async fn upload_reports_generic<const SEED_SIZE: usize, B, A>(
         vdaf: Arc<A>,
         clock: &dyn Clock,
         hpke_keypairs: &HpkeKeypairCache,
@@ -2103,7 +2096,7 @@ impl VdafOps {
     /// Implements [helper aggregate initialization][1].
     ///
     /// [1]: https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#name-helper-initialization
-    async fn handle_aggregate_init_generic<const SEED_SIZE: usize, B, A>(
+    async fn create_aggregation_job_generic<const SEED_SIZE: usize, B, A>(
         datastore: Arc<Datastore>,
         hpke_keypairs: Arc<HpkeKeypairCache>,
         vdaf: &A,
@@ -2111,20 +2104,19 @@ impl VdafOps {
         task: &AggregatorTask,
         batch_aggregation_shard_count: u64,
         task_counter_shard_count: u64,
-        aggregation_job_id: &AggregationJobId,
         require_taskbind_extension: bool,
         req_bytes: &[u8],
-    ) -> Result<Option<AggregationJobResp>, Error>
+    ) -> Result<(AggregationJobId, Option<Vec<u8>>), Error>
     where
         B: AccumulableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
     {
-        // Unwrap safety: SHA-256 computed by ring should always be 32 bytes.
-        let request_hash = digest(&SHA256, req_bytes).as_ref().try_into().unwrap();
+        // Parse the aggregation job request and call an inner method, so we can decorate it with a
+        // tracing span that includes request fields.
         let req =
             AggregationJobInitializeReq::get_decoded(req_bytes).map_err(Error::MessageDecode)?;
 
-        Self::handle_aggregate_init_inner::<SEED_SIZE, B, A>(
+        Self::create_aggregation_job_inner::<SEED_SIZE, B, A>(
             datastore,
             hpke_keypairs,
             vdaf,
@@ -2132,20 +2124,22 @@ impl VdafOps {
             task,
             batch_aggregation_shard_count,
             task_counter_shard_count,
-            aggregation_job_id,
             require_taskbind_extension,
             req,
-            request_hash,
         )
         .await
     }
 
+    /// Create a new aggregation job.
+    ///
+    /// Returns the assigned aggregation job ID and a serialized `AggregationJobResp`, if job
+    /// initialization was handled synchronously.
     #[tracing::instrument(
         skip_all,
         fields(verification_key_id = req.verification_key_id()),
         err(level = Level::DEBUG)
     )]
-    async fn handle_aggregate_init_inner<const SEED_SIZE: usize, B, A>(
+    async fn create_aggregation_job_inner<const SEED_SIZE: usize, B, A>(
         datastore: Arc<Datastore>,
         hpke_keypairs: Arc<HpkeKeypairCache>,
         vdaf: &A,
@@ -2153,11 +2147,9 @@ impl VdafOps {
         task: &AggregatorTask,
         batch_aggregation_shard_count: u64,
         task_counter_shard_count: u64,
-        aggregation_job_id: &AggregationJobId,
         require_taskbind_extension: bool,
         req: AggregationJobInitializeReq,
-        request_hash: [u8; 32],
-    ) -> Result<Option<AggregationJobResp>, Error>
+    ) -> Result<(AggregationJobId, Option<Vec<u8>>), Error>
     where
         B: AccumulableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
@@ -2208,19 +2200,6 @@ impl VdafOps {
             .fold(Interval::EMPTY, |interval, timestamp| {
                 interval.merged_with(&timestamp).unwrap()
             });
-        let aggregation_job = AggregationJob::<SEED_SIZE, B, A>::new(
-            AggregationJobDatastoreId::from(0),
-            *task.id(),
-            A::AggregationParam::get_decoded(req.aggregation_parameter())
-                .map_err(Error::MessageDecode)?,
-            partial_batch_identifier,
-            client_timestamp_interval,
-            AggregationJobState::AwaitingRequest {
-                helper_aggregation_job_id: *aggregation_job_id,
-            },
-            AggregationJobStep::from(0),
-        )
-        .with_last_request_hash(request_hash);
 
         let report_aggregations = req
             .verify_inits()
@@ -2242,133 +2221,93 @@ impl VdafOps {
             })
             .collect::<Result<Vec<_>, Error>>()?;
 
-        match task.aggregation_mode() {
-            Some(AggregationMode::Synchronous) => {
-                Self::handle_aggregate_init_generic_sync(
-                    datastore,
+        let aggregation_param = A::AggregationParam::get_decoded(req.aggregation_parameter())
+            .map_err(Error::MessageDecode)?;
+        let helper_aggregation_job_id = req.derive_id().map_err(|e| Error::Internal(e.into()))?;
+
+        let aggregation_mode = task
+            .aggregation_mode()
+            .ok_or_else(|| Error::Internal("task has no aggregation mode".into()))?;
+        let (aggregation_job_state, report_aggregations) = match aggregation_mode {
+            AggregationMode::Synchronous => (
+                AggregationJobState::AwaitingRequest {
+                    helper_aggregation_job_id,
+                },
+                compute_helper_aggregate_init(
+                    datastore.clock(),
                     hpke_keypairs,
                     vdaf,
-                    metrics,
+                    metrics.clone().into(),
                     task,
-                    batch_aggregation_shard_count,
-                    task_counter_shard_count,
-                    request_hash,
-                    aggregation_job,
+                    &aggregation_param,
                     report_aggregations,
                 )
-                .await
-            }
+                .await?,
+            ),
 
-            Some(AggregationMode::Asynchronous) => {
-                Self::handle_aggregate_init_generic_async(
-                    datastore,
-                    vdaf,
-                    metrics,
-                    task,
-                    batch_aggregation_shard_count,
-                    task_counter_shard_count,
-                    request_hash,
-                    aggregation_job,
-                    report_aggregations,
-                )
-                .await
-            }
+            AggregationMode::Asynchronous => (
+                AggregationJobState::Active {
+                    helper_aggregation_job_id,
+                },
+                report_aggregations
+                    .into_iter()
+                    .map(|ra| WritableReportAggregation::new(ra, None))
+                    .collect(),
+            ),
+        };
 
-            None => Err(Error::Internal("task has no aggregation mode".into())),
-        }
-    }
+        let aggregation_job = AggregationJob::<SEED_SIZE, B, A>::new(
+            AggregationJobDatastoreId::from(0),
+            *task.id(),
+            A::AggregationParam::get_decoded(req.aggregation_parameter())
+                .map_err(Error::MessageDecode)?,
+            partial_batch_identifier,
+            client_timestamp_interval,
+            aggregation_job_state,
+            AggregationJobStep::from(0),
+        );
 
-    // All report aggregations must be in the HelperInitProcessing state.
-    async fn handle_aggregate_init_generic_sync<const SEED_SIZE: usize, B, A>(
-        datastore: Arc<Datastore>,
-        hpke_keypairs: Arc<HpkeKeypairCache>,
-        vdaf: &A,
-        metrics: &AggregatorMetrics,
-        task: &AggregatorTask,
-        batch_aggregation_shard_count: u64,
-        task_counter_shard_count: u64,
-        request_hash: [u8; 32],
-        aggregation_job: AggregationJob<SEED_SIZE, B, A>,
-        report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
-    ) -> Result<Option<AggregationJobResp>, Error>
-    where
-        B: AccumulableBatchMode,
-        A: AsyncAggregator<SEED_SIZE>,
-    {
-        // Compute the next aggregation step.
-        let report_aggregations = compute_helper_aggregate_init(
-            datastore.clock(),
-            hpke_keypairs,
-            vdaf,
-            metrics.clone().into(),
-            task,
-            &aggregation_job,
-            report_aggregations,
-        )
-        .await?;
-
-        // Store data to datastore.
-        let verify_resps = Self::handle_aggregate_init_generic_write(
+        let verify_resps = Self::create_aggregation_job_write(
             datastore,
             vdaf,
             metrics,
             task,
             batch_aggregation_shard_count,
             task_counter_shard_count,
-            request_hash,
+            helper_aggregation_job_id,
             aggregation_job,
             report_aggregations,
         )
         .await?;
 
-        Ok(Some(AggregationJobResp { verify_resps }))
+        let resp = match aggregation_mode {
+            AggregationMode::Synchronous => Some(
+                AggregationJobResp { verify_resps }
+                    .get_encoded()
+                    .map_err(Error::MessageEncode)?,
+            ),
+            AggregationMode::Asynchronous => {
+                if !verify_resps.is_empty() {
+                    return Err(Error::Internal(
+                        "async create aggregation job should yield no VerifyResps".into(),
+                    ));
+                }
+
+                None
+            }
+        };
+
+        Ok((helper_aggregation_job_id, resp))
     }
 
-    // All report aggregations must be in the HelperInitProcessing state.
-    async fn handle_aggregate_init_generic_async<const SEED_SIZE: usize, B, A>(
+    async fn create_aggregation_job_write<const SEED_SIZE: usize, B, A>(
         datastore: Arc<Datastore>,
         vdaf: &A,
         metrics: &AggregatorMetrics,
         task: &AggregatorTask,
         batch_aggregation_shard_count: u64,
         task_counter_shard_count: u64,
-        request_hash: [u8; 32],
-        aggregation_job: AggregationJob<SEED_SIZE, B, A>,
-        report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
-    ) -> Result<Option<AggregationJobResp>, Error>
-    where
-        B: AccumulableBatchMode,
-        A: AsyncAggregator<SEED_SIZE>,
-    {
-        Self::handle_aggregate_init_generic_write(
-            datastore,
-            vdaf,
-            metrics,
-            task,
-            batch_aggregation_shard_count,
-            task_counter_shard_count,
-            request_hash,
-            aggregation_job.with_state(AggregationJobState::Active {
-                helper_aggregation_job_id: todo!("derive agg job id"),
-            }),
-            report_aggregations
-                .into_iter()
-                .map(|ra| WritableReportAggregation::new(ra, None))
-                .collect(),
-        )
-        .await?;
-
-        Ok(None)
-    }
-
-    async fn handle_aggregate_init_generic_write<const SEED_SIZE: usize, B, A>(
-        datastore: Arc<Datastore>,
-        vdaf: &A,
-        metrics: &AggregatorMetrics,
-        task: &AggregatorTask,
-        batch_aggregation_shard_count: u64,
-        task_counter_shard_count: u64,
-        request_hash: [u8; 32],
+        aggregation_job_id: AggregationJobId,
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<WritableReportAggregation<SEED_SIZE, A>>,
     ) -> Result<Vec<VerifyResp>, Error>
@@ -2388,22 +2327,17 @@ impl VdafOps {
                 let task_aggregation_counters = task_aggregation_counters.clone();
 
                 Box::pin(async move {
-                    // Check if this is a repeated request, and if it is the same as before, send
-                    // the same response as last time.
+                    // Check if we have already created this aggregation job.
                     if let Some(existing_aggregation_job) = tx
-                        .get_aggregation_job_by_last_request_hash::<SEED_SIZE, B, A>(
+                        .get_aggregation_job_by_dap_id::<SEED_SIZE, B, A>(
                             &task_id,
-                            request_hash,
+                            aggregation_job_id,
                         )
                         .await?
                     {
                         if existing_aggregation_job.state().deleted() {
                             return Err(datastore::Error::User(
-                                Error::DeletedAggregationJob(
-                                    task_id,
-                                    todo!("wire up real agg job id here"),
-                                )
-                                .into(),
+                                Error::DeletedAggregationJob(task_id, aggregation_job_id).into(),
                             ));
                         }
 
@@ -2468,7 +2402,7 @@ impl VdafOps {
         Ok(verify_resps)
     }
 
-    async fn handle_aggregate_continue_generic<
+    async fn continue_aggregation_job_generic<
         const SEED_SIZE: usize,
         B: AccumulableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
@@ -2490,27 +2424,31 @@ impl VdafOps {
             ));
         }
         let task_aggregation_counters = TaskAggregationCounter::default();
+        let aggregation_mode = *task
+            .aggregation_mode()
+            .ok_or_else(|| Error::Internal("task has no aggregation mode".into()))?;
 
-        let response = datastore
+        let verify_resps = datastore
             .run_tx("aggregate_continue", |tx| {
                 let vdaf = vdaf.clone();
                 let metrics = metrics.clone();
-                let task = task.clone();
+                let task_id = *task.id();
                 let aggregation_job_id = *aggregation_job_id;
                 let req = req.clone();
+                let metrics = metrics.for_aggregation_job_writer(task.vdaf().clone());
                 let task_aggregation_counters = task_aggregation_counters.clone();
 
                 Box::pin(async move {
                     // Read existing state.
                     let aggregation_job = tx
                         .get_aggregation_job_by_dap_id::<SEED_SIZE, B, A>(
-                            task.id(),
+                            &task_id,
                             aggregation_job_id,
                         )
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::User(
-                                Error::UnrecognizedAggregationJob(*task.id(), aggregation_job_id)
+                                Error::UnrecognizedAggregationJob(task_id, aggregation_job_id)
                                     .into(),
                             )
                         })?;
@@ -2518,7 +2456,7 @@ impl VdafOps {
                         .get_report_aggregations_for_aggregation_job(
                             &vdaf,
                             &Role::Helper,
-                            task.id(),
+                            &task_id,
                             aggregation_job.datastore_id(),
                         )
                         .await?;
@@ -2526,7 +2464,7 @@ impl VdafOps {
                     // Deleted aggregation jobs cannot be stepped
                     if aggregation_job.state().deleted() {
                         return Err(datastore::Error::User(
-                            Error::DeletedAggregationJob(*task.id(), aggregation_job_id).into(),
+                            Error::DeletedAggregationJob(task_id, aggregation_job_id).into(),
                         ));
                     }
 
@@ -2561,27 +2499,15 @@ impl VdafOps {
                             }
                         }
 
-                        let resp = match task.aggregation_mode() {
-                            Some(AggregationMode::Synchronous) => {
-                                AggregationJobContinueResult::Sync(AggregationJobResp {
-                                    verify_resps: report_aggregations
-                                        .iter()
-                                        .filter_map(ReportAggregation::last_verify_resp)
-                                        .cloned()
-                                        .collect(),
-                                })
-                            }
-                            Some(AggregationMode::Asynchronous) => {
-                                AggregationJobContinueResult::Async(aggregation_job.step())
-                            }
-                            None => {
-                                return Err(datastore::Error::User(
-                                    Error::Internal("task has no aggregation mode".into()).into(),
-                                ));
-                            }
-                        };
-
-                        return Ok(resp);
+                        // TODO(timg): we could check here if the step has been run to completion
+                        // (i.e. check if state is still Active or not) and then serve VerifyResps
+                        // even in async mode
+                        let verify_resps = report_aggregations
+                            .iter()
+                            .filter_map(ReportAggregation::last_verify_resp)
+                            .cloned()
+                            .collect();
+                        return Ok(verify_resps);
                     }
 
                     if aggregation_job.step().increment() != req.step() {
@@ -2589,7 +2515,7 @@ impl VdafOps {
                         // next step and no further.
                         return Err(datastore::Error::User(
                             Error::StepMismatch {
-                                task_id: *task.id(),
+                                task_id,
                                 aggregation_job_id,
                                 expected_step: aggregation_job.step().increment(),
                                 got_step: req.step(),
@@ -2610,7 +2536,7 @@ impl VdafOps {
                                 report_aggregations_iter.next().ok_or_else(|| {
                                     datastore::Error::User(
                                         Error::InvalidMessage(
-                                            Some(*task.id()),
+                                            Some(task_id),
                                             "leader sent unexpected, duplicate, or out-of-order \
                                              verify steps",
                                         )
@@ -2648,7 +2574,7 @@ impl VdafOps {
                             _ => {
                                 return Err(datastore::Error::User(
                                     Error::InvalidMessage(
-                                        Some(*task.id()),
+                                        Some(task_id),
                                         "leader sent verify step for non-CONTINUE report \
                                          aggregation",
                                     )
@@ -2686,47 +2612,77 @@ impl VdafOps {
                         }
                     }
 
-                    let aggregation_job = aggregation_job
+                    let mut aggregation_job = aggregation_job
                         .with_step(req.step()) // Advance the job to the leader's step
                         .with_last_request_hash(request_hash);
 
-                    match task.aggregation_mode() {
-                        Some(AggregationMode::Synchronous) => {
-                            Self::handle_aggregate_continue_generic_sync(
-                                tx,
-                                &task,
+                    match aggregation_mode {
+                        // TODO(#224): don't hold DB transaction open while computing VDAF updates?
+                        AggregationMode::Synchronous => report_aggregations_to_write.extend(
+                            compute_helper_aggregate_continue(
                                 &vdaf,
-                                batch_aggregation_shard_count,
-                                &metrics,
-                                task_aggregation_counters,
-                                report_aggregations_to_write,
-                                aggregation_job,
+                                AggregateContinueMetrics::new(
+                                    metrics.aggregate_step_failure_counter.clone(),
+                                    &task_aggregation_counters,
+                                ),
+                                task_id,
+                                aggregation_job.aggregation_parameter(),
                                 report_aggregations,
                             )
-                            .await
-                        }
-
-                        Some(AggregationMode::Asynchronous) => {
-                            Self::handle_aggregate_continue_generic_async(
-                                tx,
-                                &task,
-                                &vdaf,
-                                batch_aggregation_shard_count,
-                                &metrics,
-                                task_aggregation_counters,
-                                report_aggregations_to_write,
-                                aggregation_job,
-                                report_aggregations,
+                            .await,
+                        ),
+                        AggregationMode::Asynchronous => {
+                            aggregation_job =
+                                aggregation_job.with_state(AggregationJobState::Active {
+                                    helper_aggregation_job_id: aggregation_job_id,
+                                });
+                            report_aggregations_to_write.extend(
+                                report_aggregations
+                                    .into_iter()
+                                    .map(|ra| WritableReportAggregation::new(ra, None)),
                             )
-                            .await
                         }
-
-                        None => Err(Error::Internal("task has no aggregation mode".into())),
                     }
+
+                    // Sanity-check that we have the correct number of report aggregations.
+                    assert_eq!(
+                        report_aggregations_to_write.len(),
+                        report_aggregations_to_write.capacity(),
+                    );
+
+                    // Write accumulated aggregation values back to the datastore; this will mark
+                    // any reports that can't be aggregated because the batch is collected with
+                    // error BatchCollected.
+                    AggregationJobWriter::put_and_write(
+                        task_id,
+                        batch_aggregation_shard_count,
+                        &vdaf,
+                        tx,
+                        aggregation_job,
+                        report_aggregations_to_write,
+                        Some(metrics),
+                        task_aggregation_counters,
+                    )
+                    .await
                     .map_err(|err| datastore::Error::User(err.into()))
                 })
             })
             .await?;
+
+        let response = match aggregation_mode {
+            AggregationMode::Synchronous => {
+                AggregationJobContinueResult::Sync(AggregationJobResp { verify_resps })
+            }
+            AggregationMode::Asynchronous => {
+                if !verify_resps.is_empty() {
+                    return Err(Error::Internal(
+                        "async create aggregation job should yield no VerifyResps".into(),
+                    ));
+                }
+
+                AggregationJobContinueResult::Async(req.step())
+            }
+        };
 
         write_task_aggregation_counter(
             datastore,
@@ -2738,130 +2694,8 @@ impl VdafOps {
         Ok(response)
     }
 
-    // All report aggregations must be in the HelperContinueProcessing state.
-    async fn handle_aggregate_continue_generic_sync<
-        const SEED_SIZE: usize,
-        B: AccumulableBatchMode,
-        A: AsyncAggregator<SEED_SIZE>,
-    >(
-        tx: &Transaction<'_>,
-        task: &AggregatorTask,
-        vdaf: &A,
-        batch_aggregation_shard_count: u64,
-        metrics: &AggregatorMetrics,
-        task_aggregation_counters: TaskAggregationCounter,
-        mut report_aggregations_to_write: Vec<WritableReportAggregation<SEED_SIZE, A>>,
-        aggregation_job: AggregationJob<SEED_SIZE, B, A>,
-        report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
-    ) -> Result<AggregationJobContinueResult, Error> {
-        // Compute the next aggregation step.
-        // TODO(#224): don't hold DB transaction open while computing VDAF updates?
-        let aggregation_job = Arc::new(aggregation_job);
-        report_aggregations_to_write.extend(
-            compute_helper_aggregate_continue(
-                vdaf,
-                AggregateContinueMetrics::new(
-                    metrics.aggregate_step_failure_counter.clone(),
-                    &task_aggregation_counters,
-                ),
-                task,
-                &aggregation_job,
-                report_aggregations,
-            )
-            .await,
-        );
-
-        // Store data to datastore.
-        let verify_resps = Self::handle_aggregate_continue_generic_write(
-            tx,
-            task,
-            vdaf,
-            batch_aggregation_shard_count,
-            metrics,
-            task_aggregation_counters,
-            Arc::unwrap_or_clone(aggregation_job),
-            report_aggregations_to_write,
-        )
-        .await?;
-        Ok(AggregationJobContinueResult::Sync(AggregationJobResp {
-            verify_resps,
-        }))
-    }
-
-    // All report aggregations must be in the HelperContinueProcessing state.
-    async fn handle_aggregate_continue_generic_async<
-        const SEED_SIZE: usize,
-        B: AccumulableBatchMode,
-        A: AsyncAggregator<SEED_SIZE>,
-    >(
-        tx: &Transaction<'_>,
-        task: &AggregatorTask,
-        vdaf: &A,
-        batch_aggregation_shard_count: u64,
-        metrics: &AggregatorMetrics,
-        task_aggregation_counters: TaskAggregationCounter,
-        mut report_aggregations_to_write: Vec<WritableReportAggregation<SEED_SIZE, A>>,
-        aggregation_job: AggregationJob<SEED_SIZE, B, A>,
-        report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
-    ) -> Result<AggregationJobContinueResult, Error> {
-        report_aggregations_to_write.extend(
-            report_aggregations
-                .into_iter()
-                .map(|ra| WritableReportAggregation::new(ra, None)),
-        );
-
-        let step = aggregation_job.step();
-        Self::handle_aggregate_continue_generic_write(
-            tx,
-            task,
-            vdaf,
-            batch_aggregation_shard_count,
-            metrics,
-            task_aggregation_counters,
-            aggregation_job.with_state(AggregationJobState::Active {
-                helper_aggregation_job_id: todo!("job should already have an ID. why do we transition to active? isn't it already?"),
-            }),
-            report_aggregations_to_write,
-        )
-        .await?;
-
-        Ok(AggregationJobContinueResult::Async(step))
-    }
-
-    async fn handle_aggregate_continue_generic_write<
-        const SEED_SIZE: usize,
-        B: AccumulableBatchMode,
-        A: AsyncAggregator<SEED_SIZE>,
-    >(
-        tx: &Transaction<'_>,
-        task: &AggregatorTask,
-        vdaf: &A,
-        batch_aggregation_shard_count: u64,
-        metrics: &AggregatorMetrics,
-        task_aggregation_counters: TaskAggregationCounter,
-        aggregation_job: AggregationJob<SEED_SIZE, B, A>,
-        report_aggregations: Vec<WritableReportAggregation<SEED_SIZE, A>>,
-    ) -> Result<Vec<VerifyResp>, Error> {
-        // Sanity-check that we have the correct number of report aggregations.
-        assert_eq!(report_aggregations.len(), report_aggregations.capacity());
-
-        // Write accumulated aggregation values back to the datastore; this will mark any reports
-        // that can't be aggregated because the batch is collected with error BatchCollected.
-        Ok(AggregationJobWriter::put_and_write(
-            *task.id(),
-            batch_aggregation_shard_count,
-            vdaf,
-            tx,
-            aggregation_job,
-            report_aggregations,
-            Some(metrics.for_aggregation_job_writer(task.vdaf().clone())),
-            task_aggregation_counters,
-        )
-        .await?)
-    }
-
     /// Handle requests to the helper to get an aggregation job.
-    async fn handle_aggregate_get_generic<
+    async fn get_aggregation_job_generic<
         const SEED_SIZE: usize,
         B: AccumulableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
@@ -2916,11 +2750,7 @@ impl VdafOps {
 
                     // Return a value based on the report aggregations.
                     Ok(match aggregation_job.state() {
-                        // TODO(timg): wait we shouldn't allow LeaderInit here because this handler
-                        // is helper only
-                        AggregationJobState::LeaderInit | AggregationJobState::Active { .. } => {
-                            None
-                        }
+                        AggregationJobState::Active { .. } => None,
 
                         AggregationJobState::AwaitingRequest { .. }
                         | AggregationJobState::Finished { .. } => Some(AggregationJobResp {
@@ -2930,13 +2760,11 @@ impl VdafOps {
                                 .collect(),
                         }),
 
-                        AggregationJobState::Abandoned {
-                            helper_aggregation_job_id,
-                        } => {
+                        AggregationJobState::Abandoned { .. } => {
                             return Err(datastore::Error::User(
                                 Error::AbandonedAggregationJob(
                                     *task.id(),
-                                    helper_aggregation_job_id.copied(),
+                                    Some(aggregation_job_id),
                                 )
                                 .into(),
                             ));
@@ -2953,6 +2781,15 @@ impl VdafOps {
                                 .into(),
                             ));
                         }
+
+                        AggregationJobState::LeaderInit => {
+                            return Err(datastore::Error::User(
+                                Error::Internal(
+                                    "helper aggregation job cannot be in state LeaderInit".into(),
+                                )
+                                .into(),
+                            ));
+                        }
                     })
                 })
             })
@@ -2960,7 +2797,7 @@ impl VdafOps {
     }
 
     /// Handle requests to the helper to delete an aggregation job.
-    async fn handle_aggregate_delete_generic<
+    async fn delete_aggregation_job_generic<
         const SEED_SIZE: usize,
         B: AccumulableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
@@ -3003,7 +2840,7 @@ impl VdafOps {
         fields(task_id = ?task.id()),
         err(level = Level::DEBUG)
     )]
-    async fn handle_create_collection_job(
+    async fn create_collection_job(
         &self,
         datastore: &Datastore,
         clock: &dyn Clock,
@@ -3013,7 +2850,7 @@ impl VdafOps {
         match task.batch_mode() {
             task::BatchMode::TimeInterval => {
                 vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
-                    Self::handle_create_collection_job_generic::<
+                    Self::create_collection_job_generic::<
                         VERIFY_KEY_LENGTH,
                         TimeInterval,
                         VdafType,
@@ -3023,7 +2860,7 @@ impl VdafOps {
             }
             task::BatchMode::LeaderSelected { .. } => {
                 vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
-                    Self::handle_create_collection_job_generic::<
+                    Self::create_collection_job_generic::<
                         VERIFY_KEY_LENGTH,
                         LeaderSelected,
                         VdafType,
@@ -3033,7 +2870,7 @@ impl VdafOps {
         }
     }
 
-    async fn handle_create_collection_job_generic<
+    async fn create_collection_job_generic<
         const SEED_SIZE: usize,
         B: CollectableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
@@ -3049,7 +2886,7 @@ impl VdafOps {
         let req =
             Arc::new(CollectionJobReq::<B>::get_decoded(req_bytes).map_err(Error::MessageDecode)?);
 
-        Self::handle_create_collection_job_inner(datastore, clock, task, vdaf, req).await
+        Self::create_collection_job_inner(datastore, clock, task, vdaf, req).await
     }
 
     /// Handle creation of a collection job, returning the job ID and possibly an encoded
@@ -3059,7 +2896,7 @@ impl VdafOps {
         fields(query = ?req.query().query_body()),
         err(level = Level::DEBUG)
     )]
-    async fn handle_create_collection_job_inner<const SEED_SIZE: usize, B, A>(
+    async fn create_collection_job_inner<const SEED_SIZE: usize, B, A>(
         datastore: &Datastore,
         clock: &dyn Clock,
         task: Arc<AggregatorTask>,
@@ -3211,7 +3048,7 @@ impl VdafOps {
         fields(task_id = ?task.id()),
         err(level = Level::DEBUG)
     )]
-    async fn handle_get_collection_job(
+    async fn get_collection_job(
         &self,
         datastore: &Datastore,
         task: Arc<AggregatorTask>,
@@ -3220,7 +3057,7 @@ impl VdafOps {
         match task.batch_mode() {
             task::BatchMode::TimeInterval => {
                 vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
-                    Self::handle_get_collection_job_generic::<
+                    Self::get_collection_job_generic::<
                         VERIFY_KEY_LENGTH,
                         TimeInterval,
                         VdafType,
@@ -3230,7 +3067,7 @@ impl VdafOps {
             }
             task::BatchMode::LeaderSelected { .. } => {
                 vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
-                    Self::handle_get_collection_job_generic::<
+                    Self::get_collection_job_generic::<
                         VERIFY_KEY_LENGTH,
                         LeaderSelected,
                         VdafType,
@@ -3242,7 +3079,7 @@ impl VdafOps {
     }
 
     /// return value is an encoded `CollectionJobResp<B>`
-    async fn handle_get_collection_job_generic<const SEED_SIZE: usize, B, A>(
+    async fn get_collection_job_generic<const SEED_SIZE: usize, B, A>(
         datastore: &Datastore,
         task: Arc<AggregatorTask>,
         vdaf: Arc<A>,
@@ -3375,7 +3212,7 @@ impl VdafOps {
         fields(task_id = ?task.id()),
         err(level = Level::DEBUG)
     )]
-    async fn handle_delete_collection_job(
+    async fn delete_collection_job(
         &self,
         datastore: &Datastore,
         task: Arc<AggregatorTask>,
@@ -3384,7 +3221,7 @@ impl VdafOps {
         match task.batch_mode() {
             task::BatchMode::TimeInterval => {
                 vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
-                    Self::handle_delete_collection_job_generic::<
+                    Self::delete_collection_job_generic::<
                         VERIFY_KEY_LENGTH,
                         TimeInterval,
                         VdafType,
@@ -3394,7 +3231,7 @@ impl VdafOps {
             }
             task::BatchMode::LeaderSelected { .. } => {
                 vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
-                    Self::handle_delete_collection_job_generic::<
+                    Self::delete_collection_job_generic::<
                         VERIFY_KEY_LENGTH,
                         LeaderSelected,
                         VdafType,
@@ -3405,7 +3242,7 @@ impl VdafOps {
         }
     }
 
-    async fn handle_delete_collection_job_generic<
+    async fn delete_collection_job_generic<
         const SEED_SIZE: usize,
         B: CollectableBatchMode,
         A: AsyncAggregator<SEED_SIZE>,
@@ -3456,7 +3293,7 @@ impl VdafOps {
         fields(task_id = ?task.id()),
         err(level = Level::DEBUG)
     )]
-    async fn handle_get_aggregate_share(
+    async fn get_aggregate_share(
         &self,
         datastore: &Datastore,
         task: Arc<AggregatorTask>,
@@ -3474,7 +3311,7 @@ impl VdafOps {
                         _dp_strategy,
                         DpStrategyType
                     ) => {
-                        Self::handle_get_aggregate_share_generic::<
+                        Self::get_aggregate_share_generic::<
                             VERIFY_KEY_LENGTH,
                             TimeInterval,
                             DpStrategyType,
@@ -3499,7 +3336,7 @@ impl VdafOps {
                         _dp_strategy,
                         DpStrategyType
                     ) => {
-                        Self::handle_get_aggregate_share_generic::<
+                        Self::get_aggregate_share_generic::<
                             VERIFY_KEY_LENGTH,
                             LeaderSelected,
                             DpStrategyType,
@@ -3517,7 +3354,7 @@ impl VdafOps {
         }
     }
 
-    async fn handle_get_aggregate_share_generic<
+    async fn get_aggregate_share_generic<
         const SEED_SIZE: usize,
         B: CollectableBatchMode,
         S: DifferentialPrivacyStrategy + Clone + Send + Sync + 'static,
@@ -3564,7 +3401,7 @@ impl VdafOps {
         fields(task_id = ?task.id()),
         err(level = Level::DEBUG)
     )]
-    async fn handle_create_aggregate_share(
+    async fn create_aggregate_share(
         &self,
         datastore: &Datastore,
         clock: &dyn Clock,
@@ -3585,7 +3422,7 @@ impl VdafOps {
                         dp_strategy,
                         DpStrategyType
                     ) => {
-                        Self::handle_create_aggregate_share_generic::<
+                        Self::create_aggregate_share_generic::<
                             VERIFY_KEY_LENGTH,
                             TimeInterval,
                             DpStrategyType,
@@ -3614,7 +3451,7 @@ impl VdafOps {
                         dp_strategy,
                         DpStrategyType
                     ) => {
-                        Self::handle_create_aggregate_share_generic::<
+                        Self::create_aggregate_share_generic::<
                             VERIFY_KEY_LENGTH,
                             LeaderSelected,
                             DpStrategyType,
@@ -3638,7 +3475,7 @@ impl VdafOps {
 
     /// Handle creation of an aggregate share, returning the share ID and an encoded
     /// `AggregateShare`.
-    async fn handle_create_aggregate_share_generic<
+    async fn create_aggregate_share_generic<
         const SEED_SIZE: usize,
         B: CollectableBatchMode,
         S: DifferentialPrivacyStrategy + Clone + Send + Sync + 'static,
@@ -3659,7 +3496,7 @@ impl VdafOps {
         let aggregate_share_req =
             Arc::new(AggregateShareReq::<B>::get_decoded(req_bytes).map_err(Error::MessageDecode)?);
 
-        Self::handle_create_aggregate_share_inner(
+        Self::create_aggregate_share_inner(
             datastore,
             clock,
             task,
@@ -3683,7 +3520,7 @@ impl VdafOps {
         ),
         err(level = Level::DEBUG)
     )]
-    async fn handle_create_aggregate_share_inner<
+    async fn create_aggregate_share_inner<
         const SEED_SIZE: usize,
         B: CollectableBatchMode,
         S: DifferentialPrivacyStrategy + Clone + Send + Sync + 'static,
@@ -3927,7 +3764,7 @@ impl VdafOps {
         fields(task_id = ?task.id()),
         err(level = Level::DEBUG)
     )]
-    async fn handle_delete_aggregate_share(
+    async fn delete_aggregate_share(
         &self,
         datastore: &Datastore,
         task: Arc<AggregatorTask>,

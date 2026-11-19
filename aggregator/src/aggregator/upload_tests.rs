@@ -129,7 +129,7 @@ async fn upload() {
     );
 
     let upload_errors = aggregator
-        .handle_upload(task.id(), report_stream(report.clone()))
+        .upload_reports(task.id(), report_stream(report.clone()))
         .await
         .unwrap();
 
@@ -149,7 +149,7 @@ async fn upload() {
 
     // Report uploads are idempotent.
     aggregator
-        .handle_upload(task.id(), report_stream(report.clone()))
+        .upload_reports(task.id(), report_stream(report.clone()))
         .await
         .unwrap();
 
@@ -165,7 +165,7 @@ async fn upload() {
         Vec::new(),
     );
     aggregator
-        .handle_upload(task.id(), report_stream(mutated_report))
+        .upload_reports(task.id(), report_stream(mutated_report))
         .await
         .unwrap();
 
@@ -232,7 +232,7 @@ async fn upload_batch() {
     let want_report_ids: HashSet<_> = reports.iter().map(|r| *r.metadata().id()).collect();
 
     aggregator
-        .handle_upload(task.id(), reports_stream(reports))
+        .upload_reports(task.id(), reports_stream(reports))
         .await
         .unwrap();
 
@@ -306,7 +306,7 @@ async fn upload_wrong_hpke_config_id() {
     );
 
     let result = aggregator
-        .handle_upload(task.id(), report_stream(report.clone()))
+        .upload_reports(task.id(), report_stream(report.clone()))
         .await
         .unwrap();
     let report_upload_status = &result.status()[0];
@@ -357,7 +357,7 @@ async fn upload_report_in_the_future_boundary_condition() {
     );
 
     aggregator
-        .handle_upload(task.id(), report_stream(report.clone()))
+        .upload_reports(task.id(), report_stream(report.clone()))
         .await
         .unwrap();
 
@@ -416,7 +416,7 @@ async fn upload_report_in_the_future_past_clock_skew() {
     );
 
     let upload_result = aggregator
-        .handle_upload(task.id(), report_stream(report.clone()))
+        .upload_reports(task.id(), report_stream(report.clone()))
         .await
         .unwrap();
     let result_upload_status = &upload_result.status()[0];
@@ -495,7 +495,7 @@ async fn upload_report_for_collected_batch() {
 
     // Try to upload the report, verify that we get the expected error.
     let upload_result = aggregator
-        .handle_upload(task.id(), report_stream(report.clone()))
+        .upload_reports(task.id(), report_stream(report.clone()))
         .await
         .unwrap();
     let result_upload_status = &upload_result.status()[0];
@@ -570,7 +570,7 @@ async fn upload_report_task_not_started() {
 
     // Try to upload the report, verify that we get the expected error.
     let upload_result = aggregator
-        .handle_upload(task.id(), report_stream(report.clone()))
+        .upload_reports(task.id(), report_stream(report.clone()))
         .await
         .unwrap();
     let result_upload_status = &upload_result.status()[0];
@@ -643,7 +643,7 @@ async fn upload_report_task_ended() {
 
     // Try to upload the report, verify that we get the expected error.
     let upload_result = aggregator
-        .handle_upload(task.id(), report_stream(report.clone()))
+        .upload_reports(task.id(), report_stream(report.clone()))
         .await
         .unwrap();
     let result_upload_status = &upload_result.status()[0];
@@ -723,7 +723,7 @@ async fn upload_report_task_deactivated() {
 
     // Try to upload the report; verify that the deactivated task rejects it.
     let upload_result = aggregator
-        .handle_upload(task.id(), report_stream(report.clone()))
+        .upload_reports(task.id(), report_stream(report.clone()))
         .await
         .unwrap();
     let result_upload_status = &upload_result.status()[0];
@@ -799,7 +799,7 @@ async fn upload_report_report_expired() {
     // won't be stored (it's dropped asynchronously during batch write), and we want to see
     // the ReportDropped status returned.
     let upload_result = aggregator
-        .handle_upload(task.id(), report_stream(report.clone()))
+        .upload_reports(task.id(), report_stream(report.clone()))
         .await
         .unwrap();
     let result_upload_status = &upload_result.status()[0];
@@ -877,7 +877,7 @@ async fn upload_report_faulty_encryption() {
 
     // Try to upload the report, verify that we get the expected error.
     let result = aggregator
-        .handle_upload(task.id(), report_stream(report.clone()))
+        .upload_reports(task.id(), report_stream(report.clone()))
         .await
         .unwrap();
     let result_upload_status = &result.status()[0];
@@ -942,7 +942,7 @@ async fn upload_report_public_share_decode_failure() {
 
     // Try to upload the report, verify that we get the expected error.
     let result = aggregator
-        .handle_upload(task.id(), report_stream(report.clone()))
+        .upload_reports(task.id(), report_stream(report.clone()))
         .await
         .unwrap();
     let result_upload_status = &result.status()[0];
@@ -1022,7 +1022,7 @@ async fn upload_report_leader_input_share_decode_failure() {
 
     // Try to upload the report, verify that we get the expected error.
     let result = aggregator
-        .handle_upload(task.id(), report_stream(report.clone()))
+        .upload_reports(task.id(), report_stream(report.clone()))
         .await
         .unwrap();
     let result_upload_status = &result.status()[0];
@@ -1095,7 +1095,7 @@ async fn upload_report_duplicate_extensions() {
 
     // Try to upload the report, verify that we get the expected error.
     let upload_result = aggregator
-        .handle_upload(task.id(), report_stream(report.clone()))
+        .upload_reports(task.id(), report_stream(report.clone()))
         .await
         .unwrap();
     let result_upload_status = &upload_result.status()[0];
@@ -1176,7 +1176,7 @@ async fn upload_report_unsorted_extensions() {
     );
 
     let upload_result = aggregator
-        .handle_upload(task.id(), report_stream(report.clone()))
+        .upload_reports(task.id(), report_stream(report.clone()))
         .await
         .unwrap();
     let result_upload_status = &upload_result.status()[0];
@@ -1250,7 +1250,7 @@ async fn upload_report_unrecognized_extension() {
 
         // Try to upload the report, verify that we get the expected error.
         let upload_result = aggregator
-            .handle_upload(task.id(), report_stream(report_public.clone()))
+            .upload_reports(task.id(), report_stream(report_public.clone()))
             .await
             .unwrap();
         let result_upload_status = &upload_result.status()[0];
@@ -1274,7 +1274,7 @@ async fn upload_report_unrecognized_extension() {
         );
 
         let upload_result = aggregator
-            .handle_upload(task.id(), report_stream(report_private.clone()))
+            .upload_reports(task.id(), report_stream(report_private.clone()))
             .await
             .unwrap();
         let result_upload_status = &upload_result.status()[0];
@@ -1347,7 +1347,7 @@ async fn upload_report_decode_failure() {
     ]);
 
     let error = aggregator
-        .handle_upload(task.id(), error_stream)
+        .upload_reports(task.id(), error_stream)
         .await
         .unwrap_err();
 

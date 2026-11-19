@@ -14,7 +14,7 @@ use prio::{
 use rand::random;
 
 use crate::aggregator::{
-    aggregation_job_init::test_util::{VerifyInitGenerator, put_aggregation_job},
+    aggregation_job_init::test_util::{VerifyInitGenerator, post_aggregation_job_init},
     http_handlers::{
         test_util::take_response_body, tests::aggregate_share::AggregateShareTestCase,
     },
@@ -51,8 +51,6 @@ async fn helper_aggregation_report_share_replay() {
 
     let batch_id_1 = random();
     let batch_id_2 = random();
-    let aggregation_job_id_1 = random();
-    let aggregation_job_id_2 = random();
 
     let agg_init_req_1 = AggregationJobInitializeReq::new(
         0,
@@ -95,13 +93,8 @@ async fn helper_aggregation_report_share_replay() {
     );
 
     // Make aggregation job initialization requests, and check the verify step results.
-    let mut response = put_aggregation_job(
-        &test_case.task,
-        &aggregation_job_id_1,
-        &agg_init_req_1,
-        &test_case.test.router,
-    )
-    .await;
+    let mut response =
+        post_aggregation_job_init(&test_case.task, &agg_init_req_1, &test_case.test.router).await;
     assert_eq!(response.status(), StatusCode::CREATED);
     let agg_init_resp_1 =
         AggregationJobResp::get_decoded(take_response_body(&mut response).await.as_ref()).unwrap();
@@ -118,13 +111,8 @@ async fn helper_aggregation_report_share_replay() {
         VerifyStepResult::Continue { .. }
     );
 
-    let mut response = put_aggregation_job(
-        &test_case.task,
-        &aggregation_job_id_2,
-        &agg_init_req_2,
-        &test_case.test.router,
-    )
-    .await;
+    let mut response =
+        post_aggregation_job_init(&test_case.task, &agg_init_req_2, &test_case.test.router).await;
     assert_eq!(response.status(), StatusCode::CREATED);
     let agg_init_resp_2 =
         AggregationJobResp::get_decoded(take_response_body(&mut response).await.as_ref()).unwrap();

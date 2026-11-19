@@ -5,7 +5,7 @@ use janus_aggregator_core::{
     datastore::models::{
         AggregationJob, AggregationJobState, BatchAggregation, BatchAggregationState,
         CollectionJob, CollectionJobState, LeaderStoredReport, ReportAggregation,
-        ReportAggregationState,
+        ReportAggregationState, UnwrittenAggregationJob,
     },
     task::{
         AggregationMode, BatchMode,
@@ -100,7 +100,7 @@ impl CollectionJobTestCase {
 
     pub(super) async fn get_collection_job_with_auth_token(
         &self,
-        collection_job_id: &CollectionJobId,
+        collection_job_id: CollectionJobId,
         auth_token: Option<&AuthenticationToken>,
     ) -> http::Response<Body> {
         let mut builder = Request::builder().method("GET").uri(
@@ -122,7 +122,7 @@ impl CollectionJobTestCase {
 
     pub(super) async fn get_collection_job(
         &self,
-        collection_job_id: &CollectionJobId,
+        collection_job_id: CollectionJobId,
     ) -> http::Response<Body> {
         self.get_collection_job_with_auth_token(
             collection_job_id,
@@ -133,7 +133,7 @@ impl CollectionJobTestCase {
 
     pub(super) async fn delete_collection_job(
         &self,
-        collection_job_id: &CollectionJobId,
+        collection_job_id: CollectionJobId,
     ) -> http::Response<Body> {
         self.test
             .router
@@ -186,18 +186,20 @@ impl CollectionJobTestCase {
                 let task = self.task.clone();
                 Box::pin(async move {
                     let client_timestamp_interval = Interval::minimal(time).unwrap();
-                    let aggregation_job_id = random();
-                    tx.put_aggregation_job(&AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
-                        *task.id(),
-                        aggregation_job_id,
-                        dummy::AggregationParam::default(),
-                        batch_id,
-                        client_timestamp_interval,
-                        AggregationJobState::Finished,
-                        AggregationJobStep::from(1),
-                    ))
-                    .await
-                    .unwrap();
+                    let helper_aggregation_job_id = random();
+                    let job_id = tx
+                        .put_aggregation_job(&UnwrittenAggregationJob::new(
+                            *task.id(),
+                            dummy::AggregationParam::default(),
+                            batch_id,
+                            client_timestamp_interval,
+                            AggregationJobState::Finished {
+                                helper_aggregation_job_id,
+                            },
+                            AggregationJobStep::from(1),
+                        ))
+                        .await
+                        .unwrap();
                     for ord in 0..report_count {
                         let report = LeaderStoredReport::new_dummy(*task.id(), time);
                         tx.put_client_report(&report).await.unwrap();
@@ -206,7 +208,7 @@ impl CollectionJobTestCase {
                             .unwrap();
                         tx.put_report_aggregation(&ReportAggregation::new(
                             *task.id(),
-                            aggregation_job_id,
+                            job_id,
                             *report.metadata().id(),
                             time,
                             ord,
@@ -254,25 +256,27 @@ impl CollectionJobTestCase {
                     let client_timestamp_interval =
                         Interval::minimal(*report.metadata().time()).unwrap();
                     let batch_interval = client_timestamp_interval;
-                    let aggregation_job_id = random();
+                    let helper_aggregation_job_id = random();
                     tx.put_client_report(&report).await.unwrap();
                     tx.scrub_client_report(report.task_id(), report.metadata().id())
                         .await
                         .unwrap();
-                    tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
-                        *task.id(),
-                        aggregation_job_id,
-                        dummy::AggregationParam::default(),
-                        (),
-                        client_timestamp_interval,
-                        AggregationJobState::Finished,
-                        AggregationJobStep::from(1),
-                    ))
-                    .await
-                    .unwrap();
+                    let job_id = tx
+                        .put_aggregation_job(&UnwrittenAggregationJob::new(
+                            *task.id(),
+                            dummy::AggregationParam::default(),
+                            (),
+                            client_timestamp_interval,
+                            AggregationJobState::Finished {
+                                helper_aggregation_job_id,
+                            },
+                            AggregationJobStep::from(1),
+                        ))
+                        .await
+                        .unwrap();
                     tx.put_report_aggregation(&ReportAggregation::new(
                         *task.id(),
-                        aggregation_job_id,
+                        job_id,
                         *report.metadata().id(),
                         time,
                         0,
@@ -352,7 +356,7 @@ impl CollectionJobTestCase {
         assert_eq!(want_collection_job, got_collection_job);
         assert!(take_response_body(&mut response).await.is_empty());
 
-        let mut response = self.get_collection_job(&collection_job_id).await;
+        let mut response = self.get_collection_job(collection_job_id).await;
         assert_eq!(response.status(), StatusCode::OK);
         assert!(response.headers().get(http::header::CONTENT_TYPE).is_none());
         assert!(take_response_body(&mut response).await.is_empty());
@@ -412,7 +416,7 @@ impl CollectionJobTestCase {
             .await
             .unwrap();
 
-        let mut response = self.get_collection_job(&collection_job_id).await;
+        let mut response = self.get_collection_job(collection_job_id).await;
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
             response.headers().get("content-type").unwrap(),
@@ -515,7 +519,7 @@ impl CollectionJobTestCase {
             collection_job_ids.push(collection_job_id);
             assert!(take_response_body(&mut response).await.is_empty());
 
-            let mut response = self.get_collection_job(&collection_job_id).await;
+            let mut response = self.get_collection_job(collection_job_id).await;
             assert_eq!(response.status(), StatusCode::OK);
             assert!(response.headers().get(http::header::CONTENT_TYPE).is_none());
             assert!(take_response_body(&mut response).await.is_empty());
@@ -583,7 +587,7 @@ impl CollectionJobTestCase {
                 panic!("unexpected batch ID");
             }
 
-            let mut response = self.get_collection_job(&collection_job_id).await;
+            let mut response = self.get_collection_job(collection_job_id).await;
             assert_eq!(
                 response.headers().get("content-type").unwrap(),
                 CollectionJobResp::MEDIA_TYPE,
@@ -1102,7 +1106,7 @@ async fn collection_job_post_idempotence_leader_selected_no_extra_reports() {
     let response = test_case.post_collection_job(&request_1).await;
     assert_eq!(response.status(), StatusCode::OK);
     let collection_job_id_1 = collection_job_id_from_response(*test_case.task.id(), &response);
-    let response = test_case.get_collection_job(&collection_job_id_1).await;
+    let response = test_case.get_collection_job(collection_job_id_1).await;
     assert_eq!(response.status(), StatusCode::OK);
 
     let request_2 = CollectionJobReq::new(
@@ -1114,7 +1118,7 @@ async fn collection_job_post_idempotence_leader_selected_no_extra_reports() {
     let response = test_case.post_collection_job(&request_2).await;
     assert_eq!(response.status(), StatusCode::OK);
     let collection_job_id_2 = collection_job_id_from_response(*test_case.task.id(), &response);
-    let response = test_case.get_collection_job(&collection_job_id_2).await;
+    let response = test_case.get_collection_job(collection_job_id_2).await;
     assert_eq!(response.status(), StatusCode::OK);
 
     // Re-send the collection job creation requests to confirm they are still idempotent.
