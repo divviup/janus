@@ -321,9 +321,8 @@ impl Simulation {
 
     async fn execute_aggregation_job_creator(&mut self) -> ControlFlow<TestResult> {
         let aggregation_job_creator = Arc::clone(&self.components.aggregation_job_creator);
-        let task = Arc::clone(&self.leader_task);
         if let Err(error) = aggregation_job_creator
-            .create_aggregation_jobs_for_task(task)
+            .create_aggregation_jobs_for_task(&self.leader_task)
             .await
         {
             error!(?error, "aggregation job creator error");
