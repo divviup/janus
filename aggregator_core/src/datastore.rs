@@ -1715,45 +1715,6 @@ WHERE task_id = $1 AND aggregation_job_id = $2 AND UPPER(client_timestamp_interv
         .transpose()
     }
 
-    /// Retrieve an aggregation job by the hash of the last request that acted on it.
-    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
-    pub async fn get_aggregation_job_by_last_request_hash<const SEED_SIZE: usize, B, A>(
-        &self,
-        task_id: &TaskId,
-        last_request_hash: [u8; 32],
-    ) -> Result<Option<AggregationJob<SEED_SIZE, B, A>>, Error>
-    where
-        B: BatchMode,
-        A: AsyncAggregator<SEED_SIZE>,
-    {
-        let task_info = match self.task_info_for(task_id).await? {
-            Some(task_info) => task_info,
-            None => return Ok(None),
-        };
-
-        let stmt = self
-            .prepare_cached(
-                "-- get_aggregation_job_by_last_request_hash()
-SELECT
-    id, aggregation_param, batch_id, client_timestamp_interval, state, step, last_request_hash,
-    aggregation_job_id
-FROM aggregation_jobs
-WHERE task_id = $1 AND last_request_hash = $2 AND UPPER(client_timestamp_interval) >= $3",
-            )
-            .await?;
-        self.query_opt(
-            &stmt,
-            &[
-                /* task_id */ &task_info.pkey,
-                &last_request_hash,
-                /* threshold */ &task_info.report_expiry_threshold(self.clock.now())?,
-            ],
-        )
-        .await?
-        .map(|row| row.aggregation_job(task_id))
-        .transpose()
-    }
-
     /// get_aggregation_jobs_for_task returns all aggregation jobs for a given task ID.
     #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]

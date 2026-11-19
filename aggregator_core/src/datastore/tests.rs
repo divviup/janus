@@ -1881,16 +1881,6 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
 
                         assert_eq!(leader_by_dap_id, leader_by_datastore_id);
                     }
-                    if let Some(hash) = leader_aggregation_job.last_request_hash() {
-                        let leader_by_last_request_hash = tx
-                            .get_aggregation_job_by_last_request_hash(
-                                leader_aggregation_job.task_id(),
-                                hash,
-                            )
-                            .await
-                            .unwrap();
-                        assert_eq!(leader_by_last_request_hash, leader_by_datastore_id);
-                    }
 
                     let helper_by_datastore_id = tx
                         .get_aggregation_job(
@@ -1907,14 +1897,6 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
                         .await
                         .unwrap();
                     assert_eq!(helper_by_dap_id, helper_by_datastore_id);
-                    let helper_by_last_request_hash = tx
-                        .get_aggregation_job_by_last_request_hash(
-                            helper_aggregation_job.task_id(),
-                            helper_aggregation_job.last_request_hash().unwrap(),
-                        )
-                        .await
-                        .unwrap();
-                    assert_eq!(helper_by_last_request_hash, helper_by_datastore_id);
 
                     Ok((leader_by_datastore_id, helper_by_datastore_id))
                 })

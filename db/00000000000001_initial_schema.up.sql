@@ -304,8 +304,7 @@ CREATE TABLE aggregation_jobs(
     state                      AGGREGATION_JOB_STATE NOT NULL,
     -- current step of the aggregation job
     step                       INTEGER NOT NULL,
-    -- SHA-256 hash of the most recently received AggregationJobInitReq or AggregationJobContinueReq
-    -- (helper only)
+    -- SHA-256 hash of the most recently received AggregationJobContinueReq (helper only)
     last_request_hash          BYTEA,
 
     -- when lease on this aggregation job expires; -infinity implies no current lease

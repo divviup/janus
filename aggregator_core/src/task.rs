@@ -565,16 +565,11 @@ impl AggregatorTask {
         &self.aggregator_parameters
     }
 
-    /// Returns the relative path for tasks, relative to which other API endpoints are defined.
-    fn tasks_path(&self) -> String {
-        format!("tasks/{}", self.id())
-    }
-
     /// Returns the URI for aggregation job creation in the helper.
     pub fn aggregation_job_creation_uri(&self) -> Result<Url, Error> {
         if *self.aggregator_parameters.role() == Role::Leader {
             Ok(url_for_join(self.peer_aggregator_endpoint())?
-                .join(&format!("{}/aggregation_jobs", self.tasks_path()))?)
+                .aggregation_job_creation_uri(*self.id())?)
         } else {
             Err(Error::WrongRole(*self.aggregator_parameters.role()))
         }
@@ -583,35 +578,32 @@ impl AggregatorTask {
     /// Returns the URI for an aggregation job in the helper.
     pub fn aggregation_job_uri(
         &self,
-        aggregation_job_id: &AggregationJobId,
+        aggregation_job_id: AggregationJobId,
         step: Option<AggregationJobStep>,
     ) -> Result<Url, Error> {
-        let mut uri = self.aggregation_job_creation_uri()?;
-
-        if let Some(step) = step {
-            uri.query_pairs_mut()
-                .append_pair("step", &u16::from(step).to_string());
-        }
-
-        Ok(uri.join(&format!("{aggregation_job_id}"))?)
+        Ok(
+            url_for_join(self.peer_aggregator_endpoint())?.aggregation_job_uri(
+                *self.id(),
+                aggregation_job_id,
+                step,
+            )?,
+        )
     }
 
     /// Returns the URI for aggregate share creation in the helper.
     pub fn aggregate_share_creation_uri(&self) -> Result<Url, Error> {
         if *self.aggregator_parameters.role() == Role::Leader {
             Ok(url_for_join(self.peer_aggregator_endpoint())?
-                .join(&format!("{}/aggregate_shares", self.tasks_path()))?)
+                .aggregate_share_creation_uri(*self.id())?)
         } else {
             Err(Error::WrongRole(*self.aggregator_parameters.role()))
         }
     }
 
     /// Returns the URI for an aggregate share in the helper.
-    pub fn aggregate_share_uri(&self, aggregate_share_id: &AggregateShareId) -> Result<Url, Error> {
-        Ok(self
-            .aggregate_share_creation_uri()?
-            .ensure_trailing_slash()
-            .join(&format!("{aggregate_share_id}"))?)
+    pub fn aggregate_share_uri(&self, aggregate_share_id: AggregateShareId) -> Result<Url, Error> {
+        Ok(url_for_join(self.peer_aggregator_endpoint())?
+            .aggregate_share_uri(*self.id(), aggregate_share_id)?)
     }
 
     /// Returns the aggregator [`AuthenticationToken`] for this task, used by the leader to
@@ -1207,72 +1199,62 @@ pub mod test_util {
             self.common_parameters.vdaf_verify_key()
         }
 
-        /// Returns the relative path for tasks, relative to which other API endpoints are defined.
-        fn tasks_path(&self) -> String {
-            format!("tasks/{}", self.id())
-        }
-
         /// Returns the URI at which reports may be uploaded for this task.
         pub fn report_upload_uri(&self) -> Result<Url, Error> {
             Ok(self
                 .leader_aggregator_endpoint()
-                .join(&format!("{}/reports", self.tasks_path()))?)
+                .report_upload_uri(*self.id())?)
         }
 
-        /// Returns the URI at which the helper resource for the specified aggregation job ID can be
-        /// accessed.
+        /// Returns the URI for the helper aggregation job creation resource.
+        pub fn aggregation_job_creation_uri(&self) -> Result<Url, Error> {
+            Ok(self
+                .helper_aggregator_endpoint()
+                .aggregation_job_creation_uri(*self.id())?)
+        }
+
+        /// Returns the URI for a helper aggregation job resource.
         pub fn aggregation_job_uri(
             &self,
-            aggregation_job_id: &AggregationJobId,
+            aggregation_job_id: AggregationJobId,
             step: Option<AggregationJobStep>,
         ) -> Result<Url, Error> {
-            let mut uri = self.helper_aggregator_endpoint().join(&format!(
-                "{}/aggregation_jobs/{aggregation_job_id}",
-                self.tasks_path()
-            ))?;
-
-            if let Some(step) = step {
-                uri.query_pairs_mut()
-                    .append_pair("step", &u16::from(step).to_string());
-            }
-
-            Ok(uri)
+            Ok(self.helper_aggregator_endpoint().aggregation_job_uri(
+                *self.id(),
+                aggregation_job_id,
+                step,
+            )?)
         }
 
         /// Returns the URI for the helper aggregate share creation resource.
         pub fn aggregate_share_creation_uri(&self) -> Result<Url, Error> {
             Ok(self
                 .helper_aggregator_endpoint()
-                .join(&format!("{}/aggregate_shares", self.tasks_path()))?)
+                .aggregation_job_creation_uri(*self.id())?)
         }
 
         /// Returns the URI for a helper aggregate share resource.
         pub fn aggregate_share_uri(
             &self,
-            aggregate_share_id: &AggregateShareId,
+            aggregate_share_id: AggregateShareId,
         ) -> Result<Url, Error> {
             Ok(self
-                .aggregate_share_creation_uri()?
-                .ensure_trailing_slash()
-                .join(&aggregate_share_id.to_string())?)
+                .helper_aggregator_endpoint()
+                .aggregate_share_uri(*self.id(), aggregate_share_id)?)
         }
 
         /// Returns the URI at which the leader collection job creation resource.
         pub fn collection_job_creation_uri(&self) -> Result<Url, Error> {
             Ok(self
                 .leader_aggregator_endpoint()
-                .join(&format!("{}/collection_jobs", self.tasks_path()))?)
+                .collection_job_creation_uri(*self.id())?)
         }
 
         /// Returns the URI for leader collection job resource.
-        pub fn collection_job_uri(
-            &self,
-            collection_job_id: &CollectionJobId,
-        ) -> Result<Url, Error> {
+        pub fn collection_job_uri(&self, collection_job_id: CollectionJobId) -> Result<Url, Error> {
             Ok(self
-                .collection_job_creation_uri()?
-                .ensure_trailing_slash()
-                .join(&collection_job_id.to_string())?)
+                .leader_aggregator_endpoint()
+                .collection_job_uri(*self.id(), collection_job_id)?)
         }
 
         /// Render the leader aggregator's view of this task.
@@ -1461,6 +1443,16 @@ pub mod test_util {
         /// Gets the VDAF for the eventual task
         pub fn vdaf(&self) -> &VdafInstance {
             self.0.vdaf()
+        }
+
+        pub fn with_vdaf(self, vdaf: VdafInstance) -> Self {
+            Self(Task {
+                common_parameters: CommonTaskParameters {
+                    vdaf,
+                    ..self.0.common_parameters
+                },
+                ..self.0
+            })
         }
 
         /// Associates the eventual task with the given aggregator endpoint for the Leader.
@@ -1907,9 +1899,9 @@ mod tests {
 
             for uri in [
                 task.report_upload_uri().unwrap(),
-                task.aggregation_job_uri(&random(), None).unwrap(),
-                task.collection_job_uri(&random()).unwrap(),
-                task.aggregate_share_uri(&random()).unwrap(),
+                task.aggregation_job_uri(random(), None).unwrap(),
+                task.collection_job_uri(random()).unwrap(),
+                task.aggregate_share_uri(random()).unwrap(),
             ] {
                 // Check that path starts with / so it is suitable for use with mockito and that any
                 // path components in the aggregator endpoint are still present.
