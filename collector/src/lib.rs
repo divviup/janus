@@ -646,7 +646,7 @@ impl<V: vdaf::Collector> Collector<V> {
     fn collection_job_creation_uri(&self) -> Result<Url, Error> {
         Ok(
             url_for_join(self.task_configuration.leader_aggregator_endpoint())?
-                .join(&format!("tasks/{}/collection_jobs", self.task_id))?,
+                .collection_job_creation_uri(self.task_id)?,
         )
     }
 
@@ -654,10 +654,10 @@ impl<V: vdaf::Collector> Collector<V> {
     fn collection_job_uri(&self, collection_job_id: CollectionJobId) -> Result<Url, Error> {
         // Joined at request time so the endpoint bytes bound into HPKE AADs stay verbatim
         // (DAP §4.1).
-        Ok(self
-            .collection_job_creation_uri()?
-            .ensure_trailing_slash()
-            .join(&collection_job_id.to_string())?)
+        Ok(
+            url_for_join(self.task_configuration.leader_aggregator_endpoint())?
+                .collection_job_uri(self.task_id, collection_job_id)?,
+        )
     }
 
     /// Construct a collection request to send to the leader aggregator.
@@ -975,17 +975,18 @@ mod tests {
     use assert_matches::assert_matches;
     use chrono::{DateTime, TimeZone, Utc};
     use janus_core::{
-        auth_tokens::{AuthenticationToken, test_util::MatchAuthenticationToken},
+        auth_tokens::AuthenticationToken,
         hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
+        http::{collection_job_location, test_util::MockExt},
         initialize_rustls,
         retries::test_util::test_http_request_exponential_backoff,
         test_util::{VdafTranscript, install_test_trace_subscriber, run_vdaf},
         vdaf::ConfiguredVdaf,
     };
     use janus_messages::{
-        AggregateShareAad, BatchConfig, CollectionJobId, CollectionJobReq, CollectionJobResp,
-        Duration, HpkeCiphertext, Interval, MediaType, Query, Role, TaskConfiguration,
-        TaskExtension, TaskExtensionType, TaskId, Time, TimePrecision, Url as DapUrl, VdafConfig,
+        AggregateShareAad, BatchConfig, CollectionJobReq, CollectionJobResp, Duration,
+        HpkeCiphertext, Interval, MediaType, Query, Role, TaskConfiguration, TaskExtension,
+        TaskExtensionType, TaskId, Time, TimePrecision, Url as DapUrl, VdafConfig,
         batch_mode::{LeaderSelected, LeaderSelectedQueryConfig, TimeInterval},
         problem_type::DapProblemType,
     };
@@ -998,7 +999,7 @@ mod tests {
     use rand::random;
     use reqwest::{
         StatusCode,
-        header::{AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, LOCATION},
+        header::{AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE},
     };
     use retry_after::RetryAfter;
 
@@ -1257,7 +1258,7 @@ mod tests {
         install_test_trace_subscriber();
         initialize_rustls();
         let hpke_keypair = HpkeKeypair::test();
-        let collection_job_id: CollectionJobId = random();
+        let collection_job_id = random();
 
         for (endpoint, joined_base) in [
             ("http://example.com/dap", "http://example.com/dap/"),
@@ -1318,12 +1319,10 @@ mod tests {
             &random(),
             &true,
         );
-        let collection_job_id: CollectionJobId = random();
+        let collection_job_id = random();
         let collector = setup_collector(&mut server, configured_vdaf);
-        let collection_job_path = format!(
-            "/tasks/{}/collection_jobs/{}",
-            collector.task_id, collection_job_id
-        );
+        let (_, collection_job_path) =
+            collection_job_location(collector.task_id, collection_job_id);
 
         let batch_interval = Interval::new(
             Time::from_seconds_since_epoch(1_000_000, &TEST_TIME_PRECISION),
@@ -1352,7 +1351,7 @@ mod tests {
             )
             .match_authentication_token(&collector.authentication)
             .with_status(201)
-            .with_header(LOCATION.as_str(), collection_job_path.as_str())
+            .with_collection_job_location(collector.task_id, collection_job_id)
             .expect(1)
             .create_async()
             .await;
@@ -1426,12 +1425,10 @@ mod tests {
             &random(),
             &144,
         );
-        let collection_job_id: CollectionJobId = random();
+        let collection_job_id = random();
         let collector = setup_collector(&mut server, configured_vdaf);
-        let collection_job_path = format!(
-            "/tasks/{}/collection_jobs/{}",
-            collector.task_id, collection_job_id
-        );
+        let (_, collection_job_path) =
+            collection_job_location(collector.task_id, collection_job_id);
 
         let batch_interval = Interval::new(
             Time::from_seconds_since_epoch(1_000_000, &TEST_TIME_PRECISION),
@@ -1449,7 +1446,7 @@ mod tests {
                 CollectionJobReq::<TimeInterval>::MEDIA_TYPE,
             )
             .with_status(200)
-            .with_header(LOCATION.as_str(), collection_job_path.as_str())
+            .with_collection_job_location(collector.task_id, collection_job_id)
             .expect(1)
             .create_async()
             .await;
@@ -1502,12 +1499,10 @@ mod tests {
             &random(),
             &3,
         );
-        let collection_job_id: CollectionJobId = random();
+        let collection_job_id = random();
         let collector = setup_collector(&mut server, configured_vdaf);
-        let collection_job_path = format!(
-            "/tasks/{}/collection_jobs/{}",
-            collector.task_id, collection_job_id
-        );
+        let (_, collection_job_path) =
+            collection_job_location(collector.task_id, collection_job_id);
 
         let batch_interval = Interval::new(
             Time::from_seconds_since_epoch(1_000_000, &TEST_TIME_PRECISION),
@@ -1525,7 +1520,7 @@ mod tests {
                 CollectionJobReq::<TimeInterval>::MEDIA_TYPE,
             )
             .with_status(200)
-            .with_header(LOCATION.as_str(), collection_job_path.as_str())
+            .with_collection_job_location(collector.task_id, collection_job_id)
             .expect(1)
             .create_async()
             .await;
@@ -1580,12 +1575,10 @@ mod tests {
             &true,
         );
         let idempotency_key = random();
-        let collection_job_id: CollectionJobId = random();
+        let collection_job_id = random();
         let collector = setup_collector(&mut server, configured_vdaf);
-        let collection_job_path = format!(
-            "/tasks/{}/collection_jobs/{}",
-            collector.task_id, collection_job_id
-        );
+        let (_, collection_job_path) =
+            collection_job_location(collector.task_id, collection_job_id);
 
         let collect_resp =
             build_collect_response_leader_selected(&transcript, &collector, &idempotency_key, &());
@@ -1598,7 +1591,7 @@ mod tests {
                 CollectionJobReq::<LeaderSelected>::MEDIA_TYPE,
             )
             .with_status(200)
-            .with_header(LOCATION.as_str(), collection_job_path.as_str())
+            .with_collection_job_location(collector.task_id, collection_job_id)
             .expect(1)
             .create_async()
             .await;
@@ -1669,11 +1662,9 @@ mod tests {
         .with_collect_poll_backoff(test_http_request_exponential_backoff())
         .build()
         .unwrap();
-        let collection_job_id: CollectionJobId = random();
-        let collection_job_path = format!(
-            "/tasks/{}/collection_jobs/{}",
-            collector.task_id, collection_job_id
-        );
+        let collection_job_id = random();
+        let (_, collection_job_path) =
+            collection_job_location(collector.task_id, collection_job_id);
 
         let batch_interval = Interval::new(
             Time::from_seconds_since_epoch(1_000_000, &TEST_TIME_PRECISION),
@@ -1692,7 +1683,7 @@ mod tests {
             )
             .match_header(AUTHORIZATION.as_str(), "Bearer AAAAAAAAAAAAAAAA")
             .with_status(200)
-            .with_header(LOCATION.as_str(), collection_job_path.as_str())
+            .with_collection_job_location(collector.task_id, collection_job_id)
             .expect(1)
             .create_async()
             .await;
@@ -1834,12 +1825,10 @@ mod tests {
         initialize_rustls();
         let mut server = mockito::Server::new_async().await;
         let configured_vdaf = ConfiguredVdaf::prio3_count().unwrap();
-        let collection_job_id: CollectionJobId = random();
+        let collection_job_id = random();
         let collector = setup_collector(&mut server, configured_vdaf);
-        let collection_job_path = format!(
-            "/tasks/{}/collection_jobs/{}",
-            collector.task_id, collection_job_id
-        );
+        let (_, collection_job_path) =
+            collection_job_location(collector.task_id, collection_job_id);
         let matcher = collection_creation_uri_matcher(&collector.task_id);
 
         let mock_collect_start = server
@@ -1849,7 +1838,7 @@ mod tests {
                 CollectionJobReq::<TimeInterval>::MEDIA_TYPE,
             )
             .with_status(200)
-            .with_header(LOCATION.as_str(), collection_job_path.as_str())
+            .with_collection_job_location(collector.task_id, collection_job_id)
             .expect(1)
             .create_async()
             .await;
@@ -2087,10 +2076,8 @@ mod tests {
         let configured_vdaf = ConfiguredVdaf::prio3_count().unwrap();
         let collection_job_id = random();
         let collector = setup_collector(&mut server, configured_vdaf);
-        let collection_job_path = format!(
-            "/tasks/{}/collection_jobs/{}",
-            collector.task_id, collection_job_id
-        );
+        let (_, collection_job_path) =
+            collection_job_location(collector.task_id, collection_job_id);
         let matcher = collection_creation_uri_matcher(&collector.task_id);
 
         let mock_collect_start = server
@@ -2100,7 +2087,7 @@ mod tests {
                 CollectionJobReq::<TimeInterval>::MEDIA_TYPE,
             )
             .with_status(200)
-            .with_header(LOCATION.as_str(), collection_job_path.as_str())
+            .with_collection_job_location(collector.task_id, collection_job_id)
             .expect(1)
             .create_async()
             .await;
@@ -2176,11 +2163,9 @@ mod tests {
             .without_max_times()
             .with_total_delay(Some(std::time::Duration::from_secs(3)));
 
-        let collection_job_id: CollectionJobId = random();
-        let collection_job_path = format!(
-            "/tasks/{}/collection_jobs/{collection_job_id}",
-            collector.task_id
-        );
+        let collection_job_id = random();
+        let (_, collection_job_path) =
+            collection_job_location(collector.task_id, collection_job_id);
 
         let batch_interval = Interval::new(
             Time::from_seconds_since_epoch(1_000_000, &TEST_TIME_PRECISION),
@@ -2406,10 +2391,8 @@ mod tests {
             aggregation_parameter: (),
         };
 
-        let collection_job_path = format!(
-            "/tasks/{}/collection_jobs/{}",
-            collector.task_id, job.collection_job_id
-        );
+        let (_, collection_job_path) =
+            collection_job_location(collector.task_id, job.collection_job_id);
         let mocked_collect_error = server
             .mock("GET", collection_job_path.as_str())
             .with_status(500)
