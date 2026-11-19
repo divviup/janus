@@ -589,7 +589,7 @@ async fn init_sync() {
         // Validate response.
         assert_eq!(aggregation_job_resp.verify_resps.len(), 12);
 
-        let verify_step_0 = aggregation_job_resp.verify_resps[0];
+        let verify_step_0 = &aggregation_job_resp.verify_resps[0];
         assert_eq!(
             verify_step_0.report_id(),
             verify_init_0.report_share().metadata().id()
@@ -598,7 +598,7 @@ async fn init_sync() {
             assert_eq!(message, transcript_0.helper_verify_transitions[0].message().unwrap());
         });
 
-        let verify_step_1 = aggregation_job_resp.verify_resps[1];
+        let verify_step_1 = &aggregation_job_resp.verify_resps[1];
         assert_eq!(
             verify_step_1.report_id(),
             verify_init_1.report_share().metadata().id()
@@ -608,7 +608,7 @@ async fn init_sync() {
             &VerifyStepResult::Reject(ReportError::HpkeDecryptError)
         );
 
-        let verify_step_2 = aggregation_job_resp.verify_resps[2];
+        let verify_step_2 = &aggregation_job_resp.verify_resps[2];
         assert_eq!(
             verify_step_2.report_id(),
             verify_init_2.report_share().metadata().id()
@@ -618,7 +618,7 @@ async fn init_sync() {
             &VerifyStepResult::Reject(ReportError::InvalidMessage)
         );
 
-        let verify_step_3 = aggregation_job_resp.verify_resps[3];
+        let verify_step_3 = &aggregation_job_resp.verify_resps[3];
         assert_eq!(
             verify_step_3.report_id(),
             verify_init_3.report_share().metadata().id()
@@ -628,7 +628,7 @@ async fn init_sync() {
             &VerifyStepResult::Reject(ReportError::HpkeUnknownConfigId)
         );
 
-        let verify_step_4 = aggregation_job_resp.verify_resps[4];
+        let verify_step_4 = &aggregation_job_resp.verify_resps[4];
         assert_eq!(
             verify_step_4.report_id(),
             verify_init_4.report_share().metadata().id()
@@ -638,7 +638,7 @@ async fn init_sync() {
             &VerifyStepResult::Reject(ReportError::ReportReplayed)
         );
 
-        let verify_step_5 = aggregation_job_resp.verify_resps[5];
+        let verify_step_5 = &aggregation_job_resp.verify_resps[5];
         assert_eq!(
             verify_step_5.report_id(),
             verify_init_5.report_share().metadata().id()
@@ -648,7 +648,7 @@ async fn init_sync() {
             &VerifyStepResult::Reject(ReportError::BatchCollected)
         );
 
-        let verify_step_6 = aggregation_job_resp.verify_resps[6];
+        let verify_step_6 = &aggregation_job_resp.verify_resps[6];
         assert_eq!(
             verify_step_6.report_id(),
             verify_init_6.report_share().metadata().id()
@@ -658,7 +658,7 @@ async fn init_sync() {
             &VerifyStepResult::Reject(ReportError::InvalidMessage),
         );
 
-        let verify_step_7 = aggregation_job_resp.verify_resps[7];
+        let verify_step_7 = &aggregation_job_resp.verify_resps[7];
         assert_eq!(
             verify_step_7.report_id(),
             verify_init_7.report_share().metadata().id()
@@ -668,7 +668,7 @@ async fn init_sync() {
             &VerifyStepResult::Reject(ReportError::InvalidMessage),
         );
 
-        let verify_step_8 = aggregation_job_resp.verify_resps[8];
+        let verify_step_8 = &aggregation_job_resp.verify_resps[8];
         assert_eq!(
             verify_step_8.report_id(),
             verify_init_8.report_share().metadata().id()
@@ -678,7 +678,7 @@ async fn init_sync() {
             &VerifyStepResult::Reject(ReportError::InvalidMessage),
         );
 
-        let verify_step_9 = aggregation_job_resp.verify_resps[8];
+        let verify_step_9 = &aggregation_job_resp.verify_resps[8];
         assert_eq!(
             verify_step_9.report_id(),
             verify_init_9.report_share().metadata().id()
@@ -688,7 +688,7 @@ async fn init_sync() {
             &VerifyStepResult::Reject(ReportError::InvalidMessage),
         );
 
-        let verify_step_10 = aggregation_job_resp.verify_resps[10];
+        let verify_step_10 = &aggregation_job_resp.verify_resps[10];
         assert_eq!(
             verify_step_10.report_id(),
             verify_init_10.report_share().metadata().id()
@@ -698,7 +698,7 @@ async fn init_sync() {
             &VerifyStepResult::Reject(ReportError::InvalidMessage),
         );
 
-        let verify_step_11 = aggregation_job_resp.verify_resps[11];
+        let verify_step_11 = &aggregation_job_resp.verify_resps[11];
         assert_eq!(
             verify_step_11.report_id(),
             verify_init_11.report_share().metadata().id()
