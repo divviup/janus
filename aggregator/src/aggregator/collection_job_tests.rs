@@ -3,7 +3,7 @@ use axum::body::Body;
 use http::{Request, StatusCode};
 use janus_aggregator_core::{
     datastore::models::{
-        AggregationJob, AggregationJobState, BatchAggregation, BatchAggregationState,
+        AggregationJobState, BatchAggregation, BatchAggregationState,
         CollectionJob, CollectionJobState, LeaderStoredReport, ReportAggregation,
         ReportAggregationState, UnwrittenAggregationJob,
     },

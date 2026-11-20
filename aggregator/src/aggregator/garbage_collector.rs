@@ -179,7 +179,7 @@ mod tests {
     use janus_aggregator_core::{
         datastore::{
             models::{
-                AggregateShareJob, AggregateShareJobState, AggregationJob, AggregationJobState,
+                AggregateShareJob, AggregateShareJobState, AggregationJobState,
                 BatchAggregation, BatchAggregationState, CollectionJob, CollectionJobState,
                 LeaderStoredReport, ReportAggregation, ReportAggregationState,
                 UnwrittenAggregationJob,

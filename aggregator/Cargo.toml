@@ -23,6 +23,7 @@ test-util = [
     "janus_messages/test-util",
     "opentelemetry_sdk/testing",
     "dep:testcontainers",
+    "dep:mockito",
 ]
 
 [dependencies]
@@ -53,6 +54,7 @@ janus_messages.workspace = true
 k8s-openapi.workspace = true
 kube.workspace = true
 mime.workspace = true
+mockito = { workspace = true, optional = true }
 moka = { version = "0.12.15", features = ["future"] }
 opentelemetry.workspace = true
 opentelemetry-otlp = { workspace = true, features = ["metrics"], optional = true }
@@ -102,7 +104,6 @@ rustc_version = { workspace = true }
 hpke-dispatch = { workspace = true }
 janus_aggregator = { workspace = true, features = ["test-util"] }
 janus_aggregator_core = { workspace = true, features = ["test-util"] }
-mockito = { workspace = true }
 opentelemetry_sdk = { workspace = true, features = ["testing"] }
 prio = { workspace = true, features = ["multithreaded"] }
 quickcheck = { workspace = true }

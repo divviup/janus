@@ -764,6 +764,13 @@ pub mod test_util {
                 .await
         }
 
+        pub async fn post_prepared_aggregation_job_init_expecting_success(
+            &self,
+        ) -> AggregationJobResp {
+            self.post_aggregation_job_init_expecting_success(&self.aggregation_job_init_req)
+                .await
+        }
+
         pub async fn post_aggregation_job_init(
             &self,
             aggregation_job_init_req: &AggregationJobInitializeReq,
@@ -922,157 +929,6 @@ mod tests {
         aggregation_job_init::test_util::AggregationJobInitTestCase,
         http_handlers::test_util::{decode_response_body, take_problem_details},
     };
-
-    // pub(super) struct AggregationJobInitTestCase<
-    //     const VERIFY_KEY_SIZE: usize,
-    //     V: AsyncAggregator<VERIFY_KEY_SIZE>,
-    // > {
-    //     pub(super) clock: MockClock,
-    //     pub(super) task: Task,
-    //     pub(super) verify_init_generator: VerifyInitGenerator<VERIFY_KEY_SIZE, V>,
-    //     pub(super) aggregation_job_id: AggregationJobId,
-    //     pub(super) aggregation_job_init_req: AggregationJobInitializeReq,
-    //     aggregation_job_init_resp: Option<AggregationJobResp>,
-    //     pub(super) aggregation_param: V::AggregationParam,
-    //     pub(super) router: Router,
-    //     _ephemeral_datastore: EphemeralDatastore,
-    // }
-
-    // pub(super) async fn setup_aggregate_init_test() -> AggregationJobInitTestCase<0, dummy::Vdaf> {
-    //     setup_aggregate_init_test_for_vdaf(
-    //         dummy::Vdaf::new(1),
-    //         VdafInstance::Fake { rounds: 1 },
-    //         dummy::AggregationParam(0),
-    //         0,
-    //     )
-    //     .await
-    // }
-
-    // async fn setup_multi_step_aggregate_init_test() -> AggregationJobInitTestCase<0, dummy::Vdaf> {
-    //     setup_aggregate_init_test_for_vdaf(
-    //         dummy::Vdaf::new(2),
-    //         VdafInstance::Fake { rounds: 2 },
-    //         dummy::AggregationParam(7),
-    //         13,
-    //     )
-    //     .await
-    // }
-
-    // async fn setup_aggregate_init_test_for_vdaf<
-    //     const VERIFY_KEY_SIZE: usize,
-    //     V: AsyncAggregator<VERIFY_KEY_SIZE> + vdaf::Client<16>,
-    // >(
-    //     vdaf: V,
-    //     vdaf_instance: VdafInstance,
-    //     aggregation_param: V::AggregationParam,
-    //     measurement: V::Measurement,
-    // ) -> AggregationJobInitTestCase<VERIFY_KEY_SIZE, V> {
-    //     let mut test_case = setup_aggregate_init_test_without_sending_request(
-    //         vdaf,
-    //         vdaf_instance,
-    //         aggregation_param,
-    //         measurement,
-    //         AuthenticationToken::Bearer(random()),
-    //     )
-    //     .await;
-
-    //     let mut response = post_aggregation_job_init(
-    //         &test_case.task,
-    //         &test_case.aggregation_job_init_req,
-    //         &test_case.router,
-    //     )
-    //     .await;
-    //     assert_eq!(response.status(), StatusCode::CREATED);
-
-    //     let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut response).await;
-    //     let verify_resps = assert_matches!(
-    //         &aggregation_job_resp,
-    //         AggregationJobResp { verify_resps } => verify_resps
-    //     );
-    //     assert_eq!(
-    //         verify_resps.len(),
-    //         test_case.aggregation_job_init_req.verify_inits().len(),
-    //     );
-    //     assert_matches!(verify_resps[0].result(), &VerifyStepResult::Continue { .. });
-
-    //     test_case.aggregation_job_init_resp = Some(aggregation_job_resp);
-    //     test_case
-    // }
-
-    // async fn setup_aggregate_init_test_without_sending_request<
-    //     const VERIFY_KEY_SIZE: usize,
-    //     V: AsyncAggregator<VERIFY_KEY_SIZE> + vdaf::Client<16>,
-    // >(
-    //     vdaf: V,
-    //     vdaf_instance: VdafInstance,
-    //     aggregation_param: V::AggregationParam,
-    //     measurement: V::Measurement,
-    //     auth_token: AuthenticationToken,
-    // ) -> AggregationJobInitTestCase<VERIFY_KEY_SIZE, V> {
-    //     install_test_trace_subscriber();
-
-    //     let time_precision = TimePrecision::from_seconds(100);
-    //     let task = TaskBuilder::new(
-    //         BatchMode::TimeInterval,
-    //         AggregationMode::Synchronous,
-    //         vdaf_instance,
-    //     )
-    //     .with_time_precision(time_precision)
-    //     .with_tolerable_clock_skew(Duration::from_seconds(500, &time_precision))
-    //     .with_aggregator_auth_token(auth_token)
-    //     .build();
-    //     let helper_task = task.helper_view().unwrap();
-    //     let clock = MockClock::default();
-    //     let ephemeral_datastore = ephemeral_datastore().await;
-    //     let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
-
-    //     datastore.put_aggregator_task(&helper_task).await.unwrap();
-    //     let keypair = datastore.put_hpke_key().await.unwrap();
-
-    //     let meter = noop_meter();
-    //     let builder = AggregatorHandlerBuilder::new(
-    //         Arc::clone(&datastore),
-    //         TestRuntime::default(),
-    //         &meter,
-    //         Config::default(),
-    //     )
-    //     .await
-    //     .unwrap();
-    //     let router = builder.build_axum_router(None);
-
-    //     let verify_init_generator = VerifyInitGenerator::new(
-    //         clock.clone(),
-    //         helper_task.clone(),
-    //         keypair.config().clone(),
-    //         vdaf,
-    //         aggregation_param.clone(),
-    //     );
-
-    //     let verify_inits = Vec::from([
-    //         verify_init_generator.next(&measurement).0,
-    //         verify_init_generator.next(&measurement).0,
-    //     ]);
-
-    //     let aggregation_job_id = random();
-    //     let aggregation_job_init_req = AggregationJobInitializeReq::new(
-    //         0,
-    //         aggregation_param.get_encoded().unwrap(),
-    //         Vec::new(),
-    //         verify_inits.clone(),
-    //     );
-
-    //     AggregationJobInitTestCase {
-    //         clock,
-    //         task,
-    //         verify_init_generator,
-    //         aggregation_job_id,
-    //         aggregation_job_init_req,
-    //         aggregation_job_init_resp: None,
-    //         aggregation_param,
-    //         router,
-    //         _ephemeral_datastore: ephemeral_datastore,
-    //     }
-    // }
 
     #[rstest::rstest]
     #[case::not_bearer_token("wrong kind of token")]

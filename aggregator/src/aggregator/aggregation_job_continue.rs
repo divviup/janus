@@ -361,7 +361,7 @@ mod tests {
         datastore::{
             Datastore,
             models::{
-                AggregationJob, AggregationJobDatastoreId, AggregationJobState, ReportAggregation,
+                AggregationJobDatastoreId, AggregationJobState, ReportAggregation,
                 ReportAggregationState, UnwrittenAggregationJob,
             },
             test_util::{EphemeralDatastore, ephemeral_datastore},

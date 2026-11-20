@@ -80,6 +80,8 @@ use crate::{
     },
 };
 
+#[cfg(feature = "test-util")]
+pub mod test_case;
 #[cfg(test)]
 mod tests;
 
@@ -1997,7 +1999,7 @@ where
 
     /// Convenience method to construct an [`HpkeKeypairCache`] in tests, to be passed to other
     /// methods.
-    #[cfg(test)]
+    #[cfg(feature = "test-util")]
     async fn make_keypair_cache(&self, datastore: &Arc<Datastore>) -> Arc<HpkeKeypairCache> {
         Arc::new(
             HpkeKeypairCache::new(

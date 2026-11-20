@@ -1004,7 +1004,7 @@ mod tests {
         datastore::{
             Datastore,
             models::{
-                AcquiredCollectionJob, AggregationJob, AggregationJobState, BatchAggregation,
+                AcquiredCollectionJob, AggregationJobState, BatchAggregation,
                 BatchAggregationState, CollectionJob, CollectionJobState, LeaderStoredReport,
                 Lease, ReportAggregation, ReportAggregationState, UnwrittenAggregationJob,
             },
@@ -1018,7 +1018,7 @@ mod tests {
     };
     use janus_core::{
         Runtime,
-        auth_tokens::test_util::MockExt,
+        http::test_util::MockExt,
         initialize_rustls,
         retries::test_util::LimitedRetryer,
         test_util::{install_test_trace_subscriber, runtime::TestRuntimeManager},
@@ -1561,7 +1561,7 @@ mod tests {
             .match_body(leader_request.get_encoded().unwrap())
             .with_status(200)
             .with_header(CONTENT_TYPE, AggregateShare::MEDIA_TYPE)
-            .with_aggregate_share_location(task.id(), &aggregate_share_id)
+            .with_aggregate_share_location(*task.id(), aggregate_share_id)
             .with_body(helper_response.get_encoded().unwrap())
             .expect(1)
             .create_async()
@@ -2207,7 +2207,7 @@ mod tests {
             .match_body(leader_request.get_encoded().unwrap())
             .with_status(200)
             .with_header(RETRY_AFTER, &retry_after_header_value.to_string())
-            .with_aggregate_share_location(task.id(), &aggregate_share_id)
+            .with_aggregate_share_location(*task.id(), aggregate_share_id)
             .expect(1)
             .create_async()
             .await;
@@ -2313,7 +2313,7 @@ mod tests {
             .match_body(leader_request.get_encoded().unwrap())
             .with_status(200)
             .with_header(RETRY_AFTER, "1")
-            .with_aggregate_share_location(task.id(), &aggregate_share_id)
+            .with_aggregate_share_location(*task.id(), aggregate_share_id)
             .create_async()
             .await;
 

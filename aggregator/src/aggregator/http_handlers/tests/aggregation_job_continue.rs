@@ -194,7 +194,9 @@ async fn aggregate_continue_sync() {
                         aggregation_param,
                         (),
                         Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
-                        AggregationJobState::AwaitingRequest,
+                        AggregationJobState::AwaitingRequest {
+                            helper_aggregation_job_id,
+                        },
                         AggregationJobStep::from(0),
                     ))
                     .await
@@ -528,7 +530,7 @@ async fn aggregate_continue_async() {
                 .unwrap();
                 tx.put_report_aggregation::<0, dummy::Vdaf>(&ReportAggregation::new(
                     *helper_task.id(),
-                    aggregation_job_id,
+                    aggregation_job_datastore_id,
                     *report_metadata_1.id(),
                     *report_metadata_1.time(),
                     1,
@@ -1416,9 +1418,13 @@ async fn aggregate_continue_leader_sends_non_continue_or_finish_transition() {
         )]),
     );
 
-    let resp =
-        post_aggregation_job_continue_and_decode(&task, aggregation_job_id, &request, &router)
-            .await;
+    let resp = post_aggregation_job_continue_and_decode(
+        &task,
+        helper_aggregation_job_id,
+        &request,
+        &router,
+    )
+    .await;
     let verify_resps =
         assert_matches!(resp, Some(AggregationJobResp{verify_resps}) => verify_resps);
     assert_eq!(verify_resps.len(), 1);
@@ -1486,7 +1492,7 @@ async fn aggregate_continue_verify_step_fails() {
     );
 
     // Setup datastore.
-    datastore
+    let aggregation_job_datastore_id = datastore
         .run_unnamed_tx(|tx| {
             let helper_task = helper_task.clone();
             let report_metadata = report_metadata.clone();
@@ -1547,9 +1553,13 @@ async fn aggregate_continue_verify_step_fails() {
         )]),
     );
 
-    let aggregate_resp =
-        post_aggregation_job_continue_and_decode(&task, aggregation_job_id, &request, &router)
-            .await;
+    let aggregate_resp = post_aggregation_job_continue_and_decode(
+        &task,
+        helper_aggregation_job_id,
+        &request,
+        &router,
+    )
+    .await;
     assert_eq!(
         aggregate_resp,
         Some(AggregationJobResp {
@@ -1610,7 +1620,7 @@ async fn aggregate_continue_verify_step_fails() {
         report_aggregation,
         ReportAggregation::new(
             *task.id(),
-            aggregation_job_id,
+            aggregation_job_datastore_id,
             *report_metadata.id(),
             *report_metadata.time(),
             0,

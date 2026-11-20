@@ -926,7 +926,7 @@ mod tests {
         let helper_hpke_keypair = HpkeKeypair::test();
         let leader_report_metadata = ReportMetadata::new(random(), report_time, Vec::new());
         let leader_transcript = run_vdaf(
-            vdaf.as_ref(),
+            &vdaf,
             leader_task.id(),
             leader_task.vdaf_verify_key().unwrap().as_bytes(),
             &(),
@@ -1119,7 +1119,7 @@ mod tests {
         .map(|report_time| {
             let report_metadata = ReportMetadata::new(random(), report_time, Vec::new());
             let transcript = run_vdaf(
-                vdaf.as_ref(),
+                &vdaf,
                 task.id(),
                 task.vdaf_verify_key().unwrap().as_bytes(),
                 &(),
@@ -1295,7 +1295,7 @@ mod tests {
 
         let first_report_metadata = ReportMetadata::new(random(), report_time, Vec::new());
         let first_transcript = run_vdaf(
-            vdaf.as_ref(),
+            &vdaf,
             task.id(),
             task.vdaf_verify_key().unwrap().as_bytes(),
             &(),
@@ -1313,7 +1313,7 @@ mod tests {
 
         let second_report_metadata = ReportMetadata::new(random(), report_time, Vec::new());
         let second_transcript = run_vdaf(
-            vdaf.as_ref(),
+            &vdaf,
             task.id(),
             task.vdaf_verify_key().unwrap().as_bytes(),
             &(),
@@ -1373,7 +1373,7 @@ mod tests {
                         VERIFY_KEY_LENGTH_PRIO3,
                         TimeInterval,
                         _,
-                    >(tx, &vdaf.as_ref(), task.id(), &want_ra_states)
+                    >(tx, &vdaf, task.id(), &want_ra_states)
                     .await)
                 })
             })
@@ -1494,7 +1494,7 @@ mod tests {
 
         let report_metadata = ReportMetadata::new(random(), report_time, Vec::new());
         let transcript = run_vdaf(
-            vdaf.as_ref(),
+            &vdaf,
             task.id(),
             task.vdaf_verify_key().unwrap().as_bytes(),
             &(),
@@ -1655,7 +1655,7 @@ mod tests {
         let reports: Vec<_> = iter::repeat_with(|| {
             let report_metadata = ReportMetadata::new(random(), report_time, Vec::new());
             let transcript = run_vdaf(
-                vdaf.as_ref(),
+                &vdaf,
                 task.id(),
                 task.vdaf_verify_key().unwrap().as_bytes(),
                 &(),
@@ -1837,7 +1837,7 @@ mod tests {
         let reports: Vec<_> = iter::repeat_with(|| {
             let report_metadata = ReportMetadata::new(random(), report_time, Vec::new());
             let transcript = run_vdaf(
-                vdaf.as_ref(),
+                &vdaf,
                 task.id(),
                 task.vdaf_verify_key().unwrap().as_bytes(),
                 &(),
@@ -2029,7 +2029,7 @@ mod tests {
         let reports: Vec<_> = iter::repeat_with(|| {
             let report_metadata = ReportMetadata::new(random(), report_time, Vec::new());
             let transcript = run_vdaf(
-                vdaf.as_ref(),
+                &vdaf,
                 task.id(),
                 task.vdaf_verify_key().unwrap().as_bytes(),
                 &(),
@@ -2124,30 +2124,29 @@ mod tests {
         assert_eq!(batches.len(), 0);
 
         // Confirm the reports are still available.
-        let report_count = job_creator
-            .datastore
-            .run_unnamed_tx(|tx| {
-                let task = task.clone();
+        let report_count =
+            job_creator
+                .datastore
+                .run_unnamed_tx(|tx| {
+                    let task = task.clone();
 
-                Box::pin(async move {
-                    let report_ids = tx
-                        .get_unaggregated_client_reports_for_task(task.id(), 5000)
+                    Box::pin(async move {
+                        let reports = tx
+                            .get_unaggregated_client_reports_for_task(task.id(), 5000)
+                            .await
+                            .unwrap();
+
+                        try_join_all(reports.iter().map(|report| {
+                            tx.mark_report_unaggregated(task.id(), report.report_id())
+                        }))
                         .await
-                        .unwrap()
-                        .into_iter()
-                        .map(|report| *report.report_id());
+                        .unwrap();
 
-                    try_join_all(
-                        report_ids
-                            .map(|report_id| tx.mark_report_unaggregated(task.id(), &report_id)),
-                    )
-                    .await
-                    .unwrap();
-                    Ok(report_ids.len())
+                        Ok(reports.len())
+                    })
                 })
-            })
-            .await
-            .unwrap();
+                .await
+                .unwrap();
         assert_eq!(report_count, 5);
     }
 
@@ -2182,10 +2181,10 @@ mod tests {
         let report_time = clock.now().to_time(task.time_precision());
         let vdaf = Prio3::new_count(2).unwrap();
         let helper_hpke_keypair = HpkeKeypair::test();
-        let reports: Arc<Vec<_>> = iter::repeat_with(|| {
+        let reports: Vec<_> = iter::repeat_with(|| {
             let report_metadata = ReportMetadata::new(random(), report_time, Vec::new());
             let transcript = run_vdaf(
-                vdaf.as_ref(),
+                &vdaf,
                 task.id(),
                 task.vdaf_verify_key().unwrap().as_bytes(),
                 &(),
@@ -2296,7 +2295,7 @@ mod tests {
         // Add one more report.
         let last_report_metadata = ReportMetadata::new(random(), report_time, Vec::new());
         let last_transcript = run_vdaf(
-            vdaf.as_ref(),
+            &vdaf,
             task.id(),
             task.vdaf_verify_key().unwrap().as_bytes(),
             &(),
@@ -2335,7 +2334,7 @@ mod tests {
         // Verify.
         let want_ra_states: HashMap<_, _> = reports
             .iter()
-            .chain([last_report.as_ref()])
+            .chain([&last_report])
             .map(|report| {
                 (
                     (*report.metadata().id(), ()),
@@ -2438,7 +2437,7 @@ mod tests {
         let reports: Vec<_> = iter::repeat_with(|| {
             let report_metadata = ReportMetadata::new(random(), report_time, Vec::new());
             let transcript = run_vdaf(
-                vdaf.as_ref(),
+                &vdaf,
                 task.id(),
                 task.vdaf_verify_key().unwrap().as_bytes(),
                 &(),
@@ -2551,7 +2550,7 @@ mod tests {
         let new_reports: Vec<_> = iter::repeat_with(|| {
             let report_metadata = ReportMetadata::new(random(), report_time, Vec::new());
             let transcript = run_vdaf(
-                vdaf.as_ref(),
+                &vdaf,
                 task.id(),
                 task.vdaf_verify_key().unwrap().as_bytes(),
                 &(),
@@ -2594,7 +2593,7 @@ mod tests {
         // Verify.
         let want_ra_states: HashMap<_, _> = reports
             .iter()
-            .chain(new_reports.as_ref())
+            .chain(&new_reports)
             .map(|report| {
                 (
                     (*report.metadata().id(), ()),
@@ -2709,7 +2708,7 @@ mod tests {
             iter::repeat_with(|| {
                 let report_metadata = ReportMetadata::new(random(), report_time_1, Vec::new());
                 let transcript = run_vdaf(
-                    vdaf.as_ref(),
+                    &vdaf,
                     task.id(),
                     task.vdaf_verify_key().unwrap().as_bytes(),
                     &(),
@@ -2731,7 +2730,7 @@ mod tests {
             iter::repeat_with(|| {
                 let report_metadata = ReportMetadata::new(random(), report_time_2, Vec::new());
                 let transcript = run_vdaf(
-                    vdaf.as_ref(),
+                    &vdaf,
                     task.id(),
                     task.vdaf_verify_key().unwrap().as_bytes(),
                     &(),
@@ -2757,7 +2756,7 @@ mod tests {
 
         ds.run_unnamed_tx(|tx| {
             let task = task.clone();
-            let reports = reportk.clone();
+            let reports = reports.clone();
 
             Box::pin(async move {
                 tx.put_aggregator_task(&task).await.unwrap();
@@ -2823,9 +2822,7 @@ mod tests {
                             VERIFY_KEY_LENGTH_PRIO3,
                             LeaderSelected,
                             _,
-                        >(
-                            tx, vdaf.as_ref(), task.id(), want_ra_states.as_ref()
-                        )
+                        >(tx, &vdaf, task.id(), &want_ra_states)
                         .await,
                     ))
                 })
@@ -3015,7 +3012,7 @@ mod tests {
             janus_messages::Duration::from_seconds(3600, task.time_precision()),
         ));
         Arc::clone(&job_creator)
-            .create_aggregation_jobs_for_time_interval_task_with_param::<0, _>(&task, vdaf)
+            .create_aggregation_jobs_for_time_interval_task_with_param::<0, _>(&task, vdaf.clone())
             .await
             .unwrap();
 
@@ -3084,7 +3081,7 @@ mod tests {
 
         // Run again, this time it should create some aggregation jobs.
         Arc::clone(&job_creator)
-            .create_aggregation_jobs_for_time_interval_task_with_param::<0, _>(&task, vdaf)
+            .create_aggregation_jobs_for_time_interval_task_with_param::<0, _>(&task, vdaf.clone())
             .await
             .unwrap();
 
@@ -3148,7 +3145,7 @@ mod tests {
 
         // Run once more, and confirm that no further aggregation jobs are created.
         Arc::clone(&job_creator)
-            .create_aggregation_jobs_for_time_interval_task_with_param::<0, _>(&task, vdaf)
+            .create_aggregation_jobs_for_time_interval_task_with_param::<0, _>(&task, vdaf.clone())
             .await
             .unwrap();
 

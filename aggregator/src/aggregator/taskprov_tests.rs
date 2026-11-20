@@ -13,9 +13,9 @@ use janus_aggregator_core::{
     datastore::{
         Datastore,
         models::{
-            AggregateShareJob, AggregateShareJobState, AggregationJob, AggregationJobState,
-            BatchAggregation, BatchAggregationState, HpkeKeyState, ReportAggregation,
-            ReportAggregationState, UnwrittenAggregationJob,
+            AggregateShareJob, AggregateShareJobState, AggregationJobState, BatchAggregation,
+            BatchAggregationState, HpkeKeyState, ReportAggregation, ReportAggregationState,
+            UnwrittenAggregationJob,
         },
         test_util::{EphemeralDatastore, ephemeral_datastore},
     },
@@ -38,12 +38,12 @@ use janus_core::{
 };
 use janus_messages::{
     AggregateShare as AggregateShareMessage, AggregateShareAad, AggregateShareReq,
-    AggregationJobContinueReq, AggregationJobExtension, AggregationJobId,
-    AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep, BatchConfig,
-    BatchSelector, CollectionJobReq, Duration, Extension, ExtensionType, Interval, MediaType,
-    Query, ReportError, ReportIdChecksum, ReportShare, Role, TaskConfiguration,
-    TaskConfigurationBuilder, TaskExtension, TaskExtensionType, TaskId, Time, TimePrecision,
-    VdafConfig, VerifyContinue, VerifyInit, VerifyResp, VerifyStepResult,
+    AggregationJobContinueReq, AggregationJobExtension, AggregationJobInitializeReq,
+    AggregationJobResp, AggregationJobStep, BatchConfig, BatchSelector, CollectionJobReq, Duration,
+    Extension, ExtensionType, Interval, MediaType, Query, ReportError, ReportIdChecksum,
+    ReportShare, Role, TaskConfiguration, TaskConfigurationBuilder, TaskExtension,
+    TaskExtensionType, TaskId, Time, TimePrecision, VdafConfig, VerifyContinue, VerifyInit,
+    VerifyResp, VerifyStepResult,
     batch_mode::LeaderSelected,
     codec::{Decode, Encode},
 };
@@ -450,7 +450,6 @@ async fn taskprov_aggregate_init_without_task_interval() {
                 .clone(),
         )]),
     );
-    let aggregation_job_id: AggregationJobId = random();
 
     let response = test
         .router
@@ -505,7 +504,6 @@ async fn taskprov_aggregate_init_missing_extension() {
                 .clone(),
         )]),
     );
-    let aggregation_job_id: AggregationJobId = random();
 
     let mut response = test
         .router
@@ -564,7 +562,6 @@ async fn taskprov_aggregate_init_missing_extension() {
     assert_eq!(aggregation_jobs.len(), 1);
     assert!(
         aggregation_jobs[0].task_id().eq(&test.task_id)
-            && aggregation_jobs[0].id().eq(&aggregation_job_id)
             && aggregation_jobs[0].partial_batch_identifier().eq(&batch_id)
             && aggregation_jobs[0].state().finished()
     );
@@ -595,7 +592,6 @@ async fn taskprov_aggregate_init_malformed_extension() {
                 .clone(),
         )]),
     );
-    let aggregation_job_id: AggregationJobId = random();
 
     let mut response = test
         .router
@@ -654,7 +650,6 @@ async fn taskprov_aggregate_init_malformed_extension() {
     assert_eq!(aggregation_jobs.len(), 1);
     assert!(
         aggregation_jobs[0].task_id().eq(&test.task_id)
-            && aggregation_jobs[0].id().eq(&aggregation_job_id)
             && aggregation_jobs[0].partial_batch_identifier().eq(&batch_id)
             && aggregation_jobs[0].state().finished()
     );
@@ -686,8 +681,6 @@ async fn taskprov_opt_out_task_ended_regression() {
                 .clone(),
         )]),
     );
-
-    let aggregation_job_id: AggregationJobId = random();
 
     // Advance clock past task end time.
     test.clock.advance(TimeDelta::hours(48));
@@ -731,8 +724,6 @@ async fn taskprov_opt_out_mismatched_task_id() {
                 .clone(),
         )]),
     );
-
-    let aggregation_job_id: AggregationJobId = random();
 
     let another_task_config = TaskConfigurationBuilder::new(
         Vec::from("foobar".as_bytes()),
