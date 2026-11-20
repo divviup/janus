@@ -1230,7 +1230,7 @@ pub mod test_util {
         pub fn aggregate_share_creation_uri(&self) -> Result<Url, Error> {
             Ok(self
                 .helper_aggregator_endpoint()
-                .aggregation_job_creation_uri(*self.id())?)
+                .aggregate_share_creation_uri(*self.id())?)
         }
 
         /// Returns the URI for a helper aggregate share resource.
@@ -1438,6 +1438,16 @@ pub mod test_util {
         /// Gets the aggregation mode used by the helper for the eventual task.
         pub fn helper_aggregation_mode(&self) -> &AggregationMode {
             self.0.helper_aggregation_mode()
+        }
+
+        pub fn with_helper_aggregation_mode(
+            self,
+            helper_aggregation_mode: AggregationMode,
+        ) -> Self {
+            Self(Task {
+                helper_aggregation_mode,
+                ..self.0
+            })
         }
 
         /// Gets the VDAF for the eventual task
