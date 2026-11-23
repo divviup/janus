@@ -32,7 +32,7 @@ use janus_aggregator_core::{
         models::{
             AggregateShareJob, AggregateShareJobState, AggregationJob, AggregationJobDatastoreId,
             AggregationJobState, CollectionJob, CollectionJobState, LeaderStoredReport,
-            ReportAggregation, ReportAggregationState,
+            ReportAggregation, ReportAggregationState, UnwrittenAggregationJob,
         },
         task_counters::TaskAggregationCounter,
     },
@@ -85,29 +85,19 @@ use url::Url;
 pub use crate::aggregator::error::Error;
 use crate::{
     aggregator::{
-        aggregate_share::{AggregateShareComputer, BatchAggregationsIterator},
-        aggregation_job_init::compute_helper_aggregate_init,
-        aggregation_job_writer::{
-            AggregationJobWriter, AggregationJobWriterMetrics, ReportAggregationUpdate as _,
-            WritableReportAggregation,
-        },
-        batch_mode::{CollectableBatchMode, UploadableBatchMode},
-        error::{
+        aggregate_share::{AggregateShareComputer, BatchAggregationsIterator}, aggregation_job_init::compute_helper_aggregate_init, aggregation_job_writer::{
+            AggregationJobUpdate, AggregationJobWriter, AggregationJobWriterMetrics, HelperAggregationJobCreate, ReportAggregationUpdate as _, WritableReportAggregation,
+        }, batch_mode::{CollectableBatchMode, UploadableBatchMode}, error::{
             BatchMismatch, OptOutReason, ReportRejection, ReportRejectionReason, UploadError,
             handle_ping_pong_error,
-        },
-        report_writer::{ReportWriteBatcher, WritableReport},
-        upload_decode_failure_types::{
+        }, report_writer::{ReportWriteBatcher, WritableReport}, upload_decode_failure_types::{
             DUPLICATE_EXTENSION, INPUT_SHARE_DECODE_FAILURE, PUBLIC_SHARE_DECODE_FAILURE,
             UNRECOGNIZED_EXTENSION, UNSORTED_EXTENSION,
         },
-    },
-    cache::{
+    }, cache::{
         HpkeKeypairCache, PeerAggregatorCache, TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY,
         TASK_AGGREGATOR_CACHE_DEFAULT_TTL, TaskAggregatorCache,
-    },
-    config::TaskprovConfig,
-    metrics::{
+    }, config::TaskprovConfig, metrics::{
         aggregate_step_failure_counter, aggregated_report_share_dimension_histogram,
         early_report_clock_skew_histogram, keypair_use_counter, past_report_clock_skew_histogram,
         report_aggregation_success_counter,
@@ -2256,8 +2246,7 @@ impl VdafOps {
             ),
         };
 
-        let aggregation_job = AggregationJob::<SEED_SIZE, B, A>::new(
-            AggregationJobDatastoreId::from(0),
+        let aggregation_job = UnwrittenAggregationJob::<SEED_SIZE, B, A>::new(
             *task.id(),
             A::AggregationParam::get_decoded(req.aggregation_parameter())
                 .map_err(Error::MessageDecode)?,
@@ -2308,7 +2297,7 @@ impl VdafOps {
         batch_aggregation_shard_count: u64,
         task_counter_shard_count: u64,
         aggregation_job_id: AggregationJobId,
-        aggregation_job: AggregationJob<SEED_SIZE, B, A>,
+        aggregation_job: UnwrittenAggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<WritableReportAggregation<SEED_SIZE, A>>,
     ) -> Result<Vec<VerifyResp>, Error>
     where
@@ -2358,6 +2347,7 @@ impl VdafOps {
                     // Write report shares, and ensure this isn't a repeated report aggregation.
                     let report_aggregations =
                         try_join_all(report_aggregations.into_iter().map(|ra| async move {
+                            // TODO(timg): lower this into AggregationJobWriter
                             let ra = match tx
                                 .put_scrubbed_report(
                                     &task_id,
@@ -2377,7 +2367,7 @@ impl VdafOps {
                         .await?;
 
                     // Write aggregation job, report aggregations, and batch aggregations.
-                    Ok(AggregationJobWriter::put_and_write(
+                    Ok(AggregationJobWriter::<SEED_SIZE, B, A,HelperAggregationJobCreate>::put_and_write(
                         task_id,
                         batch_aggregation_shard_count,
                         &vdaf,
@@ -2653,7 +2643,7 @@ impl VdafOps {
                     // Write accumulated aggregation values back to the datastore; this will mark
                     // any reports that can't be aggregated because the batch is collected with
                     // error BatchCollected.
-                    AggregationJobWriter::put_and_write(
+                    AggregationJobWriter::<SEED_SIZE, B, A, AggregationJobUpdate>::put_and_write(
                         task_id,
                         batch_aggregation_shard_count,
                         &vdaf,

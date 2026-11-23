@@ -1,6 +1,6 @@
 use std::{
     cmp::{max, min},
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     sync::Arc,
     time::Duration,
 };
@@ -41,10 +41,7 @@ use prio::{
     vdaf::prio3::{Prio3, Prio3Count, Prio3Histogram, Prio3Sum, Prio3SumVec},
 };
 use rand::{RngExt, rng};
-use tokio::{
-    time::{self, Instant, MissedTickBehavior, sleep_until},
-    try_join,
-};
+use tokio::time::{self, Instant, MissedTickBehavior, sleep_until};
 use tokio_util::task::TaskTracker;
 use tracing::{debug, error, info};
 
@@ -538,7 +535,6 @@ impl AggregationJobCreator {
                         None,
                         TaskAggregationCounter::default(),
                     );
-                    let mut report_ids_to_scrub = HashSet::new();
                     let mut outstanding_reports = Vec::new();
                     let mut any_normal_size_agg_job = false;
                     {
@@ -647,8 +643,6 @@ impl AggregationJobCreator {
                                     ))
                                 })
                                 .collect::<Result<Vec<_>, datastore::Error>>()?;
-                            report_ids_to_scrub
-                                .extend(agg_job_reports.iter().map(UnaggregatedReport::report_id));
 
                             this.aggregation_job_size_histogram.record(
                                 u64::try_from(report_aggregations.len()).unwrap_or(u64::MAX),
@@ -660,18 +654,13 @@ impl AggregationJobCreator {
 
                     // Write the aggregation jobs and report aggregations we created.
                     aggregation_job_writer.write(&vdaf, tx).await?;
-                    // Report scrubbing must wait until after report aggregations have been created,
-                    // because they have a write-after-read antidependency on the report shares.
-                    try_join!(
-                        try_join_all(
-                            report_ids_to_scrub
-                                .iter()
-                                .map(|report_id| tx.scrub_client_report(&task_id, report_id))
-                        ),
-                        try_join_all(outstanding_reports.iter().map(|report| {
+
+                    try_join_all(
+                        outstanding_reports.iter().map(|report| {
                             tx.mark_report_unaggregated(&task_id, report.report_id())
-                        })),
-                    )?;
+                        }),
+                    )
+                    .await?;
 
                     Ok(any_normal_size_agg_job)
                 })

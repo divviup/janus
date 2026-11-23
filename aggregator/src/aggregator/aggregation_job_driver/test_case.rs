@@ -244,14 +244,16 @@ impl AggregationJobDriverTestCaseBuilder {
                     .unwrap();
 
                     let aggregation_job_datastore_id = tx
-                        .put_aggregation_job(&UnwrittenAggregationJob::new(
-                            *role_task.id(),
-                            aggregation_param,
-                            (),
-                            Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
-                            AggregationJobState::LeaderInit,
-                            AggregationJobStep::from(0),
-                        ))
+                        .put_aggregation_job(
+                            &UnwrittenAggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
+                                *role_task.id(),
+                                aggregation_param,
+                                (),
+                                Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
+                                AggregationJobState::LeaderInit,
+                                AggregationJobStep::from(0),
+                            ),
+                        )
                         .await
                         .unwrap();
 

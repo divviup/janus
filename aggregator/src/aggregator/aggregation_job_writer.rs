@@ -34,16 +34,45 @@ use tracing::{Level, warn};
 use crate::{Operation, metrics::aggregate_step_failure_types::ACCUMULATE_FAILURE};
 
 /// [`AggregationJobWriter`] specialized for [`TimeInterval`] batch mode.
-pub type TimeIntervalAggregationJobWriter<const SEED_SIZE: usize, A, AJ> =
-    AggregationJobWriter<SEED_SIZE, TimeInterval, A, AJ>;
+///
+/// This lets us refer to this commonly instantiated type more concisely in contexts where the
+/// `SEED_SIZE`, `Aggregator`, and `Arguments` generic parameters can be inferred, but not
+/// `BatchMode`. i.e., we can write `let foo = TimeIntervalAggregationJobWriter::new(...)` instead
+/// of the messier `let foo = AggregationJobWriter::<_, TimeInterval, _>::new(...)`.
+// TODO(timg): review if this is still actually useful
+pub type TimeIntervalAggregationJobWriter<const SEED_SIZE: usize, A> =
+    AggregationJobWriter<SEED_SIZE, TimeInterval, A>;
 
 /// Buffers pending writes to aggregation jobs and their report aggregations.
+///
+/// At write time, the state of aggregation jobs is updated based on the state of the constituent
+/// report aggregations, and the relevant batch aggregations are updated as appropriate without
+/// output shares from finished report aggregations.
+///
+/// There are three settings where this is used, each of which uses different representations of
+/// aggregation jobs and report aggregations:
+///
+/// When the leader is creating aggregation jobs in the aggregation job creator, we are writing new
+/// `aggregation_jobs` rows and writing new `report_aggregations` rows corresponding to existing
+/// `client_reports` rows, which get scrubbed.
+///
+/// When the helper is creating an aggregation job while handling an aggregation job initialization
+/// request, we are writing a new `aggregation_jobs` row, new `report_aggregations` rows
+/// corresponding to the report shares in the request and new `client_reports` rows containing
+/// scrubbed reports for those same shares.
+///
+/// When either aggregator is updating an aggregation job based on the most recent message from its
+/// peer, we are updating existing `aggregation_job` and `report_aggregations` rows.
+///
+/// Each of these cases uses a different pair of types to represent aggregation jobs and report
+/// aggregations. Not all possible combinations of `WritableAggregationJob` and
+/// `WritableReportAggregation` implementations are valid, so we use implementations of the
+/// `AggregationJobWriterInputs` trait to restrict which combinations are supported.
 #[derive(Clone)]
-pub struct AggregationJobWriter<const SEED_SIZE: usize, B, A, AJ>
+pub struct AggregationJobWriter<const SEED_SIZE: usize, B, A>
 where
     B: AccumulableBatchMode,
     A: AsyncAggregator<SEED_SIZE>,
-    AJ: WritableAggregationJob<SEED_SIZE, B, A>,
 {
     task_id: TaskId,
     batch_aggregation_shard_count: u64,
@@ -57,97 +86,18 @@ where
     /// this counter, which are used purely within this module. When aggregation jobs and report
     /// aggregations are written to storage, they get updated with a real ID value.
     aggregation_job_datastore_id_counter: AggregationJobDatastoreId,
-    aggregation_jobs: HashMap<AggregationJobDatastoreId, AggregationJobInfo<SEED_SIZE, B, A, AJ>>,
+    aggregation_jobs:
+        HashMap<AggregationJobDatastoreId, AggregationJobWriterInputs<SEED_SIZE, B, A>>,
     by_batch_identifier_index:
         HashMap<B::BatchIdentifier, HashMap<AggregationJobDatastoreId, Vec<usize>>>,
     metrics: Option<AggregationJobWriterMetrics>,
     task_aggregation_counters: TaskAggregationCounter,
 }
 
-/// Metrics for the aggregation job writer.
-#[derive(Clone)]
-pub struct AggregationJobWriterMetrics {
-    pub vdaf_instance: VdafInstance,
-    pub report_aggregation_success_counter: Counter<u64>,
-    pub aggregate_step_failure_counter: Counter<u64>,
-    pub aggregated_report_share_dimension_histogram: Histogram<u64>,
-}
-
-impl AggregationJobWriterMetrics {
-    fn record(&self) {
-        self.report_aggregation_success_counter.add(1, &[]);
-        // Bucket written reports by the size of their encoded
-        // measurement in field elements.
-        match self.vdaf_instance {
-            VdafInstance::Prio3Count => self
-                .aggregated_report_share_dimension_histogram
-                .record(1, &[KeyValue::new("type", "Prio3Count")]),
-
-            VdafInstance::Prio3Sum { max_measurement } => {
-                self.aggregated_report_share_dimension_histogram.record(
-                    max_measurement
-                        .checked_ilog2()
-                        .map(|v| v as u64 + 1)
-                        .unwrap_or(0),
-                    &[KeyValue::new("type", "Prio3Sum")],
-                )
-            }
-
-            VdafInstance::Prio3SumVec {
-                length,
-                max_measurement,
-                ..
-            } => self.aggregated_report_share_dimension_histogram.record(
-                (length
-                    * max_measurement
-                        .checked_ilog2()
-                        .map(|v| v as usize + 1)
-                        .unwrap_or(0)) as u64,
-                &[KeyValue::new("type", "Prio3SumVec")],
-            ),
-
-            VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
-                length,
-                max_measurement,
-                ..
-            } => self.aggregated_report_share_dimension_histogram.record(
-                (length
-                    * max_measurement
-                        .checked_ilog2()
-                        .map(|v| v as usize + 1)
-                        .unwrap_or(0)) as u64,
-                &[KeyValue::new(
-                    "type",
-                    "Prio3SumVecField64MultiproofHmacSha256Aes128",
-                )],
-            ),
-
-            VdafInstance::Prio3Histogram { length, .. } => {
-                self.aggregated_report_share_dimension_histogram.record(
-                    u64::try_from(length).unwrap_or(u64::MAX),
-                    &[KeyValue::new("type", "Prio3Histogram")],
-                )
-            }
-
-            #[cfg(feature = "test-util")]
-            VdafInstance::Fake { rounds: _ }
-            | VdafInstance::FakeFailsVerifyInit
-            | VdafInstance::FakeFailsVerifyStep => self
-                .aggregated_report_share_dimension_histogram
-                .record(0, &[KeyValue::new("type", "Fake")]),
-            _ => self
-                .aggregated_report_share_dimension_histogram
-                .record(0, &[KeyValue::new("type", "unknown")]),
-        }
-    }
-}
-
-#[allow(private_bounds)]
-impl<const SEED_SIZE: usize, B, A, AJ> AggregationJobWriter<SEED_SIZE, B, A, AJ>
+impl<const SEED_SIZE: usize, B, A> AggregationJobWriter<SEED_SIZE, B, A>
 where
     B: AccumulableBatchMode,
     A: AsyncAggregator<SEED_SIZE>,
-    AJ: WritableAggregationJob<SEED_SIZE, B, A>,
 {
     /// Create a new, empty aggregation job writer.
     pub fn new(
@@ -203,8 +153,7 @@ where
         batch_aggregation_shard_count: u64,
         vdaf: &A,
         tx: &Transaction<'_>,
-        aggregation_job: AJ,
-        report_aggregations: Vec<AJ::WritableReportAggregation>,
+        inputs: AggregationJobWriterInputs<SEED_SIZE, B, A>,
         metrics: Option<AggregationJobWriterMetrics>,
         task_aggregation_counters: TaskAggregationCounter,
     ) -> Result<Vec<VerifyResp>, Error> {
@@ -215,7 +164,7 @@ where
             task_aggregation_counters,
         );
 
-        writer.put(aggregation_job, report_aggregations)?;
+        writer.put(inputs)?;
         let agg_job_infos = writer.write_inner(vdaf, tx).await?;
 
         assert_eq!(
@@ -240,10 +189,9 @@ where
     /// aggregation jobs.
     pub fn put(
         &mut self,
-        aggregation_job: AJ,
-        mut report_aggregations: Vec<AJ::WritableReportAggregation>,
+        mut inputs: AggregationJobWriterInputs<SEED_SIZE, B, A>,
     ) -> Result<(), Error> {
-        self.update_aggregation_parameter(aggregation_job.aggregation_parameter());
+        self.update_aggregation_parameter(inputs.aggregation_job.aggregation_parameter());
 
         report_aggregations.sort_unstable_by_key(|ra| ra.ord());
 
@@ -269,7 +217,7 @@ where
 
         self.aggregation_jobs.insert(
             datastore_id,
-            AggregationJobInfo {
+            AggregationJobWriterInputs {
                 aggregation_job,
                 report_aggregations,
             },
@@ -302,8 +250,10 @@ where
         self,
         vdaf: &A,
         tx: &Transaction<'_>,
-    ) -> Result<HashMap<AggregationJobDatastoreId, AggregationJobInfo<SEED_SIZE, B, A, AJ>>, Error>
-    {
+    ) -> Result<
+        HashMap<AggregationJobDatastoreId, AggregationJobWriterInputs<SEED_SIZE, B, A, I>>,
+        Error,
+    > {
         let Self {
             task_id,
             batch_aggregation_shard_count,
@@ -371,10 +321,12 @@ where
         // Write aggregation jobs, report aggregations, and batch aggregations back to the
         // datastore.
         let write_agg_jobs_future = try_join_all(aggregation_jobs.values().map(
-            |AggregationJobInfo {
+            |AggregationJobWriterInputs {
                  aggregation_job,
                  report_aggregations,
-             }| async move { aggregation_job.write(tx, report_aggregations.iter()).await },
+             }| async move {
+                I::write(tx, aggregation_job, report_aggregations.as_slice()).await
+            },
         ));
 
         // Prevent deadlocks when inserting into shards by providing a deterministic order to shard
@@ -418,7 +370,7 @@ where
     fn fail_report_aggregations_for_collected_batches(
         aggregation_jobs: &mut HashMap<
             AggregationJobDatastoreId,
-            AggregationJobInfo<SEED_SIZE, B, A, AJ>,
+            AggregationJobWriterInputs<SEED_SIZE, B, A, I>,
         >,
         by_batch_identifier_index: &HashMap<
             B::BatchIdentifier,
@@ -480,7 +432,7 @@ where
         aggregation_parameter: A::AggregationParam,
         aggregation_jobs: &mut HashMap<
             AggregationJobDatastoreId,
-            AggregationJobInfo<SEED_SIZE, B, A, AJ>,
+            AggregationJobWriterInputs<SEED_SIZE, B, A, I>,
         >,
         by_batch_identifier_index: &HashMap<
             B::BatchIdentifier,
@@ -606,13 +558,13 @@ where
     fn update_aggregation_job_state_from_report_aggregations(
         aggregation_jobs: &mut HashMap<
             AggregationJobDatastoreId,
-            AggregationJobInfo<SEED_SIZE, B, A, AJ>,
+            AggregationJobWriterInputs<SEED_SIZE, B, A, I>,
         >,
     ) {
         // Update in-memory state of aggregation jobs: any aggregation jobs whose report
         // aggregations are all in a terminal state should be considered Finished (unless the
         // aggregation job was already in a terminal state).
-        for AggregationJobInfo {
+        for AggregationJobWriterInputs {
             aggregation_job,
             report_aggregations,
         } in aggregation_jobs.values_mut()
@@ -642,7 +594,7 @@ where
         aggregation_parameter: A::AggregationParam,
         aggregation_jobs: &mut HashMap<
             AggregationJobDatastoreId,
-            AggregationJobInfo<SEED_SIZE, B, A, AJ>,
+            AggregationJobWriterInputs<SEED_SIZE, B, A, I>,
         >,
         by_batch_identifier_index: &HashMap<
             B::BatchIdentifier,
@@ -688,123 +640,175 @@ where
             for aggregation_job_id in by_aggregation_job_index.keys() {
                 // Update the batch aggregation based on the aggregation job & the write type.
                 // unwrap safety: index lookup
-                aggregation_jobs
-                    .get(aggregation_job_id)
-                    .unwrap()
-                    .aggregation_job
-                    .update_batch_aggregation(batch_aggregation)?;
+                I::update_batch_aggregation(
+                    batch_aggregation,
+                    &aggregation_jobs
+                        .get(aggregation_job_id)
+                        .unwrap()
+                        .aggregation_job,
+                )?;
             }
         }
         Ok(())
     }
 }
 
-/// An aggregation job and its accompanying report aggregations.
+/// Aggregation jobs and report aggregations input to an [`AggregationJobWriter`].
 ///
-/// The contents are wrapped in `Cow` because `WriteState` may rarely need to update the contents in
-/// order to retry.
+/// Implementations of this struct define supported pairs of aggregation job and report aggregation
+/// representations, as well as specialized logic for writing them to the datastore.
+///
+/// For example, if we are creating a new row in the `aggregation_jobs` table, then we can't yet
+/// know what [`AggregationJobDatastoreId`] will be assigned, so we would use
+/// [`UnwrittenAggregationJob`]. But if we're updating a row that already exists, then we use an
+/// [`AggregationJob`] value.
+/// An aggregation job and its accompanying report aggregations.
 #[derive(Clone)]
-struct AggregationJobInfo<const SEED_SIZE: usize, B, A, AJ>
+pub enum AggregationJobWriterInputs<
+    const SEED_SIZE: usize,
+    B: AccumulableBatchMode,
+    A: AsyncAggregator<SEED_SIZE>,
+> {
+    LeaderCreate {
+        aggregation_job: UnwrittenAggregationJob<SEED_SIZE, B, A>,
+        report_aggregations: Vec<ReportAggregationMetadata>,
+    },
+    HelperCreate {
+        aggregation_job: UnwrittenAggregationJob<SEED_SIZE, B, A>,
+        report_aggregations: Vec<ReportAggregationMetadata>,
+    },
+    Update {
+        aggregation_job: AggregationJob<SEED_SIZE, B, A>,
+        report_aggregations: Vec<WritableReportAggregation<SEED_SIZE, A>>,
+    },
+}
+
+impl<const SEED_SIZE: usize, B, A> AggregationJobWriterInputs<SEED_SIZE, B, A>
 where
     B: AccumulableBatchMode,
     A: AsyncAggregator<SEED_SIZE>,
-    AJ: WritableAggregationJob<SEED_SIZE, B, A>,
 {
-    aggregation_job: AJ,
-    report_aggregations: Vec<AJ::WritableReportAggregation>,
+    async fn write<'a>(&self, tx: &Transaction<'_>) -> Result<(), Error> {
+        match self {
+            Self::LeaderCreate {
+                aggregation_job,
+                report_aggregations,
+            } => {
+                let job_id = tx.put_aggregation_job(aggregation_job).await?;
+
+                // We must write the aggregation job first since report aggregation rows have a
+                // foreign-key constraint on the related aggregation job existing. We could speed
+                // things up for initial writes by switching to DEFERRED constraints:
+                // https://www.postgresql.org/docs/current/sql-set-constraints.html
+                try_join_all(
+                    report_aggregations
+                        .iter()
+                        .map(|ra| tx.put_leader_report_aggregation(job_id, ra)),
+                )
+                .await?;
+
+                // Scrub the reports we just created report aggregations for.
+                // Report scrubbing must wait until after report aggregations have been created,
+                // because they have a write-after-read antidependency on the report shares.
+                try_join_all(
+                    report_aggregations.iter().map(|ra| {
+                        tx.scrub_client_report(aggregation_job.task_id(), ra.report_id())
+                    }),
+                )
+                .await?;
+            }
+            Self::HelperCreate {
+                aggregation_job,
+                report_aggregations,
+            } => todo!(),
+            Self::Update {
+                aggregation_job,
+                report_aggregations,
+            } => {
+                try_join!(
+                    tx.update_aggregation_job(aggregation_job),
+                    try_join_all(
+                        report_aggregations
+                            .iter()
+                            .map(|ra| tx.update_report_aggregation(&ra.report_aggregation)),
+                    )
+                )
+                .await?
+            }
+        }
+
+        Ok(())
+    }
+
+    fn update_batch_aggregation(
+        &self,
+        batch_aggregation: &mut BatchAggregation<SEED_SIZE, B, A>,
+    ) -> Result<(), Error> {
+        match self {
+            // For new writes (inserts) of aggregation jobs in a non-terminal state, increment
+            // aggregation_jobs_created.
+            Self::LeaderCreate {
+                aggregation_job, ..
+            } => {
+                if !aggregation_job.state().terminal() {
+                    *batch_aggregation = BatchAggregation::new(
+                        *batch_aggregation.task_id(),
+                        batch_aggregation.batch_identifier().clone(),
+                        batch_aggregation.aggregation_parameter().clone(),
+                        batch_aggregation.ord(),
+                        Interval::EMPTY,
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: None,
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 1,
+                            aggregation_jobs_terminated: 0,
+                        },
+                    )
+                    .merged_with(batch_aggregation)?;
+                }
+            }
+            // TODO(timg): same as leader create case?
+            Self::HelperCreate {
+                aggregation_job, ..
+            } => todo!(),
+            // For updates of aggregation jobs into a terminal state, increment
+            // aggregation_jobs_terminated. (This is safe to do since we will not process a terminal
+            // aggregation job again.)
+            Self::Update {
+                aggregation_job,
+                report_aggregations,
+            } => {
+                if aggregation_job.state().terminal() {
+                    *batch_aggregation = BatchAggregation::new(
+                        *batch_aggregation.task_id(),
+                        batch_aggregation.batch_identifier().clone(),
+                        batch_aggregation.aggregation_parameter().clone(),
+                        batch_aggregation.ord(),
+                        Interval::EMPTY,
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: None,
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 0,
+                            aggregation_jobs_terminated: 1,
+                        },
+                    )
+                    .merged_with(batch_aggregation)?;
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
-// /// Internal state of a write, abstracted over whether we are writing a new job or updating an
-// /// existing one.
-// ///
-// /// This tracks in-memory adjustments to aggregation jobs and report aggregations behind
-// /// copy-on-write smart pointers, and maintains indices to efficiently look up aggregation jobs,
-// /// report aggregations, and batch aggregations.
-// struct WriteSt
-
-// // OK this is fucking stupid. I still have this type exclusively to do an end run around the borrow
-// // checker, so I can tear AggregationJobWriter apart and get its aggregationparam and stick the rest
-// // in here and call methods without getting yelled at about ownership. But now this struct is identical
-// // to the wirter struct except that it has A::AggregationParam instead of Option<A::AggregationParam>.
-// // Refactor this more to be less stupid.
-
-// ate<const SEED_SIZE: usize, B, A, AJ>
-// where
-//     B: AccumulableBatchMode,
-//     A: AsyncAggregator<SEED_SIZE>,
-//     AJ: WritableAggregationJob<SEED_SIZE, B, A>,
-// {
-//     task: Arc<AggregatorTask>,
-//     aggregation_parameter: A::AggregationParam,
-//     batch_aggregation_shard_count: u64,
-//     batch_aggregation_ord: u64,
-//     batch_aggregations: HashMap<B::BatchIdentifier, (Operation, BatchAggregation<SEED_SIZE, B, A>)>,
-//     aggregation_jobs: HashMap<AggregationJobDatastoreId, AggregationJobInfo<SEED_SIZE, B, A, AJ>>,
-//     by_batch_identifier_index:
-//         HashMap<B::BatchIdentifier, HashMap<AggregationJobDatastoreId, Vec<usize>>>,
-//     metrics: Option<AggregationJobWriterMetrics>,
-//     task_aggregation_counters: TaskAggregationCounter,
-// }
-
-// impl<const SEED_SIZE: usize, B, A, AJ> WriteState<SEED_SIZE, B, A, AJ>
-// where
-//     B: AccumulableBatchMode,
-//     A: AsyncAggregator<SEED_SIZE>,
-//     AJ: WritableAggregationJob<SEED_SIZE, B, A>,
-// {
-//     /// Construct a new set of lookup maps and copy-on-write data structures, from a provided set of
-//     /// aggregation jobs and the current state of the datastore.
-//     pub async fn new(
-//         task: Arc<AggregatorTask>,
-//         tx: &Transaction<'_>,
-//         vdaf: &A,
-//         aggregation_parameter: A::AggregationParam,
-//         aggregation_jobs: HashMap<
-//             AggregationJobDatastoreId,
-//             AggregationJobInfo<SEED_SIZE, B, A, AJ>,
-//         >,
-//         batch_aggregation_shard_count: u64,
-//         by_batch_identifier_index: HashMap<
-//             B::BatchIdentifier,
-//             HashMap<AggregationJobDatastoreId, Vec<usize>>,
-//         >,
-//         metrics: Option<AggregationJobWriterMetrics>,
-//         task_aggregation_counters: TaskAggregationCounter,
-//     ) -> Result<Self, Error> {
-//         // Read all relevant batch aggregations from the datastore.
-//         let batch_aggregation_ord = rng().random_range(0..batch_aggregation_shard_count);
-//         let batch_aggregations =
-//             try_join_all(by_batch_identifier_index.keys().map(|batch_identifier| {
-//                 tx.get_batch_aggregation::<SEED_SIZE, B, A>(
-//                     vdaf,
-//                     task.id(),
-//                     batch_identifier,
-//                     &aggregation_parameter,
-//                     batch_aggregation_ord,
-//                 )
-//             }))
-//             .await?;
-
-//         let batch_aggregations: HashMap<_, _> = batch_aggregations
-//             .into_iter()
-//             .flatten()
-//             .map(|ba| (ba.batch_identifier().clone(), (Operation::Update, ba)))
-//             .collect();
-
-//         Ok(Self {
-//             batch_aggregation_ord,
-//             batch_aggregations,
-//             task,
-//             aggregation_parameter,
-//             batch_aggregation_shard_count,
-//             aggregation_jobs,
-//             by_batch_identifier_index,
-//             metrics,
-//             task_aggregation_counters,
-//         })
-//     }
-// }
-
+/// A report aggregation and possibly an output share.
+///
+/// We do not store individual report output shares in the `report_aggregations` table, preferring
+/// instead to immediately accumulate them into a `batch_aggregations` row. For that reason,
+/// `ReportAggregationState::Finished` does not include an `A::OutputShare`, and we instead define
+/// this struct.
 #[derive(Clone)]
 pub struct WritableReportAggregation<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> {
     report_aggregation: ReportAggregation<SEED_SIZE, A>,
@@ -840,19 +844,17 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>>
     }
 }
 
-/// Abstracts over multiple representations of an aggregation job.
+/// Abstracts over representations of an aggregation job used in `AggregationJobWriterInputs`.
 ///
 /// Implemented by [`AggregationJob`] (for updating existing jobs) and [`UnwrittenAggregationJob`]
 /// (for inserting new jobs).
 #[async_trait]
-pub trait WritableAggregationJob<
+pub trait AggregationJobWrite<
     const SEED_SIZE: usize,
     B: AccumulableBatchMode,
     A: AsyncAggregator<SEED_SIZE>,
 >: Clone + Debug
 {
-    type WritableReportAggregation: ReportAggregationUpdate<SEED_SIZE, A>;
-
     fn dap_id(&self) -> Option<&AggregationJobId>;
 
     fn aggregation_parameter(&self) -> &A::AggregationParam;
@@ -862,28 +864,15 @@ pub trait WritableAggregationJob<
     fn state(&self) -> &AggregationJobState;
 
     fn with_state(self, state: AggregationJobState) -> Self;
-
-    async fn write<'a>(
-        &'a self,
-        tx: &Transaction<'_>,
-        report_aggregations: impl Iterator<Item = &'a Self::WritableReportAggregation> + Send + Sync,
-    ) -> Result<(), Error>;
-
-    fn update_batch_aggregation(
-        &self,
-        batch_aggregation: &mut BatchAggregation<SEED_SIZE, B, A>,
-    ) -> Result<(), Error>;
 }
 
 #[async_trait]
-impl<const SEED_SIZE: usize, B, A> WritableAggregationJob<SEED_SIZE, B, A>
-    for UnwrittenAggregationJob<B::PartialBatchIdentifier, A::AggregationParam>
+impl<const SEED_SIZE: usize, B, A> AggregationJobWrite<SEED_SIZE, B, A>
+    for UnwrittenAggregationJob<SEED_SIZE, B, A>
 where
     B: AccumulableBatchMode,
     A: AsyncAggregator<SEED_SIZE>,
 {
-    type WritableReportAggregation = ReportAggregationMetadata;
-
     fn dap_id(&self) -> Option<&AggregationJobId> {
         self.dap_id()
     }
@@ -903,58 +892,15 @@ where
     fn with_state(self, state: AggregationJobState) -> Self {
         self.with_state(state)
     }
-
-    async fn write<'a>(
-        &'a self,
-        tx: &Transaction<'_>,
-        report_aggregations: impl Iterator<Item = &'a ReportAggregationMetadata> + Send + Sync,
-    ) -> Result<(), Error> {
-        // We must write the aggregation job first since report aggregation rows have a foreign-key
-        // constraint on the related aggregation job existing. We could  speed things up for initial
-        // writes by switching to DEFERRED constraints:
-        // https://www.postgresql.org/docs/current/sql-set-constraints.html
-        let job_id = tx.put_aggregation_job(self).await?;
-        try_join_all(report_aggregations.map(|ra| tx.put_leader_report_aggregation(job_id, ra)))
-            .await?;
-        Ok(())
-    }
-
-    fn update_batch_aggregation(
-        &self,
-        batch_aggregation: &mut BatchAggregation<SEED_SIZE, B, A>,
-    ) -> Result<(), Error> {
-        // For new writes (inserts) of aggregation jobs in a non-terminal state, increment
-        // aggregation_jobs_created.
-        if !self.state().terminal() {
-            *batch_aggregation = BatchAggregation::new(
-                *batch_aggregation.task_id(),
-                batch_aggregation.batch_identifier().clone(),
-                batch_aggregation.aggregation_parameter().clone(),
-                batch_aggregation.ord(),
-                Interval::EMPTY,
-                BatchAggregationState::Aggregating {
-                    aggregate_share: None,
-                    report_count: 0,
-                    checksum: ReportIdChecksum::default(),
-                    aggregation_jobs_created: 1,
-                    aggregation_jobs_terminated: 0,
-                },
-            )
-            .merged_with(batch_aggregation)?;
-        }
-        Ok(())
-    }
 }
 
 #[async_trait]
-impl<const SEED_SIZE: usize, B, A> WritableAggregationJob<SEED_SIZE, B, A>
+impl<const SEED_SIZE: usize, B, A> AggregationJobWrite<SEED_SIZE, B, A>
     for AggregationJob<SEED_SIZE, B, A>
 where
     B: AccumulableBatchMode,
     A: AsyncAggregator<SEED_SIZE>,
 {
-    type WritableReportAggregation = WritableReportAggregation<SEED_SIZE, A>;
-
     fn dap_id(&self) -> Option<&AggregationJobId> {
         self.dap_id()
     }
@@ -973,49 +919,6 @@ where
 
     fn with_state(self, state: AggregationJobState) -> Self {
         self.with_state(state)
-    }
-
-    async fn write<'a>(
-        &'a self,
-        tx: &Transaction<'_>,
-        report_aggregations: impl Iterator<Item = &'a WritableReportAggregation<SEED_SIZE, A>>
-        + Send
-        + Sync,
-    ) -> Result<(), Error> {
-        try_join!(
-            tx.update_aggregation_job(self),
-            try_join_all(
-                report_aggregations.map(|ra| tx.update_report_aggregation(&ra.report_aggregation)),
-            )
-        )?;
-        Ok(())
-    }
-
-    fn update_batch_aggregation(
-        &self,
-        batch_aggregation: &mut BatchAggregation<SEED_SIZE, B, A>,
-    ) -> Result<(), Error> {
-        // For updates of aggregation jobs into a terminal state, increment
-        // aggregation_jobs_terminated. (This is safe to do since we will not process a terminal
-        // aggregation job again.)
-        if self.state().terminal() {
-            *batch_aggregation = BatchAggregation::new(
-                *batch_aggregation.task_id(),
-                batch_aggregation.batch_identifier().clone(),
-                batch_aggregation.aggregation_parameter().clone(),
-                batch_aggregation.ord(),
-                Interval::EMPTY,
-                BatchAggregationState::Aggregating {
-                    aggregate_share: None,
-                    report_count: 0,
-                    checksum: ReportIdChecksum::default(),
-                    aggregation_jobs_created: 0,
-                    aggregation_jobs_terminated: 1,
-                },
-            )
-            .merged_with(batch_aggregation)?;
-        }
-        Ok(())
     }
 }
 
@@ -1141,5 +1044,83 @@ where
     /// Returns the last verification response from this report aggregation, if any.
     fn last_verify_resp(&self) -> Option<&VerifyResp> {
         None
+    }
+}
+
+/// Metrics for the aggregation job writer.
+#[derive(Clone)]
+pub struct AggregationJobWriterMetrics {
+    pub vdaf_instance: VdafInstance,
+    pub report_aggregation_success_counter: Counter<u64>,
+    pub aggregate_step_failure_counter: Counter<u64>,
+    pub aggregated_report_share_dimension_histogram: Histogram<u64>,
+}
+
+impl AggregationJobWriterMetrics {
+    fn record(&self) {
+        self.report_aggregation_success_counter.add(1, &[]);
+        // Bucket written reports by the size of their encoded
+        // measurement in field elements.
+        match self.vdaf_instance {
+            VdafInstance::Prio3Count => self
+                .aggregated_report_share_dimension_histogram
+                .record(1, &[KeyValue::new("type", "Prio3Count")]),
+
+            VdafInstance::Prio3Sum { max_measurement } => {
+                self.aggregated_report_share_dimension_histogram.record(
+                    max_measurement
+                        .checked_ilog2()
+                        .map(|v| v as u64 + 1)
+                        .unwrap_or(0),
+                    &[KeyValue::new("type", "Prio3Sum")],
+                )
+            }
+
+            VdafInstance::Prio3SumVec {
+                length,
+                max_measurement,
+                ..
+            } => self.aggregated_report_share_dimension_histogram.record(
+                (length
+                    * max_measurement
+                        .checked_ilog2()
+                        .map(|v| v as usize + 1)
+                        .unwrap_or(0)) as u64,
+                &[KeyValue::new("type", "Prio3SumVec")],
+            ),
+
+            VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+                length,
+                max_measurement,
+                ..
+            } => self.aggregated_report_share_dimension_histogram.record(
+                (length
+                    * max_measurement
+                        .checked_ilog2()
+                        .map(|v| v as usize + 1)
+                        .unwrap_or(0)) as u64,
+                &[KeyValue::new(
+                    "type",
+                    "Prio3SumVecField64MultiproofHmacSha256Aes128",
+                )],
+            ),
+
+            VdafInstance::Prio3Histogram { length, .. } => {
+                self.aggregated_report_share_dimension_histogram.record(
+                    u64::try_from(length).unwrap_or(u64::MAX),
+                    &[KeyValue::new("type", "Prio3Histogram")],
+                )
+            }
+
+            #[cfg(feature = "test-util")]
+            VdafInstance::Fake { rounds: _ }
+            | VdafInstance::FakeFailsVerifyInit
+            | VdafInstance::FakeFailsVerifyStep => self
+                .aggregated_report_share_dimension_histogram
+                .record(0, &[KeyValue::new("type", "Fake")]),
+            _ => self
+                .aggregated_report_share_dimension_histogram
+                .record(0, &[KeyValue::new("type", "unknown")]),
+        }
     }
 }

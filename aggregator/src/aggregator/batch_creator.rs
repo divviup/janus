@@ -28,7 +28,7 @@ use rand::random;
 use tokio::try_join;
 use tracing::debug;
 
-use crate::aggregator::aggregation_job_writer::AggregationJobWriter;
+use crate::aggregator::aggregation_job_writer::{AggregationJobWriter, LeaderAggregationJobCreate};
 
 /// This data structure loads existing outstanding batches, incrementally assigns new reports to
 /// outstanding batches and aggregation jobs, and provides unused reports at the end.
@@ -40,12 +40,8 @@ where
     A: AsyncAggregator<SEED_SIZE>,
 {
     properties: Properties,
-    aggregation_job_writer: AggregationJobWriter<
-        SEED_SIZE,
-        LeaderSelected,
-        A,
-        UnwrittenAggregationJob<BatchId, A::AggregationParam>,
-    >,
+    aggregation_job_writer:
+        AggregationJobWriter<SEED_SIZE, LeaderSelected, A, LeaderAggregationJobCreate>,
     buckets: HashMap<Option<Time>, Bucket>,
     new_batches: Vec<(BatchId, Option<Time>)>,
     newly_filled_batches: HashSet<BatchId>,
@@ -79,7 +75,7 @@ where
             SEED_SIZE,
             LeaderSelected,
             A,
-            UnwrittenAggregationJob<BatchId, ()>,
+            LeaderAggregationJobCreate,
         >,
         aggregation_job_size_histogram: Histogram<u64>,
     ) -> Self {
@@ -177,7 +173,7 @@ where
             SEED_SIZE,
             LeaderSelected,
             A,
-            UnwrittenAggregationJob<BatchId, ()>,
+            LeaderAggregationJobCreate,
         >,
         report_ids_to_scrub: &mut HashSet<ReportId>,
         new_batches: &mut Vec<(BatchId, Option<Time>)>,
@@ -322,7 +318,7 @@ where
             SEED_SIZE,
             LeaderSelected,
             A,
-            UnwrittenAggregationJob<BatchId, ()>,
+            LeaderAggregationJobCreate,
         >,
         report_ids_to_scrub: &mut HashSet<ReportId>,
         aggregation_job_size_histogram: &Histogram<u64>,

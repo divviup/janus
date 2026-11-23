@@ -790,7 +790,7 @@ pub mod test_util {
             let mut response = self
                 .post_aggregation_job_init(aggregation_job_init_req)
                 .await;
-            assert_eq!(response.status(), StatusCode::CREATED);
+            assert_eq!(response.status(), StatusCode::OK);
 
             let aggregation_job_resp: AggregationJobResp =
                 decode_response_body(&mut response).await;

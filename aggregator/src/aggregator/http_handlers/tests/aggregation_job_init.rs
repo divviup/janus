@@ -49,7 +49,7 @@ use crate::aggregator::{
 };
 
 #[tokio::test]
-async fn aggregation_job_init_leader() {
+async fn init_leader() {
     let test_case = AggregationJobInitTestCase::builder()
         .with_role(Role::Leader)
         .build()
@@ -80,10 +80,10 @@ async fn aggregation_job_init_leader() {
 }
 
 #[tokio::test]
-async fn aggregation_job_cors() {
-    let test_case = AggregationJobInitTestCase::builder().build().await;
+async fn cors() {
+    let test_case = AggregationJobInitTestCase::new().await;
     let response = test_case.post_prepared_aggregation_job_init().await;
-    assert!(response.status().is_success());
+    assert!(!response.status().is_success(), "{response:?}");
 
     // Check that CORS headers don't bleed over to other routes.
     assert!(
@@ -174,7 +174,7 @@ async fn aggregation_job_init_wrong_agg_auth_token() {
 
 #[tokio::test]
 async fn init_sync() {
-    let test_case = AggregationJobInitTestCase::builder().build().await;
+    let test_case = AggregationJobInitTestCase::new().await;
     let measurement = 0;
     let hpke_config = test_case.http_handler_test.hpke_keypair.config();
     let vdaf_verify_key = test_case.task.vdaf_verify_key().unwrap();

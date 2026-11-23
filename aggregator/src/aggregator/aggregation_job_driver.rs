@@ -62,7 +62,8 @@ use crate::{
         aggregation_job_continue::{AggregateContinueMetrics, compute_helper_aggregate_continue},
         aggregation_job_init::{AggregateInitMetrics, compute_helper_aggregate_init},
         aggregation_job_writer::{
-            AggregationJobWriter, AggregationJobWriterMetrics, WritableReportAggregation,
+            AggregationJobWriter, AggregationJobWriterMetrics, HelperAggregationJobCreate,
+            WritableReportAggregation,
         },
         batch_mode::CollectableBatchMode,
         error::handle_ping_pong_error,
@@ -1425,7 +1426,7 @@ where
 
                 Box::pin(async move {
                     try_join!(
-                        AggregationJobWriter::put_and_write(
+                        AggregationJobWriter::<SEED_SIZE, B, A, AggregationJobUpdate>::put_and_write(
                             task_id,
                             batch_aggregation_shard_count,
                             &vdaf,
@@ -1603,7 +1604,7 @@ where
 
                 Box::pin(async move {
                     try_join!(
-                        AggregationJobWriter::put_and_write(
+                        AggregationJobWriter::<SEED_SIZE, B, A, HelperAggregationJobCreate>::put_and_write(
                             task_id,
                             batch_aggregation_shard_count,
                             &vdaf,
@@ -1690,7 +1691,7 @@ where
 
                 Box::pin(async move {
                     try_join!(
-                        AggregationJobWriter::put_and_write(
+                        AggregationJobWriter::<SEED_SIZE, B, A, AggregationJobUpdate>::put_and_write(
                             task_id,
                             batch_aggregation_shard_count,
                             &vdaf,
@@ -1813,7 +1814,7 @@ where
                     let aggregator_auth_token = task.aggregator_auth_token().cloned();
 
                     try_join!(
-                        AggregationJobWriter::put_and_write(
+                        AggregationJobWriter::<SEED_SIZE, B, A, AggregationJobUpdate>::put_and_write(
                             *task.id(),
                             batch_aggregation_shard_count,
                             &vdaf,
