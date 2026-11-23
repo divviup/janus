@@ -1893,10 +1893,14 @@ WHERE aggregation_jobs.task_id = $4
     ///
     /// Use `update_aggregation_job` to update values on some existing aggregation job.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
-    pub async fn put_aggregation_job<B: Encode + Debug, A: Encode>(
+    pub async fn put_aggregation_job<const SEED_SIZE: usize, B, A>(
         &self,
-        aggregation_job: &UnwrittenAggregationJob<B, A>,
-    ) -> Result<AggregationJobDatastoreId, Error> {
+        aggregation_job: &UnwrittenAggregationJob<SEED_SIZE, B, A>,
+    ) -> Result<AggregationJobDatastoreId, Error>
+    where
+        B: BatchMode,
+        A: AsyncAggregator<SEED_SIZE>,
+    {
         let task_info = self
             .task_info_for(aggregation_job.task_id())
             .await?
@@ -2189,7 +2193,7 @@ WHERE report_aggregations.task_id = $1
     ) -> Result<(), Error> {
         let task_info = match self.task_info_for(report_aggregation.task_id()).await? {
             Some(task_info) => task_info,
-            None => return Err(Error::MutationTargetNotFound),
+            None => panic!("Error::MutationTargetNotFound"),
         };
         let now = self.clock.now();
 
@@ -2436,7 +2440,7 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
     ) -> Result<(), Error> {
         let task_info = match self.task_info_for(report_aggregation.task_id()).await? {
             Some(task_info) => task_info,
-            None => return Err(Error::MutationTargetNotFound),
+            None => panic!("Error::MutationTargetNotFound"),
         };
         let now = self.clock.now();
 
@@ -3081,7 +3085,7 @@ RETURNING
     ) -> Result<(), Error> {
         let task_info = match self.task_info_for(lease.leased().task_id()).await? {
             Some(task_info) => task_info,
-            None => return Err(Error::MutationTargetNotFound),
+            None => panic!("Error::MutationTargetNotFound"),
         };
         let now = self.clock.now();
 
@@ -3149,7 +3153,7 @@ WHERE task_id = $4
     ) -> Result<(), Error> {
         let task_info = match self.task_info_for(collection_job.task_id()).await? {
             Some(task_info) => task_info,
-            None => return Err(Error::MutationTargetNotFound),
+            None => panic!("Error::MutationTargetNotFound"),
         };
         let now = self.clock.now();
 
@@ -3534,7 +3538,7 @@ WHERE task_id = $1
     ) -> Result<(), Error> {
         let task_info = match self.task_info_for(batch_aggregation.task_id()).await? {
             Some(task_info) => task_info,
-            None => return Err(Error::MutationTargetNotFound),
+            None => panic!("Error::MutationTargetNotFound"),
         };
         let now = self.clock.now();
 
@@ -3619,7 +3623,7 @@ ON CONFLICT(task_id, batch_identifier, aggregation_param, ord) DO UPDATE
     ) -> Result<(), Error> {
         let task_info = match self.task_info_for(batch_aggregation.task_id()).await? {
             Some(task_info) => task_info,
-            None => return Err(Error::MutationTargetNotFound),
+            None => panic!("Error::MutationTargetNotFound"),
         };
         let now = self.clock.now();
         let encoded_state_values = batch_aggregation.state().encoded_values_from_state()?;
@@ -3974,7 +3978,7 @@ WHERE task_id = $1
     ) -> Result<(), Error> {
         let task_info = match self.task_info_for(aggregate_share_job.task_id()).await? {
             Some(task_info) => task_info,
-            None => return Err(Error::MutationTargetNotFound),
+            None => panic!("Error::MutationTargetNotFound"),
         };
         let now = self.clock.now();
         let batch_interval = B::to_batch_interval(aggregate_share_job.batch_identifier())
@@ -4047,7 +4051,7 @@ ON CONFLICT(task_id, batch_identifier, aggregation_param) DO UPDATE
     ) -> Result<(), Error> {
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
-            None => return Err(Error::MutationTargetNotFound),
+            None => panic!("Error::MutationTargetNotFound"),
         };
 
         let stmt = self
@@ -4087,7 +4091,7 @@ WHERE task_id = $1
     ) -> Result<(), Error> {
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
-            None => return Err(Error::MutationTargetNotFound),
+            None => panic!("Error::MutationTargetNotFound"),
         };
 
         let now = self.clock.now();
@@ -4341,7 +4345,7 @@ RETURNING batch_id",
     ) -> Result<(), Error> {
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
-            None => return Err(Error::MutationTargetNotFound),
+            None => panic!("Error::MutationTargetNotFound"),
         };
         let now = self.clock.now();
 
@@ -5107,7 +5111,7 @@ fn check_insert(row_count: u64) -> Result<(), Error> {
 
 fn check_single_row_mutation(row_count: u64) -> Result<(), Error> {
     match row_count {
-        0 => Err(Error::MutationTargetNotFound),
+        0 => panic!("Err(Error::MutationTargetNotFound)"),
         1 => Ok(()),
         _ => panic!(
             "update which should have affected at most one row instead affected {row_count} rows"
