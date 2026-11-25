@@ -11,7 +11,7 @@ workflows:
         - 'docker/bake-action@v7.5.0'
         - 'docker/setup-buildx-action@v4.4.1'
         - 'dtolnay/rust-toolchain@master'
-        - 'embarkstudios/cargo-deny-action@v2.1.1'
+        - 'embarkstudios/cargo-deny-action@v2.1.2'
         - 'swatinem/rust-cache@v2.9.3'
         - 'taiki-e/install-action@v2.90.5'
     '.github/workflows/ci-migrations.yml':
@@ -90,9 +90,9 @@ dependencies:
         commit: 'sha1-df2a88e9fe4098bad09cb42c3dec7187f15861fc'
         owner_id: 1940490
         repo_id: 260749683
-    'embarkstudios/cargo-deny-action@v2.1.1':
-        ref: 'v2.1.1'
-        commit: 'sha1-3c6349835b2b7b196a839186cb8b78e02f7b5f25'
+    'embarkstudios/cargo-deny-action@v2.1.2':
+        ref: 'v2.1.2'
+        commit: 'sha1-70f81531115945ba6eb6b941ec9d39d063438eb9'
         owner_id: 44887257
         repo_id: 228054692
     'google-github-actions/auth@v3.0.0':

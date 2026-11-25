@@ -129,7 +129,7 @@ jobs:
     - name: cargo-deny
       id: deny
       background: true
-      uses: EmbarkStudios/cargo-deny-action@v2.1.1
+      uses: EmbarkStudios/cargo-deny-action@v2.1.2
       with:
         command: check bans licenses sources -A unmatched-organization
     - name: Install cargo-sort
@@ -218,6 +218,6 @@ jobs:
     steps:
     - uses: actions/checkout@v7.0.1
     - name: cargo-deny
-      uses: EmbarkStudios/cargo-deny-action@v2.1.1
+      uses: EmbarkStudios/cargo-deny-action@v2.1.2
       with:
         command: check advisories
