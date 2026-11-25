@@ -43,7 +43,7 @@ jobs:
     - uses: actions/checkout@v7.0.1
     - run: echo "GIT_REVISION=$(git describe --always --dirty=-modified)" >> $GITHUB_ENV
     - name: Setup Go toolchain
-      uses: actions/setup-go@v7.0.0
+      uses: actions/setup-go@v7.1.0
     - name: Install Kind
       # We should always make sure that the `kind` CLI we install is from the
       # same release as the node image version used by
