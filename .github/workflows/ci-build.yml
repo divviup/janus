@@ -135,7 +135,7 @@ jobs:
     - name: Install cargo-sort
       id: install-sort
       background: true
-      uses: taiki-e/install-action@v2.90.5
+      uses: taiki-e/install-action@v2.90.6
       with:
         tool: cargo-sort
     - name: Install Nightly rustfmt

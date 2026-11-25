@@ -13,7 +13,7 @@ workflows:
         - 'dtolnay/rust-toolchain@master'
         - 'embarkstudios/cargo-deny-action@v2.1.2'
         - 'swatinem/rust-cache@v2.9.3'
-        - 'taiki-e/install-action@v2.90.5'
+        - 'taiki-e/install-action@v2.90.6'
     '.github/workflows/ci-migrations.yml':
         - 'actions/checkout@v7.0.1'
     '.github/workflows/dependabot-automerge.yml': []
@@ -35,7 +35,7 @@ workflows:
         - 'actions/checkout@v7.0.1'
         - 'actions/github-script@v9.0.0'
         - 'dtolnay/rust-toolchain@master'
-        - 'taiki-e/install-action@v2.90.5'
+        - 'taiki-e/install-action@v2.90.6'
     '.github/workflows/yank-crates.yml':
         - 'dtolnay/rust-toolchain@master'
         - 'rust-lang/crates-io-auth-action@v1.0.6'
@@ -110,8 +110,8 @@ dependencies:
         commit: 'sha1-d1527c8f67ef9af357290475d4af4b0fab8f12e0'
         owner_id: 580492
         repo_id: 298565987
-    'taiki-e/install-action@v2.90.5':
-        ref: 'v2.90.5'
-        commit: 'sha1-ab49d3c64680143e184118bed66a46419fc15519'
+    'taiki-e/install-action@v2.90.6':
+        ref: 'v2.90.6'
+        commit: 'sha1-75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f'
         owner_id: 43724913
         repo_id: 442947557
