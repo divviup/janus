@@ -3045,11 +3045,10 @@ mod tests {
         let mut expected_report_aggregations = HashMap::new();
 
         // Create MAX_AGGREGATION_JOB_SIZE reports in one batch. This should result in one
-        // aggregation job per overlapping collection job for these reports. (and there is one such
-        // collection job)
-        let report_time = clock.now().to_time(task.time_precision());
-        let batch_1_reports: Vec<LeaderStoredReport<0, dummy::Vdaf>> =
-            iter::repeat_with(|| LeaderStoredReport::new_dummy(*task.id(), report_time))
+        // aggregation job for the corresponding collection job.
+        let report_time_1 = clock.now().to_time(task.time_precision());
+        let batch_1_reports: Vec<_> =
+            iter::repeat_with(|| LeaderStoredReport::new_dummy(*task.id(), report_time_1))
                 .take(MAX_AGGREGATION_JOB_SIZE)
                 .collect();
 
@@ -3065,13 +3064,12 @@ mod tests {
         }
 
         // Create more than MAX_AGGREGATION_JOB_SIZE reports in another batch. This should result in
-        // two aggregation jobs per overlapping collection job. (and there are two such
-        // collection jobs)
-        let report_time = report_time
+        // one aggregation jobs for the corresponding collection job.
+        let report_time_2 = report_time_1
             .sub_duration(&janus_messages::Duration::ONE)
             .unwrap();
-        let batch_2_reports: Vec<LeaderStoredReport<0, dummy::Vdaf>> =
-            iter::repeat_with(|| LeaderStoredReport::new_dummy(*task.id(), report_time))
+        let batch_2_reports: Vec<_> =
+            iter::repeat_with(|| LeaderStoredReport::new_dummy(*task.id(), report_time_2))
                 .take(MAX_AGGREGATION_JOB_SIZE + 1)
                 .collect();
 
@@ -3159,33 +3157,23 @@ mod tests {
             .run_unnamed_tx(|tx| {
                 let task = Arc::clone(&task);
                 Box::pin(async move {
+                    // This will encompass the members of batch_1_reports.
+                    tx.put_collection_job::<0, TimeInterval, dummy::Vdaf>(&CollectionJob::new(
+                        *task.id(),
+                        random(),
+                        Query::new_time_interval(Interval::minimal(report_time_1).unwrap()),
+                        first_aggregation_param,
+                        Interval::minimal(report_time_1).unwrap(),
+                        CollectionJobState::Start,
+                    ))
+                    .await?;
                     // This will encompass the members of batch_2_reports.
                     tx.put_collection_job::<0, TimeInterval, dummy::Vdaf>(&CollectionJob::new(
                         *task.id(),
                         random(),
-                        Query::new_time_interval(Interval::minimal(report_time).unwrap()),
+                        Query::new_time_interval(Interval::minimal(report_time_2).unwrap()),
                         second_aggregation_param,
-                        Interval::minimal(report_time).unwrap(),
-                        CollectionJobState::Start,
-                    ))
-                    .await?;
-                    // This will encompass the members of both batch_1_reports and batch_2_reports.
-                    tx.put_collection_job::<0, TimeInterval, dummy::Vdaf>(&CollectionJob::new(
-                        *task.id(),
-                        random(),
-                        Query::new_time_interval(
-                            Interval::new(
-                                report_time,
-                                janus_messages::Duration::from_time_precision_units(2),
-                            )
-                            .unwrap(),
-                        ),
-                        first_aggregation_param,
-                        Interval::new(
-                            report_time,
-                            janus_messages::Duration::from_time_precision_units(2),
-                        )
-                        .unwrap(),
+                        Interval::minimal(report_time_2).unwrap(),
                         CollectionJobState::Start,
                     ))
                     .await?;
@@ -3227,40 +3215,39 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(agg_jobs.len(), 5);
+        assert_eq!(agg_jobs.len(), 3);
 
-        let mut seen_pairs = Vec::new();
-        let mut aggregation_jobs_per_aggregation_param = HashMap::new();
+        // We should find one aggregation job for each aggregation parameter.
+        let mut first_aggregation_param_jobs = 0;
+        let mut first_aggregation_param_reports = Vec::new();
+        let batch_1_report_ids: Vec<_> =
+            batch_1_reports.iter().map(|r| r.metadata().id()).collect();
+        let mut second_aggregation_param_jobs = 0;
+        let mut second_aggregation_param_reports = Vec::new();
+        let batch_2_report_ids: Vec<_> =
+            batch_2_reports.iter().map(|r| r.metadata().id()).collect();
+        for (aggregation_job, report_aggregations) in &agg_jobs {
+            if *aggregation_job.aggregation_parameter() == first_aggregation_param {
+                first_aggregation_param_jobs += 1;
 
-        for (aggregation_job, report_aggregations) in agg_jobs.iter() {
-            assert!(report_aggregations.len() <= MAX_AGGREGATION_JOB_SIZE);
+                for report_aggregation in report_aggregations {
+                    assert!(batch_1_report_ids.contains(&report_aggregation.report_id()));
+                    assert!(!first_aggregation_param_reports.contains(report_aggregation));
+                    first_aggregation_param_reports.push(report_aggregation.clone());
+                }
+            }
+            if *aggregation_job.aggregation_parameter() == second_aggregation_param {
+                second_aggregation_param_jobs += 1;
 
-            *aggregation_jobs_per_aggregation_param
-                .entry(*aggregation_job.aggregation_parameter())
-                .or_default() += 1;
-
-            for report_aggregation in report_aggregations {
-                seen_pairs.push((
-                    *report_aggregation.report_id(),
-                    *aggregation_job.aggregation_parameter(),
-                ));
+                for report_aggregation in report_aggregations {
+                    assert!(batch_2_report_ids.contains(&report_aggregation.report_id()));
+                    assert!(!second_aggregation_param_reports.contains(report_aggregation));
+                    second_aggregation_param_reports.push(report_aggregation.clone());
+                }
             }
         }
-        assert_eq!(
-            aggregation_jobs_per_aggregation_param,
-            HashMap::from([(second_aggregation_param, 2), (first_aggregation_param, 3)])
-        );
-        let mut expected_pairs = Vec::with_capacity(MAX_AGGREGATION_JOB_SIZE * 3 + 2);
-        for report in batch_1_reports.iter() {
-            expected_pairs.push((*report.metadata().id(), first_aggregation_param));
-        }
-        for report in batch_2_reports.iter() {
-            expected_pairs.push((*report.metadata().id(), second_aggregation_param));
-            expected_pairs.push((*report.metadata().id(), first_aggregation_param));
-        }
-        seen_pairs.sort();
-        expected_pairs.sort();
-        assert_eq!(seen_pairs, expected_pairs);
+        assert_eq!(first_aggregation_param_jobs, 1);
+        assert_eq!(second_aggregation_param_jobs, 2);
 
         // Run once more, and confirm that no further aggregation jobs are created.
         Arc::clone(&job_creator)
