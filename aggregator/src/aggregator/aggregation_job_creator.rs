@@ -3073,15 +3073,8 @@ mod tests {
                 .take(MAX_AGGREGATION_JOB_SIZE + 1)
                 .collect();
 
-        // Batch 2 reports should get aggregated under both aggregation parameters
+        // Batch 2 reports should get aggregated only under the second aggregation parameter.
         for report in &batch_2_reports {
-            expected_report_aggregations.insert(
-                (*report.metadata().id(), first_aggregation_param),
-                report
-                    .as_leader_init_report_aggregation(random(), 0)
-                    .state()
-                    .clone(),
-            );
             expected_report_aggregations.insert(
                 (*report.metadata().id(), second_aggregation_param),
                 report
